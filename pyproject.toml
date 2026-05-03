@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "collab"
+version = "0.1.0"
+description = "Collaborative file locking runtime"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "python-dotenv>=1.0.1",
+  "supabase>=2.4.0",
+  "httpx>=0.24.0",
+  "psutil>=5.9.0",
+  "plyer>=2.1.0"
+]
+
+[project.scripts]
+collab = "collab.lock_client:main"
+collab-watcher = "collab.live_locks_watcher:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+collab = ["dashboard/index.html"]
