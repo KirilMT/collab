@@ -152,6 +152,7 @@ def _run_sh(
         [shell_path, str(script)],
         cwd=cwd,
         env=run_env,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
