@@ -1,0 +1,24 @@
+{
+  "name": "collab-tooling",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared repo-level formatting tools for the collab runtime",
+  "scripts": {
+    "format": "python scripts/format_code.py",
+    "format:check": "python scripts/format_code.py --check",
+    "validate": "python scripts/validate_code.py",
+    "validate:quick": "python scripts/validate_code.py --quick",
+    "lint:frontend": "eslint tests/frontend/playwright --report-unused-disable-directives",
+    "lint:frontend:fix": "eslint tests/frontend/playwright --fix",
+    "test:frontend:e2e": "playwright test",
+    "test:frontend:e2e:chromium": "playwright test --project=chromium"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@playwright/test": "^1.59.1",
+    "eslint": "^9.39.2",
+    "globals": "^16.5.0",
+    "prettier": "^3.8.3",
+    "prettier-plugin-yaml": "^1.1.3"
+  }
+}

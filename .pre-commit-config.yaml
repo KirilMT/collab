@@ -1,0 +1,65 @@
+---
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: collab-lock-acquire
+        name: collab-lock-acquire
+        entry: python scripts/collab_git_hook.py acquire-staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: format-check
+        name: format-check
+        entry: python scripts/format_code.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: validate-check
+        name: validate-check
+        entry: python scripts/validate_code.py --quick
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: collab-validate-and-release
+        name: collab-validate-and-release
+        entry: python scripts/collab_git_hook.py validate-and-release
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          [
+            feat,
+            fix,
+            chore,
+            refactor,
+            perf,
+            remove,
+            revert,
+            docs,
+            test,
+            style,
+            build,
+            ci,
+          ]

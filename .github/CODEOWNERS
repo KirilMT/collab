@@ -1,0 +1,14 @@
+# This is a CODEOWNERS file.
+#
+# When a pull request is opened, the people listed here will be
+# automatically requested for a review.
+
+# All files in the repository are owned by you.
+* @KirilMT
+
+# Core runtime and developer tooling
+/src/ @KirilMT
+/scripts/ @KirilMT
+/tests/ @KirilMT
+/.github/ @KirilMT
+/.agents/ @KirilMT

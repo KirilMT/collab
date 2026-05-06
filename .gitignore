@@ -3,31 +3,88 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Python tooling
+.python-version
+__pypackages__/
+
 # Virtual environments
 .venv/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
 
 # Build artifacts
 build/
 dist/
 *.egg-info/
 .eggs/
+pip-wheel-metadata/
+*.egg
 
 # Tool caches and reports
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pyre/
+.bandit_cache/
+.cache/
+.testmondata
+.testmondata-*
 
 # Logs and runtime files
 *.log
 *.pid
+logs/
 
 # OS and editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Node tooling (used for docs formatting)
+node_modules/
+
+# Frontend/test artifacts (safe to ignore if generated)
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright-artifacts/
+
+# Misc temp and backup files
+*.bak
+*.backup
+*.orig
+temp/
+output/
+
+# Collab runtime artifacts
+.daemon.pid
+.daemon.log
+.pycharm_watcher.pid
+.pycharm_watcher.log
+.startup_summary.json
+.shutdown_complete
+.stop_request
+.vscode_heartbeat

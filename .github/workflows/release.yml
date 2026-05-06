@@ -1,0 +1,65 @@
+---
+name: Release
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    if: >-
+      !contains(
+      github.event.head_commit.message,
+      'auto-format (Release Please)')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Checkout Release PR branch (if present)
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/checkout@v4
+        with:
+          ref: >-
+            refs/heads/${{
+            fromJson(steps.release.outputs.pr).headBranchName
+            }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Format release artifacts
+        if: ${{ steps.release.outputs.pr }}
+        run: |
+          TARGET_BRANCH="${{
+            fromJson(steps.release.outputs.pr).headBranchName
+          }}"
+
+          npm install --no-fund --no-audit --silent
+
+          npx prettier --write CHANGELOG.md || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A || true
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: auto-format (Release Please)" || true
+            git push origin "HEAD:${TARGET_BRANCH}"
+          else
+            echo "No formatting changes to commit."
+          fi

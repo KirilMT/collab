@@ -1,0 +1,24 @@
+---
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+    # 1. Stability: Ignore all Major (breaking) version updates (e.g., 1.x.x to
+    #   2.x.x).
+    # This prevents most build failures and unnecessary CI runs.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+    # 2. Clarity: Group low-risk updates into one PR per week.
+    groups:
+      patch-and-minor-updates:
+        patterns:
+          - "*"
+        # Only group minor (1.1 to 1.2) and patch (1.1.1 to 1.1.2) updates
+        update-types:
+          - "minor"
+          - "patch"

@@ -1,0 +1,32 @@
+# Supported types: feat, fix, chore, refactor, perf, remove, revert, docs, test, style, build, ci
+# Example: feat(lock-client): add force-release command
+
+<type>[scope][!]: <short summary>
+
+# Conventional Commit (international standard: conventionalcommits.org)
+# Use English type keywords only (global convention for tooling)
+#
+# Common types:
+#   feat      -> new feature (minor version bump)
+#   fix       -> bug fix (patch version bump)
+#   docs      -> documentation only
+#   style     -> formatting, no code change
+#   refactor  -> code change, no behavior change
+#   perf      -> performance improvement
+#   test      -> adding/fixing tests
+#   build     -> build system or dependencies
+#   ci        -> CI configuration
+#   chore     -> maintenance (no user impact)
+#   revert    -> revert previous commit
+#   remove    -> removed functionality
+#
+# Add ! after type/scope for breaking changes (major version bump)
+# Example: feat(api)!: remove deprecated endpoints
+
+<body - WHAT changed and WHY>
+
+BREAKING CHANGE: <explanation if applicable - or delete this line>
+
+# Standard git trailers:
+# Co-authored-by: Name <email@example.com>
+# Closes #123

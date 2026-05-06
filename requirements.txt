@@ -1,0 +1,20 @@
+# COLLAB Runtime — Production and Development Requirements
+
+## Production Dependencies
+# (Used in deployed collab package and live environments)
+
+# Core Supabase client for file lock management
+supabase==2.28.3
+httpx>=0.24.0
+
+# Process monitoring and system utilities
+psutil>=5.9.0
+
+# Desktop notifications (cross-platform)
+plyer>=2.1.0
+
+# Environment configuration
+python-dotenv>=1.0.1
+
+# Development-only test stub (DO NOT include in wheel)
+# pytest-supabase-mock (to be created in Phase 1)

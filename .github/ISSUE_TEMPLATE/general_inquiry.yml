@@ -1,0 +1,37 @@
+---
+name: General Inquiry
+description: >-
+  Ask a general question or submit a task that is not a bug or feature request
+title: "[Inquiry]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Please use this form for general questions, documentation updates, or
+        miscellaneous tasks.
+  - type: dropdown
+    id: inquiry-type
+    attributes:
+      label: Type of Inquiry
+      options:
+        - Question
+        - Documentation Update
+        - Task
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Please provide a clear description of your inquiry or task.
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add any other context about the inquiry here.
+    validations:
+      required: false

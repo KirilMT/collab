@@ -1,0 +1,41 @@
+-r requirements.txt
+# Development and Code Quality Tools
+# Install with: pip install -r requirements-dev.txt
+
+# Code Formatting (ESSENTIAL - Run always)
+autopep8==2.3.2
+black==26.3.1
+isort==5.13.2           # Import sorting (PEP 8 compliant)
+docformatter==1.7.7     # Docstring formatting (PEP 257 compliant)
+
+# Linting (ESSENTIAL - Run always)
+flake8==7.3.0
+ruff==0.15.7
+pylint==3.3.9
+
+# Type Checking (OPTIONAL - Run periodically)
+mypy==1.19.1
+
+# Testing (ESSENTIAL - Run always)
+pytest==8.4.2
+pytest-cov==6.3.0
+pytest-mock==3.15.1
+pytest-env==1.1.5
+pytest-testmon>=2.1.0   # Smart test selection
+diff-cover>=9.0.0
+iniconfig==2.1.0
+pluggy==1.6.0
+
+# Code Quality Analysis (OPTIONAL - Run periodically)
+bandit==1.8.6
+radon==6.0.1
+yamllint==1.37.1        # YAML file validation
+djlint==1.36.4          # HTML/Jinja template formatting and linting
+
+# Pre-commit hooks (OPTIONAL - Configure later)
+pre-commit==4.3.0
+conventional-pre-commit==4.4.0
+
+# Documentation generation
+sphinx>=7.0.0
+sphinx-rtd-theme>=2.0.0

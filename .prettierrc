@@ -1,0 +1,16 @@
+{
+  "proseWrap": "preserve",
+  "printWidth": 80,
+  "tabWidth": 2,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "overrides": [
+    {
+      "files": ["CHANGELOG.md"],
+      "options": {
+        "printWidth": 9999,
+        "proseWrap": "preserve"
+      }
+    }
+  ]
+}
