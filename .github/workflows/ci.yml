@@ -6,6 +6,11 @@ name: CI Pipeline
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python-tests:

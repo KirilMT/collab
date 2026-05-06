@@ -4,6 +4,11 @@ name: Lock Service Smoke Test
 "on":
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   smoke-test:
