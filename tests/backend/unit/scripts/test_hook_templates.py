@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -67,10 +68,14 @@ def hook_repo(tmp_path: Path) -> Path:
     )
 
     fake_python = repo / ".venv" / "bin" / "python"
+    # Use the absolute path of the running interpreter so that when the
+    # pre-push hook prepends .venv/bin to PATH, `python` never resolves
+    # back to this wrapper script causing an infinite self-referential loop.
+    real_python = sys.executable.replace("\\", "/")
     fake_python.write_text(
-        textwrap.dedent("""
+        textwrap.dedent(f"""
             #!/bin/sh
-            exec python "$@"
+            exec "{real_python}" "$@"
             """).lstrip(),
         encoding="utf-8",
     )
