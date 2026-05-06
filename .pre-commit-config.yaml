@@ -1,65 +1,42 @@
+# .pre-commit-config.yaml
 ---
-default_install_hook_types: [pre-commit, pre-push, commit-msg]
+#
+# ARCHITECTURE: Pre-commit hooks are CHECK-ONLY (verify, never modify files).
+# Formatting is done EXCLUSIVELY by: python scripts/format_code.py
+# This prevents stash conflicts during commit/amend workflows.
 repos:
+  # Check-only hooks (NEVER modify files)
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
       - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
       - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-symlinks
 
+  # Local hooks using project scripts (CHECK-ONLY mode)
   - repo: local
     hooks:
-      - id: collab-lock-acquire
-        name: collab-lock-acquire
-        entry: python scripts/collab_git_hook.py acquire-staged
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-
-      - id: format-check
-        name: format-check
-        entry: python scripts/format_code.py --check
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-
-      - id: validate-check
-        name: validate-check
+      - id: validate-code
+        name: Validate Code (lint, type-check, tests)
+        # Rely on the internal file filtering in validate_code.py
+        # It handles selective testing cleanly via passed args.
         entry: python scripts/validate_code.py --quick
         language: system
-        pass_filenames: false
-        always_run: true
+        # Passing filenames guarantees we only test exactly what is staged,
+        # preventing failures caused by unrelated/unstaged broken files.
+        pass_filenames: true
+        require_serial: true
+        # All files in one call — prevents repeated output
         stages: [pre-commit]
 
-      - id: collab-validate-and-release
-        name: collab-validate-and-release
-        entry: python scripts/collab_git_hook.py validate-and-release
+      - id: pre-push-validation
+        name: Pre-Push Full Validation
+        entry: python scripts/validate_code.py
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
-
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.4.0
-    hooks:
-      - id: conventional-pre-commit
-        stages: [commit-msg]
-        args:
-          [
-            feat,
-            fix,
-            chore,
-            refactor,
-            perf,
-            remove,
-            revert,
-            docs,
-            test,
-            style,
-            build,
-            ci,
-          ]

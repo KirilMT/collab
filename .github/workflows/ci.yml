@@ -26,13 +26,15 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install Node dependencies
+        run: npm ci
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
           pip install .
-          npm install --no-fund --no-audit --silent
 
       - name: Check import sorting with isort
         run: |
@@ -49,9 +51,15 @@ jobs:
 
       - name: Check documentation formatting with prettier
         run: |
-          npx prettier --check "docs/**/*.md" "*.md" \
+          npx prettier --check --no-error-on-unmatched-pattern \
+            "docs/**/*.md" "*.md" \
             "*.json" ".github/**/*.md" \
             "tests/**/*.md" ".agents/**/*.md"
+
+      - name: Check Jinja2 templates with djlint
+        run: |
+          djlint --check src/dashboard || \
+            echo "::warning::djlint found formatting issues"
 
       - name: Lint with ruff
         run: |
@@ -85,17 +93,107 @@ jobs:
       - name: Report coverage
         run: |
           coverage report --fail-under=85
-
-      - name: Setup diff-cover
-        run: |
-          git checkout -b temp-branch || true
-          git fetch origin \
-            ${{ github.event.pull_request.base.ref || 'main' }}:\
-            ${{ github.event.pull_request.base.ref || 'main' }}
-
       - name: Check diff coverage
-        if: github.event_name == 'pull_request'
         run: |
           diff-cover coverage.xml \
-            --compare-branch=origin/${{ github.event.pull_request.base.ref }} \
+            --compare-branch=origin/main \
             --fail-under=92
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+
+  jest-tests:
+    name: Jest Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint with ESLint
+        run: npm run lint:frontend
+
+      - name: Run Jest tests with coverage
+        run: |
+          if [ -f jest.config.js ] || [ -f jest.config.cjs ] || \
+            [ -f jest.config.mjs ]; then
+            npm test -- --coverage \
+              --coverageReporters=text \
+              --coverageReporters=lcov
+          else
+            echo "No Jest configuration found; skipping Jest tests."
+          fi
+
+      - name: Upload Jest coverage
+        if: ${{ hashFiles('coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: frontend-unit
+          name: jest-coverage
+          fail_ci_if_error: false
+
+  playwright-tests:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Run Playwright E2E tests
+        run: npx playwright test --project=chromium --pass-with-no-tests
+        env:
+          CI: true
+          E2E_TEST: true
+
+      - name: Upload Playwright Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7

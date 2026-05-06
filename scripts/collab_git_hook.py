@@ -102,7 +102,7 @@ def acquire_staged() -> int:
     if watcher_pid is not None:
         print(
             "[collab] Watcher running "
-            f"(PID: {watcher_pid}) - skipping pre-commit lock acquisition.",
+            f"(PID: {watcher_pid}) — skipping pre-commit lock acquisition.",
             file=sys.stderr,
         )
         return 0
@@ -144,10 +144,7 @@ def release_all() -> int:
         print(f"[collab] Warning: lock cleanup failed: {exc}", file=sys.stderr)
         return 0
 
-    print(
-        f"[collab] Released {released} lock(s) after successful pre-push validation.",
-        file=sys.stderr,
-    )
+    print(f"[collab] Released {released} lock(s).", file=sys.stderr)
     return 0
 
 
@@ -162,7 +159,7 @@ def validate_and_release() -> int:
     )
     if result.returncode != 0:
         print(
-            "[collab] Pre-push validation failed; skipping lock release.",
+            "[collab] Pre-push validation failed — keeping locks active.",
             file=sys.stderr,
         )
         return result.returncode

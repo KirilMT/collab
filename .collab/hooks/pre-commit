@@ -1,0 +1,49 @@
+#!/bin/sh
+# Collaborative file lock — pre-commit hook
+# Acquires locks for staged files before running the pre-commit framework.
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+PYTHON="$PROJECT_ROOT/.venv/Scripts/python.exe"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="$PROJECT_ROOT/.venv/bin/python"
+fi
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="python"
+fi
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+"$PYTHON" "$PROJECT_ROOT/scripts/collab_git_hook.py" acquire-staged
+LOCK_EXIT=$?
+if [ $LOCK_EXIT -ne 0 ]; then
+    echo ""
+    echo "[collab] Commit aborted due to file lock conflicts."
+    echo "[collab] To view details: collab active"
+    echo "[collab] To open dashboard: collab dashboard"
+    exit 1
+fi
+
+PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/Scripts/pre-commit.exe"
+VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
+VENV_BIN="$PROJECT_ROOT/.venv/bin"
+if [ ! -x "$PRE_COMMIT_BIN" ]; then
+    PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/bin/pre-commit"
+fi
+if [ ! -x "$PRE_COMMIT_BIN" ]; then
+    PRE_COMMIT_BIN="$(command -v pre-commit 2>/dev/null || true)"
+fi
+
+if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
+    if [ -d "$VENV_SCRIPTS" ]; then
+        export PATH="$VENV_SCRIPTS:$PATH"
+    fi
+    if [ -d "$VENV_BIN" ]; then
+        export PATH="$VENV_BIN:$PATH"
+    fi
+    exec "$PRE_COMMIT_BIN" run --hook-stage pre-commit "$@"
+fi
+
+exit 0

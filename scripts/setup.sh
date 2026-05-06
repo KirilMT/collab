@@ -186,6 +186,17 @@ if command -v pre-commit >/dev/null 2>&1; then
 
     if [ $HOOK_INSTALL_FAILED -eq 0 ]; then
         print_success "Git hooks installed"
+        if [ -f "$PROJECT_ROOT/install_hooks.sh" ]; then
+            if sh "$PROJECT_ROOT/install_hooks.sh" >/dev/null 2>&1; then
+                print_success "Collab hook overlay installed"
+            else
+                echo "   ${YELLOW}Warning: collab hook overlay installation failed.${NC}" >&2
+                ((ERROR_COUNT++))
+            fi
+        else
+            echo "   ${YELLOW}Warning: install_hooks.sh not found.${NC}" >&2
+            ((ERROR_COUNT++))
+        fi
     else
         echo "   ${YELLOW}Warning: pre-commit hook installation failed.${NC}" >&2
         ((ERROR_COUNT++))

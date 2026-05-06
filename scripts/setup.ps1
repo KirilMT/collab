@@ -399,6 +399,38 @@ if (Test-Path $preCommitExe) {
     if (-not $hookInstallFailed) {
         Write-Host "   Git hooks installed " -NoNewline -ForegroundColor White
         Write-Host "OK" -ForegroundColor Green
+
+        $sourceHooksDir = Join-Path $projectRoot ".collab\hooks"
+        $targetHooksDir = Join-Path $projectRoot ".git\hooks"
+        $hookNames = @("pre-commit", "post-commit", "pre-push")
+        $overlayFailed = $false
+
+        if (Test-Path $sourceHooksDir) {
+            foreach ($hookName in $hookNames) {
+                $src = Join-Path $sourceHooksDir $hookName
+                $dst = Join-Path $targetHooksDir $hookName
+                if (-not (Test-Path $src)) {
+                    $overlayFailed = $true
+                    break
+                }
+                Copy-Item -Path $src -Destination $dst -Force
+            }
+
+            if (-not $overlayFailed) {
+                Write-Host "   Collab hook overlay installed " -NoNewline -ForegroundColor White
+                Write-Host "OK" -ForegroundColor Green
+            }
+            else {
+                Write-Host "   Collab hook overlay " -NoNewline -ForegroundColor White
+                Write-Host "WARN" -ForegroundColor Yellow
+                $script:ErrorCount++
+            }
+        }
+        else {
+            Write-Host "   Collab hook templates missing (.collab/hooks) " -NoNewline -ForegroundColor White
+            Write-Host "WARN" -ForegroundColor Yellow
+            $script:ErrorCount++
+        }
     }
     else {
         Write-Host "   Git hook installation " -NoNewline -ForegroundColor White
