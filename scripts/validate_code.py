@@ -291,8 +291,11 @@ def _get_python_executable() -> str:
     """
     scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
     project_root = Path(__file__).parent.parent
-    venv_python = project_root / ".venv" / scripts_dir / (
-        "python.exe" if sys.platform == "win32" else "python"
+    venv_python = (
+        project_root
+        / ".venv"
+        / scripts_dir
+        / ("python.exe" if sys.platform == "win32" else "python")
     )
 
     if venv_python.exists():
@@ -772,6 +775,18 @@ def validate_python_backend(
 
     if python_targets:
         print_section("Step 6/11: Type Checking (mypy)")
+        # CRITICAL: Remove .mypy_cache to ensure clean state.
+        # Even with --no-incremental, stale cache can interfere with type inference.
+        # This ensures local validation matches CI exactly (CI runs on fresh VMs).
+        mypy_cache_dir = Path(".mypy_cache")
+        if mypy_cache_dir.exists():
+            try:
+                shutil.rmtree(mypy_cache_dir)
+                msg = "[INFO] Cleaned stale .mypy_cache for fresh type check."
+                print(f"{Colors.OKCYAN}{msg}{Colors.ENDC}")
+            except Exception as e:
+                msg = f"[WARN] Could not remove .mypy_cache: {e}"
+                print(f"{Colors.WARNING}{msg}{Colors.ENDC}")
         success, _ = run_command(
             ["mypy", "--no-incremental"] + python_targets,
             "Type checking",
@@ -1084,9 +1099,7 @@ def validate_javascript_frontend(
 
     if files:
         eslint_targets = [
-            f
-            for f in files
-            if f.endswith((".js", ".jsx", ".ts", ".tsx"))
+            f for f in files if f.endswith((".js", ".jsx", ".ts", ".tsx"))
         ]
         html_targets = [f for f in files if f.endswith(".html")]
         jest_targets = [f for f in files if f.endswith(".test.js")]
@@ -1111,9 +1124,7 @@ def validate_javascript_frontend(
     print_section("Step 1/3: JavaScript Linting (eslint)")
     if files and eslint_targets:
         success, _ = run_command(
-            ["npx", "eslint"]
-            + eslint_targets
-            + ["--report-unused-disable-directives"],
+            ["npx", "eslint"] + eslint_targets + ["--report-unused-disable-directives"],
             "ESLint check",
             force_all_apps=force_all_apps,
             check=False,

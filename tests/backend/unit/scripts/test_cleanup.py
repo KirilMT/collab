@@ -102,17 +102,21 @@ class TestCleanItemsAndGlob:
 class TestCleanFunctions:
     def test_clean_coverage(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(cleanup, "ROOT", tmp_path)
+        (tmp_path / "coverage").mkdir()
+        (tmp_path / "coverage" / "lcov.info").write_text("lcov", encoding="utf-8")
         (tmp_path / ".coverage").write_text("data", encoding="utf-8")
         (tmp_path / "coverage.xml").write_text("<xml/>", encoding="utf-8")
         count = cleanup.clean_coverage(dry_run=False)
-        assert count >= 2
+        assert count >= 3
         assert "Cleaning coverage" in capsys.readouterr().out
 
     def test_clean_test_output(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(cleanup, "ROOT", tmp_path)
         (tmp_path / "test-results").mkdir()
+        (tmp_path / "playwright-report").mkdir()
+        (tmp_path / "blob-report").mkdir()
         count = cleanup.clean_test_output(dry_run=False)
-        assert count >= 1
+        assert count >= 3
         assert "Cleaning test output" in capsys.readouterr().out
 
     def test_clean_caches(self, tmp_path, monkeypatch, capsys):

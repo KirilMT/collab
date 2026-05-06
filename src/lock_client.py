@@ -1420,21 +1420,27 @@ class LockClient:
         else:
             # Unix/Linux/Mac: only use start_new_session if NOT tracking a parent
             # start_new_session creates a new process group, detaching from parent
-            popen_kwargs = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "cwd": _PROJECT_ROOT,
-            }
             if not parent_pid:
                 # No parent to track - can safely create new session
-                popen_kwargs["start_new_session"] = True
                 logger.debug("Starting detached watcher (new session)")
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=_PROJECT_ROOT,
+                    start_new_session=True,
+                )
             else:
                 # Tied to parent - stay in same process group
                 logger.debug(
                     "Starting watcher tied to parent %d (same session)", parent_pid
                 )
-            proc = subprocess.Popen(cmd, **popen_kwargs)
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=_PROJECT_ROOT,
+                )
         if sys.platform != "win32":
             # On Linux/Mac, the spawned proc.pid is the real child.
             # We record it immediately for tracking, though the child
@@ -1791,7 +1797,7 @@ class LockClient:
         """
         print("Scanning for orphaned lock_client processes...")
         killed = 0
-        pids_to_check = set()
+        pids_to_check: set[int] = set()
 
         if sys.platform == "win32":
             # Check multiple Python executable names

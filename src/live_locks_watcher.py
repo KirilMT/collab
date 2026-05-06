@@ -1497,6 +1497,8 @@ def _get_cmdline_for_pid_local(pid: int) -> Optional[str]:
             logger.debug("PowerShell cmdline lookup failed for pid=%d: %s", pid, exc)
         return None
 
+    return None
+
 
 def _cmdline_matches_watcher_local(cmdline: Optional[str]) -> bool:
     if not cmdline:

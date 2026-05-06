@@ -456,6 +456,24 @@ def test_get_cmdline_for_pid_local_psutil_scalar_cmdline(monkeypatch):
     assert out == "python watcher"
 
 
+def test_get_cmdline_for_pid_local_non_windows_without_psutil(monkeypatch):
+    """When psutil is unavailable on non-Windows, cmdline lookup should return None."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+
+    import builtins as _builtins
+
+    real_import = _builtins.__import__
+
+    def _no_psutil(name, *a, **k):
+        if name == "psutil":
+            raise ImportError("no psutil")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(_builtins, "__import__", _no_psutil)
+    assert mod._get_cmdline_for_pid_local(12345) is None
+
+
 def test_existing_watcher_running_handles_cmdline_probe_exception(
     monkeypatch, tmp_path
 ):

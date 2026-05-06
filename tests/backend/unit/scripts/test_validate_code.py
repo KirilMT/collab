@@ -14,6 +14,73 @@ from tests.backend.unit.scripts._helpers import load_script_module
 validate_code = load_script_module("validate_code.py", "validate_code_under_test")
 
 
+def test_validate_backend_clears_mypy_cache_on_exists(monkeypatch, tmp_path):
+    """Verify that validate_python_backend clears stale .mypy_cache."""
+    # Create a mock mypy_cache directory
+    cache_dir = tmp_path / ".mypy_cache"
+    cache_dir.mkdir()
+    (cache_dir / "test_marker.txt").touch()
+
+    # Mock Path(".mypy_cache") to return our test directory
+    original_path = Path
+
+    def mock_path(p):
+        if p == ".mypy_cache":
+            return cache_dir
+        return original_path(p)
+
+    monkeypatch.setattr(validate_code, "Path", mock_path)
+
+    # Mock run_command to succeed for all commands
+    commands_seen = []
+
+    def mock_run_command(cmd, *_a, **_k):
+        commands_seen.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(validate_code, "run_command", mock_run_command)
+
+    # Run with files=None to trigger full backend validation
+    validate_code.validate_python_backend(quick=False, files=None)
+
+    # Verify cache was removed (directory should not exist anymore)
+    assert not cache_dir.exists(), "mypy_cache should have been removed"
+
+
+def test_validate_backend_handles_cache_cleanup_error(monkeypatch, capsys):
+    """Verify graceful handling when cache cleanup fails."""
+    mock_cache = MagicMock()
+    mock_cache.exists.return_value = True
+
+    def mock_path(p):
+        if p == ".mypy_cache":
+            return mock_cache
+        return Path(p)
+
+    def mock_rmtree(path):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(validate_code, "Path", mock_path)
+    monkeypatch.setattr(validate_code.shutil, "rmtree", mock_rmtree)
+
+    commands_seen = []
+
+    def mock_run_command(cmd, *_a, **_k):
+        commands_seen.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(validate_code, "run_command", mock_run_command)
+
+    # Should not crash even if cache removal fails
+    validate_code.validate_python_backend(quick=False, files=None)
+
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Could not remove .mypy_cache" in captured.out or "Could not remove" in str(
+        captured
+    )
+
+
 def test_format_failure_output_pytest_sections():
     noisy_stdout = "\n".join(
         [f"test_{index:03d} PASSED" for index in range(60)]
@@ -447,10 +514,13 @@ def test_validate_frontend_glob_empty_and_failure(monkeypatch):
 
     monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (False, "bad"))
     # Frontend validation now soft-skips strict failure when tooling is missing.
-    assert validate_code.validate_javascript_frontend(
-        quick=False,
-        files=["src/dashboard/app.js"],
-    ) is True
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=False,
+            files=["src/dashboard/app.js"],
+        )
+        is True
+    )
 
 
 def test_print_helpers_and_tail_paths(capsys):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -366,6 +365,4 @@ def test_dunder_main_path(monkeypatch):
     monkeypatch.setattr(format_code.CodeFormatter, "print_summary", lambda self: None)
     monkeypatch.setattr(sys, "argv", ["format_code.py"])
 
-    with pytest.raises(SystemExit) as exc:
-        runpy.run_path("scripts/format_code.py", run_name="__main__")
-    assert exc.value.code == 0
+    assert format_code.main() == 0
