@@ -40,9 +40,7 @@ def _run_cli() -> None:
 
     setup_collab_logging(collab_dir=_COLLAB_ROOT)
 
-    parser = ArgumentParser(
-        description="Collaborative File Lock Manager (Supabase)"
-    )
+    parser = ArgumentParser(description="Collaborative File Lock Manager (Supabase)")
     sub = parser.add_subparsers(dest="command")
 
     # acquire
@@ -189,9 +187,7 @@ def _run_cli() -> None:
         "history-prune",
     }
     quiet_ctx = (
-        _quiet_console_loggers()
-        if args.command in quiet_commands
-        else nullcontext()
+        _quiet_console_loggers() if args.command in quiet_commands else nullcontext()
     )
 
     with quiet_ctx:

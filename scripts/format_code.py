@@ -323,9 +323,7 @@ class CodeFormatter:
             ),
             (
                 "Ruff linting & fixing",
-                ["ruff", "check", "--no-cache"]
-                + targets
-                + ["--fix", "--unsafe-fixes"],
+                ["ruff", "check", "--no-cache"] + targets + ["--fix", "--unsafe-fixes"],
                 ["ruff", "check", "--no-cache"] + targets,
             ),
             (

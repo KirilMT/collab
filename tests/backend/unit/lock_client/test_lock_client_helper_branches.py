@@ -1052,6 +1052,7 @@ def test_get_create_client_spec_getattr_exception(monkeypatch):
     class _FakeSupa:
         def create_client(*a, **k):
             pass
+
         __file__ = None
 
         @property

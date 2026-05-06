@@ -61,8 +61,7 @@ def test_src_main_exception_path(monkeypatch, capsys):
     monkeypatch.setattr(
         main_mod.sys,
         "exit",
-        lambda code: exits.append(code)
-        or (_ for _ in ()).throw(SystemExit(code)),
+        lambda code: exits.append(code) or (_ for _ in ()).throw(SystemExit(code)),
     )
 
     with pytest.raises(SystemExit) as exc:

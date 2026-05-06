@@ -944,9 +944,7 @@ def test_main_existing_watcher_guard_pycharm_watcher_label(monkeypatch, tmp_path
         mod.main()
 
     assert ex.value.code == 0
-    assert any(
-        "python -m src.live_locks_watcher" in m for m in info_messages
-    )
+    assert any("python -m src.live_locks_watcher" in m for m in info_messages)
 
 
 def test_main_existing_watcher_guard_uses_shortened_cmd_label(monkeypatch, tmp_path):
