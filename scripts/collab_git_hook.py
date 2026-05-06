@@ -102,7 +102,8 @@ def acquire_staged() -> int:
     if watcher_pid is not None:
         print(
             "[collab] Watcher running "
-            f"(PID: {watcher_pid}) - skipping pre-commit lock acquisition."
+            f"(PID: {watcher_pid}) - skipping pre-commit lock acquisition.",
+            file=sys.stderr,
         )
         return 0
 
@@ -116,7 +117,10 @@ def acquire_staged() -> int:
         return 1 if os.getenv("LOCK_STRICT", "0") == "1" else 0
 
     if ok:
-        print(f"[collab] Locks acquired for {len(staged_files)} staged file(s).")
+        print(
+            f"[collab] Locks acquired for {len(staged_files)} staged file(s).",
+            file=sys.stderr,
+        )
         return 0
 
     print("[collab] Commit blocked due to lock conflicts:", file=sys.stderr)
@@ -140,7 +144,10 @@ def release_all() -> int:
         print(f"[collab] Warning: lock cleanup failed: {exc}", file=sys.stderr)
         return 0
 
-    print(f"[collab] Released {released} lock(s) after successful pre-push validation.")
+    print(
+        f"[collab] Released {released} lock(s) after successful pre-push validation.",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -150,6 +157,7 @@ def validate_and_release() -> int:
     result = subprocess.run(
         [sys.executable, str(validate_script), "--quick"],
         cwd=PROJECT_ROOT,
+        stdout=subprocess.DEVNULL,
         check=False,
     )
     if result.returncode != 0:

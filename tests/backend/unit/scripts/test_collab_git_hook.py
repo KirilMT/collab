@@ -146,11 +146,11 @@ def test_acquire_staged_no_files(monkeypatch):
 def test_acquire_staged_skips_when_watcher_running(monkeypatch):
     monkeypatch.setattr(hook, "_get_staged_files", lambda: ["a.py"])
     monkeypatch.setattr(hook, "_watcher_pid", lambda: 999)
-    out = io.StringIO()
-    with redirect_stdout(out):
+    err = io.StringIO()
+    with redirect_stderr(err):
         rc = hook.acquire_staged()
     assert rc == 0
-    assert "Watcher running" in out.getvalue()
+    assert "Watcher running" in err.getvalue()
 
 
 def test_acquire_staged_strict_failure(monkeypatch):
@@ -220,11 +220,11 @@ def test_acquire_staged_success(monkeypatch):
             return True, [], "ok"
 
     monkeypatch.setattr("src.lock_client.LockClient", lambda: _Client())
-    out = io.StringIO()
-    with redirect_stdout(out):
+    err = io.StringIO()
+    with redirect_stderr(err):
         rc = hook.acquire_staged()
     assert rc == 0
-    assert "Locks acquired" in out.getvalue()
+    assert "Locks acquired" in err.getvalue()
 
 
 def test_release_all_success_and_failure(monkeypatch):
@@ -233,10 +233,10 @@ def test_release_all_success_and_failure(monkeypatch):
             return 3
 
     monkeypatch.setattr("src.lock_client.LockClient", lambda: _ClientOk())
-    out = io.StringIO()
-    with redirect_stdout(out):
+    err = io.StringIO()
+    with redirect_stderr(err):
         assert hook.release_all() == 0
-    assert "Released 3" in out.getvalue()
+    assert "Released 3" in err.getvalue()
 
     class _ClientBad:
         def __init__(self):

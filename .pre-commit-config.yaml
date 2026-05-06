@@ -18,7 +18,6 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-        verbose: true
 
       - id: format-check
         name: format-check
@@ -43,7 +42,6 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
-        verbose: true
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
