@@ -28,7 +28,7 @@ if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
     if [ -d "$VENV_BIN" ]; then
         export PATH="$VENV_BIN:$PATH"
     fi
-    "$PRE_COMMIT_BIN" run --hook-stage pre-push "$@"
+    "$PRE_COMMIT_BIN" run --hook-stage pre-push
     VALIDATION_EXIT=$?
     if [ $VALIDATION_EXIT -ne 0 ]; then
         echo "[collab] Pre-push validation failed — keeping locks active."
