@@ -7,7 +7,23 @@ name = "collab"
 version = "0.1.0"
 description = "Collaborative file locking runtime"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+authors = [
+  { name = "Collab Runtime Team" }
+]
+keywords = ["collaboration", "file-locking", "supabase", "cli", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Version Control",
+]
 dependencies = [
   "python-dotenv>=1.0.1",
   "supabase>=2.4.0",
@@ -19,6 +35,7 @@ dependencies = [
 [project.scripts]
 collab = "src.lock_client:main"
 collab-watcher = "src.live_locks_watcher:main"
+collab-legacy = "src.main:main"
 
 [tool.setuptools]
 packages = ["src"]

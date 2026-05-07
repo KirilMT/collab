@@ -47,10 +47,10 @@ This roadmap is a living document that evolves with the project.
 
 ## 🔥 ACTIVE WORK
 
-**Current Phase:** Phase 0.5 — Infrastructure Scaffolding
-**Status:** ✅ Initial Extraction Complete — Infrastructure Scaffolding Underway
-**Started:** May 4, 2026
-**Target Completion:** May 4, 2026
+**Current Phase:** Phase 2 — Update Extension to Call Installed Package
+**Status:** 📅 Ready to begin — Phase 1 complete, exit criteria verified
+**Started:** May 8, 2026
+**Target Completion:** May 9, 2026
 
 > [!NOTE]
 > Infrastructure scaffolding: Complete repository setup with development tooling, CI/CD, testing framework, and AI agent governance.
@@ -107,9 +107,9 @@ This roadmap is a living document that evolves with the project.
 
 | Milestone                                  | Target Date  | Status |
 | ------------------------------------------ | ------------ | ------ |
-| Phase 0.5: Infrastructure complete         | May 4, 2026  | 🔄     |
-| Phase 0: Behavioral contract approved      | May 5, 2026  | ⏳     |
-| Phase 1: Package CLI parity verified       | May 7, 2026  | ⏳     |
+| Phase 0.5: Infrastructure complete         | May 5, 2026  | ✅     |
+| Phase 0: Behavioral contract approved      | May 5, 2026  | ✅     |
+| Phase 1: Package CLI parity verified       | May 7, 2026  | ✅     |
 | Phase 2: Extension calls installed package | May 9, 2026  | ⏳     |
 | Phase 3: Setup scripts working             | May 10, 2026 | ⏳     |
 | Phase 4: mockCMMS `.collab` removed        | May 12, 2026 | ⏳     |
