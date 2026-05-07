@@ -1,9 +1,11 @@
 # setup.ps1 - Enhanced Collab Installation Script
 # Provides detailed feedback and error handling for Windows environments
+# Supports non-interactive mode for automation and CI provisioning
 
-# Accept parameter to suppress header/footer when called from dev script
+# Accept parameters
 param(
-    [switch]$CalledFromDev = $false
+    [switch]$CalledFromDev = $false,
+    [switch]$NonInteractive = $false
 )
 
 # Ensure we are in the project root
@@ -41,7 +43,7 @@ function Refresh-EnvPath {
 }
 
 # Step 1: Check Prerequisites
-Write-Host "[Step 1/5] Checking prerequisites..." -ForegroundColor Yellow
+Write-Host "[Step 1/7] Checking prerequisites..." -ForegroundColor Yellow
 
 # Step 1.1: Check for Python
 function Check-Python {
@@ -214,7 +216,7 @@ if (-not (Check-Git)) {
 }
 
 # Step 2: Create Virtual Environment
-Write-Host "`n[Step 2/5] Setting up virtual environment..." -ForegroundColor Yellow
+Write-Host "`n[Step 2/7] Setting up virtual environment..." -ForegroundColor Yellow
 if (-not (Test-Path ".venv")) {
     Write-Host "   Creating " -NoNewline -ForegroundColor White
     Write-Host ".venv" -NoNewline -ForegroundColor Magenta
@@ -235,7 +237,7 @@ else {
 }
 
 # Step 3: Install Dependencies
-Write-Host "`n[Step 3/5] Installing core dependencies..." -ForegroundColor Yellow
+Write-Host "`n[Step 3/7] Installing core dependencies..." -ForegroundColor Yellow
 
 $pipPath = ".\.venv\Scripts\pip.exe"
 $pythonPath = ".\.venv\Scripts\python.exe"
@@ -301,25 +303,50 @@ else {
 }
 
 # Step 4: Install Collab Package
-Write-Host "`n[Step 4/5] Installing collab package..." -ForegroundColor Yellow
+Write-Host "`n[Step 4/7] Installing collab package..." -ForegroundColor Yellow
 Write-Host "   Installing " -NoNewline -ForegroundColor White
 Write-Host "collab" -NoNewline -ForegroundColor Magenta
-Write-Host " ..." -ForegroundColor White
+Write-Host " from PyPI..." -ForegroundColor White
 
-& $pipPath install .
+# Check if collab is already installed (idempotent)
+$collabCheckOutput = (& $pythonPath -m pip show collab 2>&1)
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "   collab package installed " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    $versionLine = $collabCheckOutput | Where-Object { $_ -match "^Version:" }
+    if ($versionLine) {
+        $installedVersion = $versionLine -replace "^Version:\s*", ""
+        Write-Host "   collab $installedVersion already installed " -NoNewline -ForegroundColor White
+        Write-Host "OK" -ForegroundColor Green
+    }
 }
 else {
-    Write-Host "   collab package installation " -NoNewline -ForegroundColor White
-    Write-Host "FAILED" -ForegroundColor Red
-    Write-Warning "Check the output above for errors."
-    $script:ErrorCount++
+    # Not installed, install it from PyPI
+    # Support version pinning via environment variable or default to latest
+    $collabVersion = $env:COLLAB_VERSION
+    if ($collabVersion) {
+        $packageSpec = "collab==$collabVersion"
+        Write-Host "   Installing pinned version: $collabVersion..." -ForegroundColor Gray
+    }
+    else {
+        $packageSpec = "collab"
+        Write-Host "   Installing latest version from PyPI..." -ForegroundColor Gray
+    }
+
+    & $pipPath install $packageSpec --quiet
+    if ($LASTEXITCODE -eq 0) {
+        $collabVersion = & $pythonPath -m pip show collab 2>&1 | Where-Object { $_ -match "^Version:" } | ForEach-Object { $_ -replace "^Version:\s*", "" }
+        Write-Host "   collab $collabVersion installed " -NoNewline -ForegroundColor White
+        Write-Host "OK" -ForegroundColor Green
+    }
+    else {
+        Write-Host "   collab package installation " -NoNewline -ForegroundColor White
+        Write-Host "FAILED" -ForegroundColor Red
+        Write-Warning "Check the output above for errors."
+        $script:ErrorCount++
+    }
 }
 
 # Step 5: Environment Configuration
-Write-Host "`n[Step 5/5] Configuring environment..." -ForegroundColor Yellow
+Write-Host "`n[Step 5/7] Configuring environment..." -ForegroundColor Yellow
 if (-not (Test-Path ".env")) {
     if (Test-Path ".env.example") {
         Copy-Item ".env.example" ".env"
@@ -444,6 +471,98 @@ else {
     Write-Host "   Run scripts/setup-dev.ps1 to install and register repository hooks." -ForegroundColor Gray
 }
 
+# Step 6: VS Code Extension Installation (Optional)
+Write-Host "`n[Step 6/7] Installing VS Code extension (optional)..." -ForegroundColor Yellow
+
+$vscodeExtensionPath = Join-Path $projectRoot "vscode-extension" "collab-locks"
+if (Test-Path $vscodeExtensionPath) {
+    $packageJsonPath = Join-Path $vscodeExtensionPath "package.json"
+    if (Test-Path $packageJsonPath) {
+        Write-Host "   Found VS Code extension at " -NoNewline -ForegroundColor White
+        Write-Host "vscode-extension/collab-locks" -NoNewline -ForegroundColor Magenta
+        Write-Host " ..." -ForegroundColor White
+
+        if (Get-Command code -ErrorAction SilentlyContinue) {
+            Write-Host "   VS Code CLI found, installing extension..." -ForegroundColor Gray
+            try {
+                Push-Location $vscodeExtensionPath
+                code --install-extension $vscodeExtensionPath --force 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "   VS Code extension installed " -NoNewline -ForegroundColor White
+                    Write-Host "OK" -ForegroundColor Green
+                }
+                else {
+                    Write-Host "   VS Code extension installation " -NoNewline -ForegroundColor White
+                    Write-Host "WARN" -ForegroundColor Yellow
+                }
+                Pop-Location
+            }
+            catch {
+                Write-Host "   VS Code extension installation " -NoNewline -ForegroundColor White
+                Write-Host "WARN" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "   VS Code CLI not found. Extension must be installed manually:" -ForegroundColor Gray
+            Write-Host "     1. Open VS Code" -ForegroundColor Gray
+            Write-Host "     2. Go to Extensions (Ctrl+Shift+X)" -ForegroundColor Gray
+            Write-Host "     3. Search for 'collab-locks'" -ForegroundColor Gray
+            Write-Host "     Or run: code --install-extension vscode-extension/collab-locks" -ForegroundColor Gray
+        }
+    }
+}
+else {
+    Write-Host "   VS Code extension not found " -NoNewline -ForegroundColor White
+    Write-Host "SKIPPED" -ForegroundColor Yellow
+}
+
+# Step 7: Smoke Tests (Health Checks)
+Write-Host "`n[Step 7/7] Running smoke tests..." -ForegroundColor Yellow
+
+$smokeTestsPassed = $true
+
+# Test 1: Check if collab command is available
+Write-Host "   Testing collab command availability..." -ForegroundColor Gray
+$collabCmd = Join-Path $projectRoot ".venv" "Scripts" "collab.exe"
+if (Test-Path $collabCmd) {
+    # Use --help for health check because collab CLI does not expose --version.
+    & $collabCmd --help 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "   collab command available " -NoNewline -ForegroundColor White
+        Write-Host "OK" -ForegroundColor Green
+    }
+    else {
+        Write-Host "   collab command available " -NoNewline -ForegroundColor White
+        Write-Host "WARN" -ForegroundColor Yellow
+        $smokeTestsPassed = $false
+    }
+}
+else {
+    Write-Host "   collab command not found " -NoNewline -ForegroundColor White
+    Write-Host "WARN" -ForegroundColor Yellow
+    $smokeTestsPassed = $false
+}
+
+# Test 2: Verify supabase credentials (if .env exists)
+Write-Host "   Validating Supabase configuration..." -ForegroundColor Gray
+if (Test-Path ".env") {
+    $envContent = Get-Content ".env" -Raw
+    if ($envContent -match "SUPABASE_URL.*=" -and $envContent -match "SUPABASE_ANON_KEY.*=") {
+        Write-Host "   Supabase configuration present " -NoNewline -ForegroundColor White
+        Write-Host "OK" -ForegroundColor Green
+    }
+    else {
+        Write-Host "   Supabase credentials not set " -NoNewline -ForegroundColor White
+        Write-Host "WARN" -ForegroundColor Yellow
+        $smokeTestsPassed = $false
+    }
+}
+
+if ($smokeTestsPassed) {
+    Write-Host "   All smoke tests passed " -NoNewline -ForegroundColor White
+    Write-Host "OK" -ForegroundColor Green
+}
+
 # Final Summary - Only show if not called from dev script
 if (-not $CalledFromDev) {
     Write-Host "`n========================================" -ForegroundColor Cyan
@@ -463,8 +582,8 @@ if (-not $CalledFromDev) {
     Write-Host "  1. Activate the virtual environment:" -ForegroundColor White
     Write-Host "     .\.venv\Scripts\Activate.ps1" -ForegroundColor Magenta
     Write-Host ""
-    Write-Host "  2. Run a quick lock check:" -ForegroundColor White
-    Write-Host "     python -m src active" -ForegroundColor Magenta
+    Write-Host "  2. Verify collab is installed and working:" -ForegroundColor White
+    Write-Host "     collab active" -ForegroundColor Magenta
     Write-Host ""
     Write-Host "  3. (Optional) Setup development environment:" -ForegroundColor White
     Write-Host "     .\scripts\setup-dev.ps1" -ForegroundColor Magenta

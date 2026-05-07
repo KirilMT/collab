@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# setup.sh - Collab Installation Script
+# setup.sh - Enhanced Collab Installation Script
 # Provides detailed feedback and error handling for Unix/Linux/macOS environments
+# Supports non-interactive mode for automation and CI provisioning
 
 set -e
 
@@ -23,7 +24,7 @@ NC='\033[0m' # No Color
 
 print_banner() {
     echo -e "\n${CYAN}========================================"
-    echo -e "   Collab Runtime Installation Script"
+    echo -e "   Collab Installation Script"
     echo -e "========================================${NC}\n"
 }
 
@@ -39,21 +40,55 @@ print_success() {
     echo -e "${GREEN}✓ $1${NC}"
 }
 
-print_info() {
-    echo -e "${WHITE}$1${NC}"
-}
+# Parse command line arguments
+NON_INTERACTIVE=false
+CALLED_FROM_DEV=false
 
-print_banner
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --non-interactive|-n)
+            NON_INTERACTIVE=true
+            shift
+            ;;
+        --called-from-dev)
+            CALLED_FROM_DEV=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
-print_step 1 4 "Checking prerequisites..."
+# Only show header if not called from dev script
+if [ "$CALLED_FROM_DEV" = false ]; then
+    print_banner
+fi
 
-# Check Python
-if ! command -v python3 &> /dev/null; then
+print_step 1 7 "Checking prerequisites..."
+
+# Check Python (prefer python3, fallback to python if version output is valid)
+PYTHON_CMD=""
+PYTHON_VERSION=""
+
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        VERSION_OUTPUT=$($candidate --version 2>&1 || true)
+        VERSION_VALUE=$(echo "$VERSION_OUTPUT" | awk '{print $2}')
+        if echo "$VERSION_VALUE" | grep -Eq '^[0-9]+\.[0-9]+'; then
+            PYTHON_CMD="$candidate"
+            PYTHON_VERSION="$VERSION_VALUE"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON_CMD" ]; then
     print_error "Python 3 not found. Please install Python 3.10+ from https://www.python.org"
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
 echo "   Found: Python $PYTHON_VERSION" >&2
 
 MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
@@ -76,11 +111,11 @@ GIT_VERSION=$(git --version)
 echo "   Found: $GIT_VERSION" >&2
 print_success "Git OK"
 
-print_step 2 4 "Setting up virtual environment..."
+print_step 2 7 "Setting up virtual environment..."
 
 if [ ! -d ".venv" ]; then
     echo "   Creating ${MAGENTA}.venv${NC}..." >&2
-    python3 -m venv .venv
+    "$PYTHON_CMD" -m venv .venv
     if [ $? -eq 0 ]; then
         print_success ".venv created"
     else
@@ -92,10 +127,21 @@ else
     print_success ".venv exists"
 fi
 
-print_step 3 4 "Installing dependencies..."
+print_step 3 7 "Installing core dependencies..."
 
-VENV_PYTHON=".venv/bin/python"
-VENV_PIP=".venv/bin/pip"
+VENV_LAYOUT=""
+if [ -f ".venv/bin/python" ] && [ -f ".venv/bin/pip" ]; then
+    VENV_PYTHON=".venv/bin/python"
+    VENV_PIP=".venv/bin/pip"
+    VENV_LAYOUT="posix"
+elif [ -f ".venv/Scripts/python.exe" ] && [ -f ".venv/Scripts/pip.exe" ]; then
+    VENV_PYTHON=".venv/Scripts/python.exe"
+    VENV_PIP=".venv/Scripts/pip.exe"
+    VENV_LAYOUT="windows"
+else
+    print_error "Could not locate virtual environment Python/pip under .venv/bin or .venv/Scripts"
+    exit 1
+fi
 
 if [ ! -f "$VENV_PIP" ]; then
     print_error "pip not found at $VENV_PIP"
@@ -107,10 +153,12 @@ echo "   Ensuring pip is up to date..." >&2
 
 if [ -f "requirements.txt" ]; then
     echo "   Installing core dependencies from ${MAGENTA}requirements.txt${NC}..." >&2
-
+    echo ""
     if "$VENV_PIP" install -r requirements.txt; then
+        echo ""
         print_success "Core dependencies installed"
     else
+        echo ""
         print_error "Core dependencies installation failed"
         exit 1
     fi
@@ -119,15 +167,51 @@ else
     ((ERROR_COUNT++))
 fi
 
-echo "   Installing collab package..." >&2
-if "$VENV_PIP" install .; then
-    print_success "collab package installed"
+print_step 4 7 "Installing collab package..."
+echo "   Installing ${MAGENTA}collab${NC} from PyPI..." >&2
+
+COLLAB_CHECK=$("$VENV_PIP" show collab 2>&1 || true)
+if echo "$COLLAB_CHECK" | grep -q "^Name: collab"; then
+    INSTALLED_VERSION=$(echo "$COLLAB_CHECK" | grep "^Version:" | cut -d' ' -f2)
+    echo "   collab $INSTALLED_VERSION already installed" >&2
+    print_success "collab installed"
 else
-    print_error "collab package installation failed"
-    ((ERROR_COUNT++))
+    if [ -n "$COLLAB_VERSION" ]; then
+        PACKAGE_SPEC="collab==$COLLAB_VERSION"
+        echo "   Installing pinned version: $COLLAB_VERSION..." >&2
+    else
+        PACKAGE_SPEC="collab"
+        echo "   Installing latest version from PyPI..." >&2
+    fi
+
+    if "$VENV_PIP" install "$PACKAGE_SPEC" --quiet; then
+        INSTALLED_VERSION=$("$VENV_PIP" show collab 2>&1 | grep "^Version:" | cut -d' ' -f2)
+        echo "   collab $INSTALLED_VERSION installed" >&2
+        print_success "collab installed"
+    else
+        print_error "collab package installation failed"
+        ((ERROR_COUNT++))
+    fi
 fi
 
-print_step 4 4 "Validating locking setup..."
+print_step 5 7 "Configuring environment..."
+
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        cp ".env.example" ".env"
+        echo "   Created ${MAGENTA}.env${NC} from ${MAGENTA}.env.example${NC}" >&2
+        print_success ".env created"
+    else
+        echo "   ${YELLOW}Warning: .env.example not found. You will need to create .env manually.${NC}" >&2
+        ((ERROR_COUNT++))
+    fi
+else
+    echo "   ${MAGENTA}.env${NC} already exists" >&2
+    print_success ".env exists"
+fi
+
+echo ""
+echo -e "${YELLOW}[Locking Setup] Validating collaborative locking prerequisites...${NC}"
 
 echo "   Checking supabase-py import..." >&2
 if "$VENV_PYTHON" -c "import supabase" 2>/dev/null; then
@@ -169,9 +253,6 @@ if [ -f "$ENV_FILE" ]; then
         echo "   Set SUPABASE_URL and SUPABASE_ANON_KEY to real values." >&2
         ((ERROR_COUNT++))
     fi
-else
-    echo "   ${YELLOW}Warning: .env not found. Copy .env.example to .env and set Supabase credentials.${NC}" >&2
-    ((ERROR_COUNT++))
 fi
 
 if command -v pre-commit >/dev/null 2>&1; then
@@ -202,30 +283,107 @@ if command -v pre-commit >/dev/null 2>&1; then
         ((ERROR_COUNT++))
     fi
 else
-    echo "   ${YELLOW}Warning: pre-commit not found. Install it manually for repository hooks.${NC}" >&2
+    echo "   ${YELLOW}Warning: pre-commit not found. Run ./scripts/setup-dev.sh to install repository hooks.${NC}" >&2
 fi
+
+print_step 6 7 "Installing VS Code extension (optional)..."
 
 VSCODE_EXT_DIR="$PROJECT_ROOT/vscode-extension/collab-locks"
 if [ -f "$VSCODE_EXT_DIR/package.json" ]; then
-    echo "   Installing VS Code extension dependencies..." >&2
-    if (cd "$VSCODE_EXT_DIR" && npm install --silent >/dev/null 2>&1); then
-        print_success "VS Code extension dependencies installed"
+    echo "   Found VS Code extension at ${MAGENTA}vscode-extension/collab-locks${NC} ..." >&2
+
+    if command -v code >/dev/null 2>&1; then
+        echo "   VS Code CLI found, installing extension..." >&2
+        if (cd "$VSCODE_EXT_DIR" && code --install-extension . --force >/dev/null 2>&1); then
+            print_success "VS Code extension installed"
+        else
+            echo "   ${YELLOW}Warning: VS Code extension installation failed (non-critical).${NC}" >&2
+        fi
     else
-        echo "   ${YELLOW}Warning: VS Code extension npm install failed (non-fatal).${NC}" >&2
-        ((ERROR_COUNT++))
+        echo "   ${YELLOW}VS Code CLI not found. Extension must be installed manually:${NC}" >&2
+        echo "     1. Open VS Code" >&2
+        echo "     2. Go to Extensions (Ctrl+Shift+X)" >&2
+        echo "     3. Search for 'collab-locks'" >&2
+        echo "     Or run: code --install-extension vscode-extension/collab-locks" >&2
+    fi
+else
+    echo "   VS Code extension not found" >&2
+    echo "   ${YELLOW}SKIPPED${NC}" >&2
+fi
+
+print_step 7 7 "Running smoke tests..."
+
+SMOKE_TESTS_PASSED=true
+
+echo "   Testing collab command availability..." >&2
+if [ "$VENV_LAYOUT" = "windows" ]; then
+    COLLAB_CMD=".venv/Scripts/collab.exe"
+else
+    COLLAB_CMD=".venv/bin/collab"
+fi
+if [ -f "$COLLAB_CMD" ]; then
+    # Use --help for health check because collab CLI does not expose --version.
+    if "$COLLAB_CMD" --help >/dev/null 2>&1; then
+        print_success "collab command available"
+    else
+        echo "   ${YELLOW}Warning: collab command available but failed health check${NC}" >&2
+        SMOKE_TESTS_PASSED=false
+    fi
+else
+    echo "   ${YELLOW}Warning: collab command not found${NC}" >&2
+    SMOKE_TESTS_PASSED=false
+fi
+
+echo "   Validating Supabase configuration..." >&2
+if [ -f ".env" ]; then
+    if grep -q "SUPABASE_URL.*=" ".env" && grep -q "SUPABASE_ANON_KEY.*=" ".env"; then
+        print_success "Supabase configuration present"
+    else
+        echo "   ${YELLOW}Warning: Supabase credentials not set${NC}" >&2
+        SMOKE_TESTS_PASSED=false
     fi
 fi
 
-echo ""
-echo -e "${CYAN}========================================"
-if [ $ERROR_COUNT -eq 0 ]; then
-    echo -e "   Installation Complete!"
-    echo -e "${GREEN}✓ Setup successful${NC}"
-else
-    echo -e "   Installation completed with ${YELLOW}$ERROR_COUNT warning(s)${NC}"
+if [ "$SMOKE_TESTS_PASSED" = true ]; then
+    print_success "All smoke tests passed"
 fi
-echo -e "========================================${NC}\n"
 
-if [ $ERROR_COUNT -ne 0 ]; then
-    exit 1
+if [ "$CALLED_FROM_DEV" = false ]; then
+    echo ""
+    echo -e "${CYAN}========================================"
+    if [ $ERROR_COUNT -eq 0 ]; then
+        echo -e "   Installation Complete!"
+        echo -e "   ${GREEN}✓ Setup successful${NC}"
+    else
+        echo -e "   Installation completed with ${YELLOW}$ERROR_COUNT warning(s)${NC}"
+    fi
+    echo -e "========================================${NC}\n"
+
+    echo ""
+    echo -e "${CYAN}================================================================"
+    echo -e "                        NEXT STEPS                              "
+    echo -e "================================================================${NC}"
+    echo ""
+    echo -e "${WHITE}  1. Activate the virtual environment:${NC}"
+    if [ "$VENV_LAYOUT" = "windows" ]; then
+        echo -e "     source .venv/Scripts/activate"
+    else
+        echo -e "     source .venv/bin/activate"
+    fi
+    echo ""
+    echo -e "${WHITE}  2. Verify collab is installed and working:${NC}"
+    echo -e "     collab active"
+    echo ""
+    echo -e "${WHITE}  3. (Optional) Setup development environment:${NC}"
+    echo -e "     ./scripts/setup-dev.sh"
+    echo ""
+    echo -e "${WHITE}  4. Ensure .env includes real Supabase values:${NC}"
+    echo -e "     SUPABASE_URL and SUPABASE_ANON_KEY"
+    echo ""
+    echo -e "${CYAN}================================================================${NC}"
+    echo ""
+
+    if [ $ERROR_COUNT -ne 0 ]; then
+        exit 1
+    fi
 fi
