@@ -18,6 +18,47 @@ from contextlib import nullcontext
 logger = logging.getLogger("collab.lock_client")
 
 
+def _is_truthy_env(name: str, default: bool) -> bool:
+    """Return normalized boolean value for an env var."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_auto_start_watcher() -> bool:
+    """Decide whether CLI should auto-bootstrap the watcher daemon."""
+    # Keep pytest deterministic: command tests should not spawn background
+    # processes unless a test explicitly opts into that behavior.
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    return _is_truthy_env("COLLAB_AUTO_START_WATCHER", default=True)
+
+
+def _ensure_watcher_running(client: object, command: str) -> bool:
+    """Best-effort watcher bootstrap for user-facing commands.
+
+    Returns True when this call started the daemon.
+    """
+    if command not in {"active", "status"}:
+        return False
+    if not _should_auto_start_watcher():
+        return False
+
+    try:
+        if bool(getattr(client, "daemon_status")()):
+            return False
+    except Exception as exc:
+        logger.debug("Failed to determine daemon status before auto-start: %s", exc)
+
+    try:
+        getattr(client, "daemon_start")()
+        return True
+    except Exception as exc:
+        logger.warning("Watcher auto-start failed for '%s': %s", command, exc)
+        return False
+
+
 def _run_cli() -> None:
     """CLI entry point for the lock client."""
     # Force UTF-8 on Windows so Unicode symbols (✓, ❌, 🔒) render correctly.
@@ -204,6 +245,14 @@ def _run_cli() -> None:
             print(f"{'✓' if ok else '✗'} {msg}")
 
         elif args.command == "active":
+            started_watcher = _ensure_watcher_running(client, "active")
+            if started_watcher:
+                try:
+                    # Prime lock state immediately so `collab active` reflects
+                    # current git changes right after watcher bootstrap.
+                    client._reconcile()
+                except Exception as exc:
+                    logger.debug("Auto-start reconcile failed: %s", exc)
             locks = client.active()
             if not locks:
                 print("No active locks.")
@@ -216,6 +265,7 @@ def _run_cli() -> None:
                     )
 
         elif args.command == "status":
+            _ensure_watcher_running(client, "status")
             info = client.get_lock_status(args.file_path)
             if info.get("is_locked"):
                 locked_by = info.get("locked_by")

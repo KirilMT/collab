@@ -424,6 +424,64 @@ if (Test-Path $envFile) {
     }
 }
 
+# IDE Auto-Detection & Configuration
+Write-Host "`n   Detecting IDE environment..." -ForegroundColor Yellow
+
+$detectedIDE = $null
+if ($env:TERM_PROGRAM -eq "vscode") {
+    $detectedIDE = "vscode"
+}
+elseif ($env:TERMINAL_EMULATOR -like "*JetBrains*") {
+    $detectedIDE = "jetbrains"
+}
+elseif (Test-Path (Join-Path $projectRoot ".vscode")) {
+    $detectedIDE = "vscode"
+}
+elseif (Test-Path (Join-Path $projectRoot ".idea")) {
+    $detectedIDE = "jetbrains"
+}
+
+switch ($detectedIDE) {
+    "vscode" {
+        Write-Host "     - VS Code detected" -ForegroundColor Gray
+        $vscodeExtDir = Join-Path $projectRoot "vscode-extension\collab-locks"
+        $packageJson = Join-Path $vscodeExtDir "package.json"
+        if (Test-Path $packageJson) {
+            try {
+                Push-Location $vscodeExtDir
+                npm install --silent 2>$null
+                Pop-Location
+                Write-Host "     - VS Code extension dependencies installed " -NoNewline -ForegroundColor White
+                Write-Host "OK" -ForegroundColor Green
+            }
+            catch {
+                Pop-Location
+                Write-Host "     - VS Code extension npm install failed (non-fatal)" -ForegroundColor Yellow
+            }
+        }
+    }
+    "jetbrains" {
+        Write-Host "     - PyCharm/IntelliJ detected" -ForegroundColor Gray
+        $ideaRunConfigDir = Join-Path $projectRoot ".idea\runConfigurations"
+        $xmlSrc = Join-Path $projectRoot "pycharm\Collab_Lock_Watcher.xml"
+        if (Test-Path $xmlSrc) {
+            try {
+                New-Item -ItemType Directory -Force -Path $ideaRunConfigDir | Out-Null
+                Copy-Item -Path $xmlSrc -Destination (Join-Path $ideaRunConfigDir "Collab_Lock_Watcher.xml") -Force
+                Write-Host "     - PyCharm run configuration installed " -NoNewline -ForegroundColor White
+                Write-Host "OK" -ForegroundColor Green
+                Write-Host "     - Open Run > Collab Lock Watcher to start the watcher." -ForegroundColor Gray
+            }
+            catch {
+                Write-Host "     - PyCharm run config install failed (non-fatal)" -ForegroundColor Yellow
+            }
+        }
+    }
+    default {
+        Write-Host "     - No IDE detected" -ForegroundColor Gray
+    }
+}
+
 # Final Summary
 Write-Host "`n========================================" -ForegroundColor Cyan
 if ($script:ErrorCount -eq 0) {
@@ -440,11 +498,21 @@ Write-Host "================================================================" -F
 Write-Host "                        NEXT STEPS                              " -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  1. Activate the virtual environment (if not already active):" -ForegroundColor White
-Write-Host "     .\.venv\Scripts\Activate.ps1" -ForegroundColor Magenta
+switch ($detectedIDE) {
+    "vscode" {
+        Write-Host "  1. Install the Collab Locks extension in VS Code:" -ForegroundColor White
+        Write-Host "     Press F1 > 'Developer: Install Extension from Location...'" -ForegroundColor Magenta
+        Write-Host "     Select vscode-extension\collab-locks\ and reload VS Code." -ForegroundColor Magenta
+        Write-Host "     Extension activation will start daemon automatically." -ForegroundColor Gray
+    }
+    default {
+        Write-Host "  1. Start watcher manually if needed:" -ForegroundColor White
+        Write-Host "     python -m src.main daemon-start" -ForegroundColor Magenta
+    }
+}
 Write-Host ""
-Write-Host "  2. Verify lock daemon workflow:" -ForegroundColor White
-Write-Host "     python -m src active" -ForegroundColor Magenta
+Write-Host "  2. Activate the virtual environment (if not already active):" -ForegroundColor White
+Write-Host "     .\.venv\Scripts\Activate.ps1" -ForegroundColor Magenta
 Write-Host ""
 Write-Host "  3. Run quality checks:" -ForegroundColor White
 Write-Host "     python scripts\format_code.py" -ForegroundColor Magenta

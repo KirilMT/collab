@@ -1,0 +1,36 @@
+{
+  "name": "collab-file-locks",
+  "displayName": "Collaborative File Locks",
+  "description": "Prevents merge conflicts by locking files when you start editing them.",
+  "version": "1.0.0",
+  "publisher": "collab-team",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "collabLocks.showAll",
+        "title": "Collab Locks: Show All Locked Files"
+      },
+      {
+        "command": "collabLocks.releaseAll",
+        "title": "Collab Locks: Release My Locks"
+      },
+      {
+        "command": "collabLocks.openDashboard",
+        "title": "Collab Locks: Open Dashboard"
+      }
+    ]
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.0.0"
+  }
+}

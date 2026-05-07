@@ -205,6 +205,17 @@ else
     echo "   ${YELLOW}Warning: pre-commit not found. Install it manually for repository hooks.${NC}" >&2
 fi
 
+VSCODE_EXT_DIR="$PROJECT_ROOT/vscode-extension/collab-locks"
+if [ -f "$VSCODE_EXT_DIR/package.json" ]; then
+    echo "   Installing VS Code extension dependencies..." >&2
+    if (cd "$VSCODE_EXT_DIR" && npm install --silent >/dev/null 2>&1); then
+        print_success "VS Code extension dependencies installed"
+    else
+        echo "   ${YELLOW}Warning: VS Code extension npm install failed (non-fatal).${NC}" >&2
+        ((ERROR_COUNT++))
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}========================================"
 if [ $ERROR_COUNT -eq 0 ]; then

@@ -24,4 +24,16 @@ module.exports = [
       "no-undef": "error",
     },
   },
+  {
+    // VS Code extension — Node.js runtime, allow unused variables prefixed with underscore
+    files: ["vscode-extension/collab-locks/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",
+      globals: globals.node,
+    },
+    rules: {
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_|^e$", varsIgnorePattern: "^_|^e$" }],
+    },
+  },
 ];

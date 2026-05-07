@@ -1,0 +1,23 @@
+#!/bin/sh
+# commit-msg hook to enforce Conventional Commits format.
+# Release tags are NOT required — Release Please handles versioning
+# automatically based on Conventional Commit types.
+#
+# SOURCE OF TRUTH: hooks/commit-msg (tracked in git)
+# Installed to .git/hooks/commit-msg by install_hooks.sh and scripts/setup.ps1
+
+commit_msg_file="$1"
+
+# Allow merge and fixup/squash commits
+if grep -qE '^(Merge|fixup!|squash!)' "$commit_msg_file"; then
+  exit 0
+fi
+
+# Enforce format: type(scope): summary
+if ! grep -qE '^(feat|fix|chore|refactor|perf|remove|revert|docs|test|style|build|ci)(\(.+\))?: .+' "$commit_msg_file"; then
+  echo "ERROR: Commit message must follow Conventional Commits format." >&2
+  echo "Example: feat(core): add new feature" >&2
+  exit 1
+fi
+
+exit 0

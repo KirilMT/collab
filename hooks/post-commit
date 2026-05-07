@@ -1,5 +1,5 @@
 #!/bin/sh
-# Collaborative file lock — post-commit hook
+# Collaborative file lock - post-commit hook
 # Locks remain active until push.
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"

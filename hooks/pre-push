@@ -1,6 +1,6 @@
 #!/bin/sh
-# Collaborative file lock — pre-commit hook
-# Acquires locks for staged files before running the pre-commit framework.
+# Collaborative file lock - pre-push hook
+# Runs pre-push validation first, then releases locks only on success.
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 PYTHON="$PROJECT_ROOT/.venv/Scripts/python.exe"
@@ -9,21 +9,6 @@ if [ ! -x "$PYTHON" ]; then
 fi
 if [ ! -x "$PYTHON" ]; then
     PYTHON="python"
-fi
-
-STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
-if [ -z "$STAGED" ]; then
-    exit 0
-fi
-
-"$PYTHON" "$PROJECT_ROOT/scripts/collab_git_hook.py" acquire-staged
-LOCK_EXIT=$?
-if [ $LOCK_EXIT -ne 0 ]; then
-    echo ""
-    echo "[collab] Commit aborted due to file lock conflicts."
-    echo "[collab] To view details: collab active"
-    echo "[collab] To open dashboard: collab dashboard"
-    exit 1
 fi
 
 PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/Scripts/pre-commit.exe"
@@ -43,7 +28,15 @@ if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
     if [ -d "$VENV_BIN" ]; then
         export PATH="$VENV_BIN:$PATH"
     fi
-    exec "$PRE_COMMIT_BIN" run --hook-stage pre-commit "$@"
+    "$PRE_COMMIT_BIN" run --hook-stage pre-push
+    VALIDATION_EXIT=$?
+    if [ $VALIDATION_EXIT -ne 0 ]; then
+        echo "[collab] Pre-push validation failed - keeping locks active."
+        exit $VALIDATION_EXIT
+    fi
 fi
+
+echo "[collab] Releasing all locks after successful pre-push validation..."
+"$PYTHON" "$PROJECT_ROOT/scripts/collab_git_hook.py" release-all
 
 exit 0

@@ -64,6 +64,7 @@ Thumbs.db
 
 # Node tooling (used for docs formatting)
 node_modules/
+vscode-extension/collab-locks/*.tgz
 
 # Frontend/test artifacts (safe to ignore if generated)
 coverage/

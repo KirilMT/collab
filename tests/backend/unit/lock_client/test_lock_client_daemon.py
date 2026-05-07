@@ -247,6 +247,43 @@ def test_daemon_start_with_open_dashboard(tmp_path, monkeypatch, capsys):
     assert any("--open-dashboard" in str(cmd) for cmd in popen_cmds)
 
 
+def test_daemon_start_removes_stale_stop_request_before_restart(tmp_path, monkeypatch):
+    """daemon_start clears stale stop marker so restart does not self-stop."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    pid_file = tmp_path / "daemon.pid"
+    stop_file = tmp_path / ".stop_request"
+    stop_file.write_text("PID:99999", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(mod, "_state_path", lambda name: str(tmp_path / name))
+
+    class FakeProc:
+        pid = 67890
+
+    read_calls = {"n": 0}
+
+    def _read_pid_seq():
+        read_calls["n"] += 1
+        return None if read_calls["n"] == 1 else 67890
+
+    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(_read_pid_seq))
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda _pid: True)
+    )
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    assert not stop_file.exists()
+
+
 def test_daemon_start_ignores_stale_stop_request_check_errors(
     monkeypatch, tmp_path, capsys
 ):

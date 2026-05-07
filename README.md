@@ -188,12 +188,19 @@ The extension warns you when a locked file is opened and provides dashboard acce
 
 ### Installation
 
-This repository does not currently ship extension source code or a guaranteed `.vsix` file.
+Extension source is included in this repository at `vscode-extension/collab-locks/`.
 
-Use one of these paths:
+Install it from VS Code:
 
-1. If you have a `collab-locks-*.vsix` artifact, install it from Extensions view via `...` -> `Install from VSIX...`.
-2. If no `.vsix` is available, skip extension setup and validate locking with CLI + dashboard (`collab active`, `collab dashboard`).
+1. Press `F1` -> `Developer: Install Extension from Location...`
+2. Select `vscode-extension/collab-locks/`
+3. Reload VS Code
+
+Lifecycle behavior:
+
+- On activation/startup, extension runs `python -m src.main daemon-start`
+- On deactivate/window reload/close, extension runs `python -m src.main daemon-stop`
+- Locks are preserved by watcher graceful shutdown and resumed on next startup
 
 ### Features
 

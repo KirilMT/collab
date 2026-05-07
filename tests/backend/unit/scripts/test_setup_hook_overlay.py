@@ -13,25 +13,23 @@ def test_setup_ps1_overlays_collab_hooks_after_pre_commit_install():
     text = _script_text("scripts/setup.ps1")
 
     install_index = text.index("& $preCommitExe install --hook-type $type --overwrite")
-    overlay_index = text.index(
-        '$sourceHooksDir = Join-Path $projectRoot ".collab\\hooks"'
-    )
+    overlay_index = text.index('$sourceHooksDir = Join-Path $projectRoot "hooks"')
 
     assert overlay_index > install_index
     assert '$targetHooksDir = Join-Path $projectRoot ".git\\hooks"' in text
-    assert '$hookNames = @("pre-commit", "post-commit", "pre-push")' in text
+    assert (
+        '$hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg")' in text
+    )
     assert "Copy-Item -Path $src -Destination $dst -Force" in text
     assert "Collab hook overlay installed " in text
-    assert "Collab hook templates missing (.collab/hooks) " in text
+    assert "Collab hook templates missing (hooks/) " in text
 
 
 def test_setup_ps1_only_overlays_after_successful_hook_install():
     text = _script_text("scripts/setup.ps1")
 
     success_branch = text.index("if (-not $hookInstallFailed) {")
-    overlay_index = text.index(
-        '$sourceHooksDir = Join-Path $projectRoot ".collab\\hooks"'
-    )
+    overlay_index = text.index('$sourceHooksDir = Join-Path $projectRoot "hooks"')
     warn_branch = text.index(
         'Write-Host "   Git hook installation " ' "-NoNewline -ForegroundColor White"
     )
@@ -65,3 +63,33 @@ def test_setup_sh_only_overlays_in_success_branch():
     )
 
     assert success_branch < overlay_index < warn_branch
+
+
+def test_setup_dev_ps1_installs_vscode_extension_dependencies_from_root_path():
+    text = _script_text("scripts/setup-dev.ps1")
+
+    assert (
+        '$vscodeExtDir = Join-Path $projectRoot "vscode-extension\\collab-locks"'
+        in text
+    )
+    assert "npm install --silent 2>$null" in text
+    assert "VS Code extension dependencies installed " in text
+
+
+def test_setup_dev_ps1_pycharm_installs_run_config():
+    text = _script_text("scripts/setup-dev.ps1")
+
+    assert '"jetbrains"' in text
+    assert (
+        '$ideaRunConfigDir = Join-Path $projectRoot ".idea\\runConfigurations"' in text
+    )
+    assert '$xmlSrc = Join-Path $projectRoot "pycharm\\Collab_Lock_Watcher.xml"' in text
+    assert "Copy-Item -Path $xmlSrc" in text
+    assert "PyCharm run configuration installed " in text
+
+
+def test_install_hooks_sh_includes_commit_msg():
+    text = _script_text("install_hooks.sh")
+
+    assert "commit-msg" in text
+    assert "pre-commit post-commit pre-push commit-msg" in text
