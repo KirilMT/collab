@@ -11,29 +11,27 @@ and this project adheres to
 
 ## [0.2.0](https://github.com/KirilMT/collab/compare/v0.1.0...v0.2.0) (2026-05-07)
 
-
 ### Features
 
-* **hooks:** align collab hook lifecycle and CI parity with mockCMMS ([27c5ce3](https://github.com/KirilMT/collab/commit/27c5ce39d1f6849fadbe5458d3437dc65d8c3f68))
-* **infra:** Phase 0.5 infrastructure scaffolding and frontend parity ([fca3d51](https://github.com/KirilMT/collab/commit/fca3d51f8f99dc5bcc26cee0162d691c4e43ddfd))
-* **phase1:** complete migration Phase 1 and add shell-compatibility skill ([27ee505](https://github.com/KirilMT/collab/commit/27ee50569ee69b83b96d77d636d4dbb79cf14cd1))
-* **phase2:** update extension to call installed collab package ([ea7dbe6](https://github.com/KirilMT/collab/commit/ea7dbe671773503121834bf62dfe3ad2cbfaf929))
-* **phase3:** update setup scripts to provision collab package and extension ([97f07e9](https://github.com/KirilMT/collab/commit/97f07e96919dc12ef0f75385a6f35c10a508b6a6))
-* **vscode-extension:** add collaborative locks VS Code extension with watcher lifecycle management ([4de01d1](https://github.com/KirilMT/collab/commit/4de01d1437814d28b56af4c5fcae81867ea26c9e))
-
+- **hooks:** align collab hook lifecycle and CI parity with mockCMMS ([27c5ce3](https://github.com/KirilMT/collab/commit/27c5ce39d1f6849fadbe5458d3437dc65d8c3f68))
+- **infra:** Phase 0.5 infrastructure scaffolding and frontend parity ([fca3d51](https://github.com/KirilMT/collab/commit/fca3d51f8f99dc5bcc26cee0162d691c4e43ddfd))
+- **phase1:** complete migration Phase 1 and add shell-compatibility skill ([27ee505](https://github.com/KirilMT/collab/commit/27ee50569ee69b83b96d77d636d4dbb79cf14cd1))
+- **phase2:** update extension to call installed collab package ([ea7dbe6](https://github.com/KirilMT/collab/commit/ea7dbe671773503121834bf62dfe3ad2cbfaf929))
+- **phase3:** update setup scripts to provision collab package and extension ([97f07e9](https://github.com/KirilMT/collab/commit/97f07e96919dc12ef0f75385a6f35c10a508b6a6))
+- **vscode-extension:** add collaborative locks VS Code extension with watcher lifecycle management ([4de01d1](https://github.com/KirilMT/collab/commit/4de01d1437814d28b56af4c5fcae81867ea26c9e))
 
 ### Bug Fixes
 
-* **build:** remove redundant License classifier conflicting with PEP 639 ([974bbc0](https://github.com/KirilMT/collab/commit/974bbc07ec2e106405ac75a6769066a0b0180ac8))
-* **ci:** harden workflow triggers and manual dispatch support ([44b0886](https://github.com/KirilMT/collab/commit/44b0886ff1f6c67a473f1b80cc3d141a421eb1c5))
-* **ci:** preserve coverage artifacts for report step ([2b371b9](https://github.com/KirilMT/collab/commit/2b371b9c3058c1f02fd2098a6bd521cea324afd6))
-* **hooks:** enable verbose output for collab lock hooks ([146c217](https://github.com/KirilMT/collab/commit/146c217169800f34fbf75320e20b42da5fabc043))
-* **hooks:** show only collab messages in hooks ([90c0da4](https://github.com/KirilMT/collab/commit/90c0da4a4fe5054ab580772094447f8ddbace15f))
-* **hooks:** stop forwarding git args to pre-push pre-commit run ([3fa8456](https://github.com/KirilMT/collab/commit/3fa84569512af10e7c76f3764f8f76fb01bac88e))
-* **test:** close subprocess stdin in hook template tests to prevent CI hang ([e14356a](https://github.com/KirilMT/collab/commit/e14356ab1d97ffe8060a6e3733bc126ecc7a42b5))
-* **test:** resolve infinite loop in hook template pre-push test ([1518010](https://github.com/KirilMT/collab/commit/15180100302e5a7367e56accde4b4dd6c1e34e70))
-* **validation:** clarify skipped checks and harden CI/frontend detection ([2dee206](https://github.com/KirilMT/collab/commit/2dee206cec13fdc245ef26595529d4794bd14122))
-* **validation:** make checks deterministic and tighten cleanup coverage ([dea2028](https://github.com/KirilMT/collab/commit/dea202810aaeb6a09dc06617f3acd5a3dafaf40a))
+- **build:** remove redundant License classifier conflicting with PEP 639 ([974bbc0](https://github.com/KirilMT/collab/commit/974bbc07ec2e106405ac75a6769066a0b0180ac8))
+- **ci:** harden workflow triggers and manual dispatch support ([44b0886](https://github.com/KirilMT/collab/commit/44b0886ff1f6c67a473f1b80cc3d141a421eb1c5))
+- **ci:** preserve coverage artifacts for report step ([2b371b9](https://github.com/KirilMT/collab/commit/2b371b9c3058c1f02fd2098a6bd521cea324afd6))
+- **hooks:** enable verbose output for collab lock hooks ([146c217](https://github.com/KirilMT/collab/commit/146c217169800f34fbf75320e20b42da5fabc043))
+- **hooks:** show only collab messages in hooks ([90c0da4](https://github.com/KirilMT/collab/commit/90c0da4a4fe5054ab580772094447f8ddbace15f))
+- **hooks:** stop forwarding git args to pre-push pre-commit run ([3fa8456](https://github.com/KirilMT/collab/commit/3fa84569512af10e7c76f3764f8f76fb01bac88e))
+- **test:** close subprocess stdin in hook template tests to prevent CI hang ([e14356a](https://github.com/KirilMT/collab/commit/e14356ab1d97ffe8060a6e3733bc126ecc7a42b5))
+- **test:** resolve infinite loop in hook template pre-push test ([1518010](https://github.com/KirilMT/collab/commit/15180100302e5a7367e56accde4b4dd6c1e34e70))
+- **validation:** clarify skipped checks and harden CI/frontend detection ([2dee206](https://github.com/KirilMT/collab/commit/2dee206cec13fdc245ef26595529d4794bd14122))
+- **validation:** make checks deterministic and tighten cleanup coverage ([dea2028](https://github.com/KirilMT/collab/commit/dea202810aaeb6a09dc06617f3acd5a3dafaf40a))
 
 ## [0.1.0] (2026-05-04)
 
