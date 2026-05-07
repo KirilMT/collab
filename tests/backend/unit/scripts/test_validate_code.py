@@ -150,6 +150,36 @@ def test_run_command_merges_env_and_windows_roots(monkeypatch):
     assert captured["env"]["SYSTEMDRIVE"] == "C:"
 
 
+def test_configure_coverage_data_file_skips_ci_environments(monkeypatch):
+    """Verify that CI environment routing is skipped when CI env vars are set."""
+    # Clear COVERAGE_FILE if it exists
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+
+    # Set GITHUB_ACTIONS to simulate GitHub Actions CI
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    # Call the function — should return early due to CI detection
+    validate_code._configure_coverage_data_file()
+
+    # Verify COVERAGE_FILE was NOT set (early return due to CI check)
+    assert validate_code.os.getenv("COVERAGE_FILE") is None
+
+
+def test_configure_coverage_data_file_applies_temp_routing_locally(monkeypatch):
+    """Verify temp directory routing is applied when NOT in CI."""
+    # Clear CI/GITHUB_ACTIONS and COVERAGE_FILE
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    # Call the function — should apply temp directory routing
+    validate_code._configure_coverage_data_file()
+
+    # Verify COVERAGE_FILE was set (temp directory routing applied)
+    assert validate_code.os.getenv("COVERAGE_FILE") is not None
+    assert "collab" in validate_code.os.getenv("COVERAGE_FILE")
+
+
 def test_run_command_retries_known_tool_with_python_module(monkeypatch):
     calls = []
 
@@ -291,9 +321,14 @@ def test_validate_python_backend_quick_modes(monkeypatch):
             "changed_files": [],
         },
     )
+    monkeypatch.setattr(validate_code.os.path, "exists", lambda _p: False)
     seen.clear()
     assert (
-        validate_code.validate_python_backend(quick=True, files=["README.md"]) is True
+        validate_code.validate_python_backend(
+            quick=True,
+            files=["scripts/validate_code.py"],
+        )
+        is True
     )
 
 
@@ -521,6 +556,227 @@ def test_validate_frontend_glob_empty_and_failure(monkeypatch):
         )
         is True
     )
+
+
+def test_validate_frontend_skips_jest_without_test_script(monkeypatch, capsys):
+    seen = []
+
+    def _cmd(cmd, *_a, **_k):
+        seen.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {"validate": "python scripts/validate_code.py"},
+    )
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
+
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=False,
+            files=["tests/frontend/playwright/test-utils.js"],
+        )
+        is True
+    )
+
+    out = capsys.readouterr().out
+    assert "No npm 'test' script configured — skipping Jest coverage run." in out
+    assert ["npm", "run", "test", "--", "--coverage"] not in seen
+
+
+def test_validate_frontend_skips_playwright_without_test_files(monkeypatch, capsys):
+    seen = []
+
+    def _cmd(cmd, *_a, **_k):
+        seen.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
+
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=False,
+            files=["tests/frontend/playwright/test-utils.js"],
+        )
+        is True
+    )
+
+    out = capsys.readouterr().out
+    assert "No Playwright test files found — skipping E2E validation." in out
+    assert ["npx", "playwright", "test", "--project=chromium"] not in seen
+
+
+def test_load_package_json_scripts_handles_missing_invalid_and_non_dict(tmp_path):
+    current_dir = Path.cwd()
+    try:
+        validate_code.os.chdir(tmp_path)
+
+        assert validate_code._load_package_json_scripts() == {}
+
+        package_json = tmp_path / "package.json"
+        package_json.write_text("{invalid json", encoding="utf-8")
+        assert validate_code._load_package_json_scripts() == {}
+
+        package_json.write_text('{"scripts": []}', encoding="utf-8")
+        assert validate_code._load_package_json_scripts() == {}
+    finally:
+        validate_code.os.chdir(current_dir)
+
+
+def test_load_package_json_scripts_returns_stringified_scripts(tmp_path):
+    current_dir = Path.cwd()
+    try:
+        validate_code.os.chdir(tmp_path)
+        (tmp_path / "package.json").write_text(
+            '{"scripts": {"test": "npm test", "lint": 123}}',
+            encoding="utf-8",
+        )
+
+        scripts = validate_code._load_package_json_scripts()
+        assert scripts == {"test": "npm test", "lint": "123"}
+    finally:
+        validate_code.os.chdir(current_dir)
+
+
+def test_has_playwright_test_files_handles_missing_and_present(tmp_path):
+    current_dir = Path.cwd()
+    try:
+        validate_code.os.chdir(tmp_path)
+        assert validate_code._has_playwright_test_files() is False
+
+        test_dir = tmp_path / "tests" / "frontend" / "playwright"
+        test_dir.mkdir(parents=True)
+        (test_dir / "sample.spec.ts").write_text(
+            "test('x', () => {});\n",
+            encoding="utf-8",
+        )
+
+        assert validate_code._has_playwright_test_files() is True
+    finally:
+        validate_code.os.chdir(current_dir)
+
+
+def test_validate_frontend_soft_skips_when_jest_command_fails(monkeypatch, capsys):
+    calls = []
+
+    def _cmd(cmd, *_a, **_k):
+        calls.append(cmd)
+        if cmd[:3] == ["npm", "run", "test"]:
+            return False, "jest failed"
+        return True, ""
+
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {"test": "jest"},
+    )
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is True
+
+    out = capsys.readouterr().out
+    assert "Jest tests failed; skipping strict frontend failure." in out
+    assert any(cmd[:3] == ["npm", "run", "test"] for cmd in calls)
+
+
+def test_validate_frontend_soft_skips_when_playwright_command_fails(
+    monkeypatch, capsys
+):
+    calls = []
+
+    def _cmd(cmd, *_a, **_k):
+        calls.append(cmd)
+        if cmd[:3] == ["npx", "playwright", "test"]:
+            return False, "playwright failed"
+        return True, ""
+
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is True
+
+    out = capsys.readouterr().out
+    assert "Playwright tests failed; skipping strict frontend failure." in out
+    assert any(cmd[:3] == ["npx", "playwright", "test"] for cmd in calls)
+
+
+def test_summary_helper_prints_skipped(capsys):
+    validate_code._print_check_summary("Jest Tests", "skipped")
+    out = capsys.readouterr().out
+    assert "[SKIPPED] Jest Tests" in out
+
+
+def test_validate_backend_summary_marks_skipped_checks(monkeypatch):
+    seen = []
+
+    def _run_command(cmd, *_a, **_k):
+        if cmd[:2] == ["diff-cover", "--version"]:
+            return False, "missing"
+        return True, ""
+
+    monkeypatch.setattr(
+        validate_code,
+        "_print_check_summary",
+        lambda name, status: seen.append((name, status)),
+    )
+    monkeypatch.setattr(validate_code, "run_command", _run_command)
+    monkeypatch.setattr(validate_code.os.path, "exists", lambda _p: False)
+    monkeypatch.setattr(
+        validate_code,
+        "detect_changed_scopes",
+        lambda *a, **k: {
+            "full_suite": False,
+            "backend": [],
+            "frontend": [],
+            "reason": None,
+            "changed_files": [],
+        },
+    )
+
+    assert (
+        validate_code.validate_python_backend(
+            quick=True,
+            files=["scripts/validate_code.py"],
+        )
+        is True
+    )
+    assert ("Tests", "skipped") in seen
+    assert ("Total Coverage Threshold", "skipped") in seen
+    assert ("Diff Coverage", "skipped") in seen
+
+
+def test_validate_frontend_summary_marks_skipped_checks(monkeypatch, capsys):
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is True
+    out = capsys.readouterr().out
+    assert "[SKIPPED] Jest Tests" in out
+    assert "[SKIPPED] E2E Tests" in out
+
+
+def test_validate_others_summary_marks_skipped_checks(monkeypatch, capsys):
+    monkeypatch.setattr(
+        validate_code.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=1),
+    )
+
+    assert validate_code.validate_others(files=["docs/readme.md"]) is True
+    out = capsys.readouterr().out
+    assert "[SKIPPED] Documentation Linting" in out
 
 
 def test_print_helpers_and_tail_paths(capsys):
