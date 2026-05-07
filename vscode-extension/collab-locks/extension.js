@@ -111,6 +111,65 @@ function getPythonCommand(workspaceRoot) {
   return "python";
 }
 
+/**
+ * Detect installed collab runtime.
+ * Returns { command: string, version: string | null } if found,
+ * or { command: null, error: string } if not found.
+ *
+ * Tries:
+ * 1. collab command in PATH
+ * 2. collab-watcher command in PATH
+ * 3. Workspace .venv/Scripts/collab.exe or collab-watcher.exe
+ */
+function detectCollab(workspaceRoot) {
+  const candidates = [
+    { name: "collab", cmd: "collab" },
+    { name: "collab-watcher", cmd: "collab-watcher" },
+  ];
+
+  // If workspace has venv, check there first
+  if (workspaceRoot) {
+    const venvCollab = path.join(
+      workspaceRoot,
+      ".venv",
+      "Scripts",
+      "collab.exe",
+    );
+    const venvWatcher = path.join(
+      workspaceRoot,
+      ".venv",
+      "Scripts",
+      "collab-watcher.exe",
+    );
+    if (fs.existsSync(venvCollab)) {
+      return { command: venvCollab, version: null };
+    }
+    if (fs.existsSync(venvWatcher)) {
+      return { command: venvWatcher, version: null };
+    }
+  }
+
+  // Try each candidate in PATH
+  for (const candidate of candidates) {
+    try {
+      const versionOut = execSync(`${candidate.cmd} --version`, {
+        encoding: "utf8",
+        timeout: 3000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      return { command: candidate.cmd, version: versionOut || null };
+    } catch (_e) {
+      // Not found, try next
+    }
+  }
+
+  return {
+    command: null,
+    error:
+      "collab package not found in PATH. Run 'pip install collab' to install the runtime.",
+  };
+}
+
 function getVSCodeWindowPid() {
   try {
     if (process.env.VSCODE_PID) {
@@ -467,6 +526,33 @@ function startWatcher() {
   const stateDir = getStateDir(workspaceRoot);
   const pidFile = path.join(workspaceRoot, ".daemon.pid");
 
+  // Detect installed collab runtime
+  const collabRuntime = detectCollab(workspaceRoot);
+  if (!collabRuntime.command) {
+    if (outputChannel) {
+      outputChannel.appendLine(
+        `[collab] ERROR: ${collabRuntime.error}`,
+      );
+    }
+    vscode.window.showErrorMessage(
+      `Collab Runtime Not Found: ${collabRuntime.error}`,
+      "View Setup Guide",
+    ).then((selection) => {
+      if (selection === "View Setup Guide") {
+        vscode.env.openExternal(
+          vscode.Uri.parse("https://github.com/collab-runtime/setup"),
+        );
+      }
+    });
+    return;
+  }
+
+  if (outputChannel && collabRuntime.version) {
+    outputChannel.appendLine(
+      `[collab] Using collab runtime: ${collabRuntime.version}`,
+    );
+  }
+
   // Defensive cleanup: stale marker files can survive abrupt reloads and cause
   // a freshly spawned watcher to immediately self-stop.
   try {
@@ -640,10 +726,8 @@ function startWatcher() {
     fs.writeFileSync(heartbeatFile, `${Date.now()}\n`, { encoding: "utf8" });
 
     watcherProcess = spawn(
-      pythonCmd,
+      collabRuntime.command,
       [
-        "-m",
-        "src.main",
         "watch",
         "--interval",
         "5",
@@ -827,9 +911,16 @@ function cmdOpenDashboard() {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) return;
 
-  const pythonCmd = getPythonCommand(workspaceRoot);
+  const collabRuntime = detectCollab(workspaceRoot);
+  if (!collabRuntime.command) {
+    vscode.window.showErrorMessage(
+      `Cannot open dashboard: ${collabRuntime.error || "Collab runtime not found"}`,
+    );
+    return;
+  }
+
   const terminal = vscode.window.createTerminal("Collab Dashboard");
-  terminal.sendText(`${pythonCmd} -m src.main dashboard`);
+  terminal.sendText(`${collabRuntime.command} dashboard`);
   terminal.show();
 }
 
@@ -920,7 +1011,35 @@ function activate(context) {
     return;
   }
 
-  startWatcher(context);
+  // Check runtime availability before starting watcher
+  const collabRuntime = detectCollab(workspaceRoot);
+  if (!collabRuntime.command) {
+    statusBarItem.text = "$(warning) Locks: Setup Required";
+    statusBarItem.tooltip = collabRuntime.error || "Collab runtime not found";
+    vscode.window
+      .showWarningMessage(
+        "Collab Runtime Not Found",
+        collabRuntime.error ||
+          "The collab package is not installed. See setup guide.",
+        "View Setup Guide",
+      )
+      .then((selection) => {
+        if (selection === "View Setup Guide") {
+          vscode.env.openExternal(
+            vscode.Uri.parse(
+              "https://github.com/KirilMT/collab/blob/main/README.md",
+            ),
+          );
+        }
+      });
+    if (outputChannel)
+      outputChannel.appendLine(
+        `[collab] Runtime check failed: ${collabRuntime.error}`,
+      );
+    return;
+  }
+
+  startWatcher();
   subscribeToChanges();
 
   updateStatusBar();
