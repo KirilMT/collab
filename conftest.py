@@ -31,10 +31,15 @@ os.environ.setdefault("COLLAB_TEST_MODE", "1")
 def _cleanup_root_coverage_artifacts() -> None:
     """Remove root-level coverage artifacts after normal pytest runs.
 
-    The validation pipeline sets COLLAB_KEEP_ROOT_COVERAGE=1 so coverage data
-    remains available for subsequent `coverage report`/`diff-cover` commands.
+    The validation pipeline sets COLLAB_KEEP_ROOT_COVERAGE=1 so coverage data remains
+    available for subsequent `coverage report`/`diff-cover` commands. CI environments
+    should also retain artifacts by default for post-test steps.
     """
     if os.getenv("COLLAB_KEEP_ROOT_COVERAGE") == "1":
+        return
+
+    # Keep coverage artifacts in CI for follow-up coverage/diff-cover steps.
+    if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
         return
 
     root = Path(__file__).resolve().parent

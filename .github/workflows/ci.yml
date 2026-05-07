@@ -94,6 +94,8 @@ jobs:
             --cov=scripts \
             --cov-report=xml \
             tests/
+        env:
+          COLLAB_KEEP_ROOT_COVERAGE: "1"
 
       - name: Report coverage
         run: |
