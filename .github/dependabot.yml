@@ -60,6 +60,9 @@ updates:
           - "pre-commit"
           - "conventional-pre-commit"
           - "djlint"
+          - "pandas-stubs"
+          - "types-pytz"
+          - "types-requests"
         # Only group minor (1.1 to 1.2) and patch (1.1.1 to 1.1.2) updates.
         update-types:
           - "minor"
@@ -85,6 +88,7 @@ updates:
       code-quality-tools-patch-and-minor-updates:
         # Isolated: formatters, linters, type-checkers, & code-quality tools.
         # Regressions caught in isolation, don't block runtime/test updates.
+        # Ex: docformatter 1.7.8 (SQL corruption). Validates syntax & tests.
         patterns:
           - "autopep8"
           - "black"
@@ -100,6 +104,9 @@ updates:
           - "pre-commit"
           - "conventional-pre-commit"
           - "djlint"
+          - "pandas-stubs"
+          - "types-pytz"
+          - "types-requests"
         update-types:
           - "minor"
           - "patch"
