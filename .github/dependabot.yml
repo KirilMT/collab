@@ -5,6 +5,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
 
     # 1. Stability: Ignore all Major (breaking) version updates (e.g., 1.x.x to
     #   2.x.x).
@@ -13,12 +17,89 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
 
-    # 2. Clarity: Group low-risk updates into one PR per week.
+    # 2. Rigorous Robustness: Separate into THREE isolated groups.
+    # This ensures any tool regression is caught in isolation and cannot
+    # drag other updates (runtime, tests, or other tools) with it.
+    #
+    # Rationale:
+    # - Formatter/linter tools (black, ruff, docformatter, isort, etc.) can
+    #   have regressions that corrupt code or introduce syntax errors.
+    # - Isolating them into their own PR means failures don't block runtime
+    #   or test dependency updates.
+    # - Testing tools (pytest, pytest-mock, etc.) are separate from formatters
+    #   so test framework upgrades can proceed independently.
+    # - Runtime dependencies are completely isolated so security/bugfix updates
+    #   merge regardless of tool ecosystem changes.
     groups:
-      patch-and-minor-updates:
+      runtime-patch-and-minor-updates:
         patterns:
           - "*"
-        # Only group minor (1.1 to 1.2) and patch (1.1.1 to 1.1.2) updates
+        exclude-patterns:
+          # Testing tools (isolated in their own group)
+          - "pytest"
+          - "pytest-cov"
+          - "pytest-mock"
+          - "pytest-env"
+          - "pytest-testmon"
+          - "diff-cover"
+          - "iniconfig"
+          - "pluggy"
+          # Code-quality/formatter/linter/type-checker tools
+          # (isolated in their own group)
+          - "autopep8"
+          - "black"
+          - "isort"
+          - "docformatter"
+          - "ruff"
+          - "flake8"
+          - "pylint"
+          - "mypy"
+          - "bandit"
+          - "radon"
+          - "yamllint"
+          - "pre-commit"
+          - "conventional-pre-commit"
+          - "djlint"
+        # Only group minor (1.1 to 1.2) and patch (1.1.1 to 1.1.2) updates.
+        update-types:
+          - "minor"
+          - "patch"
+
+      testing-tools-patch-and-minor-updates:
+        # Isolated: pytest and related test infrastructure.
+        # Separate from formatters/linters so test framework upgrades
+        # proceed independently of code-quality tool changes.
+        patterns:
+          - "pytest"
+          - "pytest-cov"
+          - "pytest-mock"
+          - "pytest-env"
+          - "pytest-testmon"
+          - "diff-cover"
+          - "iniconfig"
+          - "pluggy"
+        update-types:
+          - "minor"
+          - "patch"
+
+      code-quality-tools-patch-and-minor-updates:
+        # Isolated: formatters, linters, type-checkers, & code-quality tools.
+        # Regressions caught in isolation, don't block runtime/test updates.
+        patterns:
+          - "autopep8"
+          - "black"
+          - "isort"
+          - "docformatter"
+          - "ruff"
+          - "flake8"
+          - "pylint"
+          - "mypy"
+          - "bandit"
+          - "radon"
+          - "yamllint"
+          - "pre-commit"
+          - "conventional-pre-commit"
+          - "djlint"
         update-types:
           - "minor"
           - "patch"

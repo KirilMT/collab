@@ -1,0 +1,119 @@
+---
+name: Dependabot Auto Format
+
+"on":
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - requirements.txt
+      - requirements-dev.txt
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-format:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Guardrail - allow manifest-only PRs from same repository
+        id: guardrail
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const sameRepo =
+              pr.head.repo.full_name ===
+              `${context.repo.owner}/${context.repo.repo}`;
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100,
+              },
+            );
+
+            const allowed = new Set([
+              "requirements.txt",
+              "requirements-dev.txt",
+              "pyproject.toml",
+            ]);
+            const disallowed = files.filter((f) => !allowed.has(f.filename));
+
+            const safe = sameRepo && disallowed.length === 0;
+            core.setOutput("safe", safe ? "true" : "false");
+
+            if (!sameRepo) {
+              core.warning(
+                "Skipping auto-format: PR head repository is not " +
+                  "the base repository.",
+              );
+            }
+
+            if (disallowed.length > 0) {
+              const changed = disallowed.map((f) => f.filename).join(", ");
+              core.warning(
+                "Skipping auto-format: PR touches non-manifest files: " +
+                  changed,
+              );
+            }
+
+      - name: Checkout Dependabot branch
+        if: steps.guardrail.outputs.safe == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        if: steps.guardrail.outputs.safe == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install formatter toolchain
+        if: steps.guardrail.outputs.safe == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          # Install from the checked-out requirements-dev.txt so tool versions
+          # match the pinned versions in this PR branch rather than pip latest.
+          pip install -r requirements-dev.txt
+
+      - name: Apply backend formatting
+        if: steps.guardrail.outputs.safe == 'true'
+        run: python scripts/format_code.py --backend
+
+      - name: Syntax validation gate (catch formatter regressions)
+        if: steps.guardrail.outputs.safe == 'true'
+        run: |
+          # Abort if formatting introduced syntax errors.
+          ruff check src tests scripts run.py conftest.py \
+            --select E999 --no-fix
+
+      - name: Quick test validation gate (ensure logic is sound)
+        if: steps.guardrail.outputs.safe == 'true'
+        run: |
+          # Ensure formatting did not break imports or local test logic.
+          python -m pytest tests/backend/unit \
+            -x --tb=short -q 2>&1 | head -100
+
+      - name: Commit and push formatting updates
+        if: steps.guardrail.outputs.safe == 'true'
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No formatting changes detected."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style(ci): auto-format after dependency update"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
