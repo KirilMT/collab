@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.2.2](https://github.com/KirilMT/collab/compare/v0.2.1...v0.2.2) (2026-05-08)
 
-
 ### Bug Fixes
 
-* **ci:** restore dependabot auto-format stability with Ruff E9 gate ([#17](https://github.com/KirilMT/collab/issues/17)) ([3cb43e0](https://github.com/KirilMT/collab/commit/3cb43e080049ef43a1fa7ece3a723df03e097425))
+- **ci:** restore dependabot auto-format stability with Ruff E9 gate ([#17](https://github.com/KirilMT/collab/issues/17)) ([3cb43e0](https://github.com/KirilMT/collab/commit/3cb43e080049ef43a1fa7ece3a723df03e097425))
 
 ## [0.2.1](https://github.com/KirilMT/collab/compare/v0.2.0...v0.2.1) (2026-05-08)
 
