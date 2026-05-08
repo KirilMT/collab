@@ -37,5 +37,5 @@ pre-commit==4.3.0
 conventional-pre-commit==4.4.0
 
 # Documentation generation
-sphinx>=7.0.0
+sphinx>=7.4.7
 sphinx-rtd-theme>=2.0.0
