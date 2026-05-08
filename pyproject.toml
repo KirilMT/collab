@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
   "python-dotenv>=1.0.1",
-  "supabase>=2.4.0",
+  "supabase>=2.30.0",
   "httpx>=0.28.1",
   "psutil>=5.9.8",
   "plyer>=2.1.0"
