@@ -41,7 +41,6 @@ jobs:
             const allowed = new Set([
               "requirements.txt",
               "requirements-dev.txt",
-              "pyproject.toml",
             ]);
             const disallowed = files.filter((f) => !allowed.has(f.filename));
 
@@ -94,7 +93,7 @@ jobs:
         run: |
           # Abort if formatting introduced syntax errors.
           ruff check src tests scripts run.py conftest.py \
-            --select E999 --no-fix
+            --select E9 --no-fix
 
       - name: Quick test validation gate (ensure logic is sound)
         if: steps.guardrail.outputs.safe == 'true'
