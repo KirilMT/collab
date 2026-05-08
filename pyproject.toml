@@ -24,7 +24,7 @@ classifiers = [
   "Topic :: Software Development :: Version Control",
 ]
 dependencies = [
-  "python-dotenv>=1.0.1",
+  "python-dotenv>=1.2.2",
   "supabase>=2.4.0",
   "httpx>=0.28.1",
   "psutil>=5.9.8",
