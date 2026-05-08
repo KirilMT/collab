@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "collab"
-version = "0.2.1"
+version = "0.2.2"
 description = "Collaborative file locking runtime"
 readme = "README.md"
 license = "MIT"
