@@ -5,7 +5,7 @@
 
 # Core Supabase client for file lock management
 supabase==2.28.3
-httpx>=0.24.0
+httpx>=0.28.1
 
 # Process monitoring and system utilities
 psutil>=5.9.8
