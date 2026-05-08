@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.2.1](https://github.com/KirilMT/collab/compare/v0.2.0...v0.2.1) (2026-05-08)
 
-
 ### Bug Fixes
 
-* **ci:** enforce LF line endings for all repository text files ([#8](https://github.com/KirilMT/collab/issues/8)) ([46200d4](https://github.com/KirilMT/collab/commit/46200d42762d33a42da5fc1249fd6a5cc304874d))
+- **ci:** enforce LF line endings for all repository text files ([#8](https://github.com/KirilMT/collab/issues/8)) ([46200d4](https://github.com/KirilMT/collab/commit/46200d42762d33a42da5fc1249fd6a5cc304874d))
 
 ## [0.2.0](https://github.com/KirilMT/collab/compare/v0.1.0...v0.2.0) (2026-05-07)
 
