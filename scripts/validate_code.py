@@ -277,9 +277,9 @@ def _print_failure_output(stdout: str, stderr: str) -> None:
 def _print_output_tail(output: str, label: str, color: str) -> None:
     """Print the tail of *output*, truncating the head when it is very long.
 
-    When the output has more than ``_MAX_FAILURE_OUTPUT_LINES`` lines only
-    the last ``_MAX_FAILURE_OUTPUT_LINES`` are printed so that failure
-    summaries and error details are always visible.
+    When the output has more than ``_MAX_FAILURE_OUTPUT_LINES`` lines only the last
+    ``_MAX_FAILURE_OUTPUT_LINES`` are printed so that failure summaries and error
+    details are always visible.
     """
     if not output:
         return

@@ -509,9 +509,9 @@ def _is_process_alive(pid: int) -> bool:
 def _scan_remote_locks(client) -> None:
     """Fetch all active locks and warn about files locked by other developers.
 
-    This runs independently of ``git status`` so the user receives
-    conflict warnings *before* saving a file.  Only new remote locks
-    trigger a desktop notification (tracked via ``_warned_remote_locks``).
+    This runs independently of ``git status`` so the user receives conflict warnings
+    *before* saving a file.  Only new remote locks trigger a desktop notification
+    (tracked via ``_warned_remote_locks``).
     """
     # Only rebind `_known_remote_locks` in this function; the other sets are
     # mutated in-place (add/discard) so they do not need a `global` declaration.
@@ -629,8 +629,8 @@ def _scan_remote_locks(client) -> None:
 def _process_new_files(client, branch: str, new_files: set[str]) -> None:
     """Process newly modified files: attempt to acquire locks and handle conflicts.
 
-    Extracted from the main loop so unit tests can target error/fallback
-    branches (e.g. when modifying the local-owned set raises).
+    Extracted from the main loop so unit tests can target error/fallback branches (e.g.
+    when modifying the local-owned set raises).
     """
     for fp in new_files:
         try:
@@ -848,8 +848,8 @@ def _get_modified_and_unpushed_files() -> set[str]:
 def _run_git_status_porcelain() -> set[str]:
     """Compatibility shim used by tests.
 
-    Older tests monkeypatch `_run_git_status_porcelain`. Delegate to the
-    current implementation to keep tests backward-compatible.
+    Older tests monkeypatch `_run_git_status_porcelain`. Delegate to the current
+    implementation to keep tests backward-compatible.
     """
     return _get_modified_and_unpushed_files()
 
@@ -1103,8 +1103,8 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
 def _handle_post_restart_conflict(client, fp: str, lock_data: dict) -> None:
     """Handle a post-restart conflict: dirty locally but locked by another dev.
 
-    Interactive mode presents options; non-interactive defaults to continuing
-    with the file added to the conflict tracking set.
+    Interactive mode presents options; non-interactive defaults to continuing with the
+    file added to the conflict tracking set.
     """
     owner = lock_data.get("owner", "someone")
     lock_branch = lock_data.get("branch", "unknown")

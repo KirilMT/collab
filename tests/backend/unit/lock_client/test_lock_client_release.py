@@ -1,10 +1,9 @@
 """Release error/edge-case tests for LockClient.release().
 
 NOTE: Standard ephemeral release and success release are covered in
-test_lock_client_api.py (test_release_ephemeral_and_success).
-All force_release / force_release_all tests are covered in
-test_lock_client_force_release.py.
-This file covers only unique error paths for release().
+test_lock_client_api.py (test_release_ephemeral_and_success). All force_release /
+force_release_all tests are covered in test_lock_client_force_release.py. This file
+covers only unique error paths for release().
 """
 
 from __future__ import annotations

@@ -425,7 +425,6 @@ def test_discover_running_watchers_fallback_branches(monkeypatch):
 
     Includes blank lines, inspect failures, and cmdline filters.
     """
-
     # Win32 fallback line-empty continue path
     monkeypatch.setattr(mod.sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "psutil", None)
@@ -1533,7 +1532,6 @@ def test_graceful_shutdown_root_handler_stream_exception(monkeypatch, tmp_path):
 
 def test_graceful_shutdown_stdout_flush_exception(monkeypatch):
     """Cover lines 2659-2660: except when sys.stdout.flush() raises."""
-
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     c = mod.LockClient(developer_id="test_sd")
     monkeypatch.setattr(c, "active", lambda: [])
@@ -1549,7 +1547,6 @@ def test_graceful_shutdown_stdout_flush_exception(monkeypatch):
 
 def test_graceful_shutdown_root_logger_block_exception(monkeypatch):
     """Cover lines 2647-2648: outer except when root logger handlers property raises."""
-
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     c = mod.LockClient(developer_id="test_sd4")
     monkeypatch.setattr(c, "active", lambda: [])
@@ -1644,7 +1641,6 @@ def test_heartbeat_check_exception_in_watch(monkeypatch, tmp_path):
 
 def test_emit_log_resilient_stderr_write_exception_swallowed(monkeypatch):
     """_emit_log_resilient swallows stderr write failures in fallback path."""
-
     log = logging.Logger("collab.test.emit.stderr")
     log.setLevel(logging.INFO)
     log.propagate = False
