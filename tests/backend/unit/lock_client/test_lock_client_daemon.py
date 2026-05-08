@@ -1,7 +1,7 @@
 """PID and Daemon-related tests for LockClient.
 
-These tests were moved out of the canonical `test_lock_client.py` to keep
-concerns separated and make the canonical file a small shim.
+These tests were moved out of the canonical `test_lock_client.py` to keep concerns
+separated and make the canonical file a small shim.
 """
 
 from __future__ import annotations

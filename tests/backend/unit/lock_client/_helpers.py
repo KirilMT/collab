@@ -44,7 +44,6 @@ def _load_lock_client_module():
 
     Prefer `load_lock_client_module()` in new tests.
     """
-
     return load_lock_client_module()
 
 

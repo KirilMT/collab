@@ -188,7 +188,6 @@ class TestCLIDashboardAssetIntegrity:
 
     def test_dashboard_index_html_exists(self) -> None:
         """Verify dashboard HTML asset is present."""
-
         dashboard_path = os.path.join("src", "dashboard", "index.html")
         assert os.path.exists(
             dashboard_path

@@ -1,7 +1,7 @@
 """CLI-focused tests for LockClient moved from the canonical file.
 
-These tests use the shared helpers in `_helpers.py` to load the module and
-re-use the FakeResponse/FakeClient factories.
+These tests use the shared helpers in `_helpers.py` to load the module and re-use the
+FakeResponse/FakeClient factories.
 """
 
 from __future__ import annotations

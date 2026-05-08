@@ -36,10 +36,9 @@ def _safe_now() -> datetime:
     """Return the current datetime using the (possibly monkeypatched) ``datetime``
     symbol imported into this module.
 
-    Tests patch ``datetime`` with a fake
-    class/instance and some replacement objects may present a ``now`` attribute
-    that behaves oddly when bound. This helper attempts to call the patched
-    ``now`` safely and falls back to the real datetime on failure.
+    Tests patch ``datetime`` with a fake class/instance and some replacement objects may
+    present a ``now`` attribute that behaves oddly when bound. This helper attempts to
+    call the patched ``now`` safely and falls back to the real datetime on failure.
     """
     try:
         return datetime.now()
@@ -142,8 +141,8 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 def _read_clean_env_path(name: str) -> Optional[str]:
     """Return a sanitized path-like environment override.
 
-    Treat empty values and comment-only values as unset. Inline comments are
-    stripped so values like ``X=path  # comment`` remain usable.
+    Treat empty values and comment-only values as unset. Inline comments are stripped so
+    values like ``X=path  # comment`` remain usable.
     """
     raw = os.getenv(name)
     if raw is None:
@@ -199,8 +198,8 @@ def _get_state_dir() -> str:
     runtime markers (heartbeat, shutdown marker, startup summary). This avoids creating
     transient files inside the workspace tree.
 
-    The location can be overridden with the `COLLAB_STATE_DIR` env var for
-    testing or custom setups.
+    The location can be overridden with the `COLLAB_STATE_DIR` env var for testing or
+    custom setups.
     """
     state_dir = _read_clean_env_path("COLLAB_STATE_DIR")
     if state_dir:
@@ -521,9 +520,9 @@ def _retry_on_network_error(func, *args, **kwargs) -> Any:
 class LockClient:
     """Supabase-backed file lock client.
 
-    All lock operations use the Supabase REST API with the official Python
-    client. Lock acquisition uses the atomic ``acquire_lock`` RPC function
-    defined in ``schema.sql`` to prevent race conditions.
+    All lock operations use the Supabase REST API with the official Python client. Lock
+    acquisition uses the atomic ``acquire_lock`` RPC function defined in ``schema.sql``
+    to prevent race conditions.
     """
 
     def __init__(
@@ -1161,9 +1160,9 @@ class LockClient:
     def history(self, file_path: Optional[str] = None, limit: int = 20) -> List[Dict]:
         """Fetch lock history records.
 
-        When *file_path* is provided, an exact match is tried first.  If that
-        returns nothing, a ``LIKE %<basename>%`` fallback query runs so the user
-        does not have to remember the full stored path.
+        When *file_path* is provided, an exact match is tried first.  If that returns
+        nothing, a ``LIKE %<basename>%`` fallback query runs so the user does not have
+        to remember the full stored path.
         """
         client = self._client
         assert client is not None, "Supabase client not initialized"
@@ -3470,8 +3469,8 @@ class LockClient:
     def _cmdline_matches_watcher(cmdline: str) -> bool:
         """Heuristic: return True if the command-line looks like our watcher.
 
-        Matches supported watcher entrypoints, including legacy path-based
-        invocations and the current module/CLI forms.
+        Matches supported watcher entrypoints, including legacy path-based invocations
+        and the current module/CLI forms.
         """
         if not cmdline:
             return False

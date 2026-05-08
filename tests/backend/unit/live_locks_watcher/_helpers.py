@@ -1,8 +1,8 @@
 """Helpers for live_locks_watcher tests.
 
-Provide a stable loader that imports the watcher module from `src` and ensures
-optional imports are mocked so tests don't fail at import-time when running in CI
-without optional deps.
+Provide a stable loader that imports the watcher module from `src` and ensures optional
+imports are mocked so tests don't fail at import-time when running in CI without
+optional deps.
 """
 
 from __future__ import annotations

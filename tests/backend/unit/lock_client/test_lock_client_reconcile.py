@@ -278,7 +278,6 @@ def test_git_status_parsing_and_modified(monkeypatch):
 def test_reconcile_modified_files_error_active_fallback_error(monkeypatch):
     """If modified detection fails and active() also fails, reconcile returns empty
     set."""
-
     c = mod.LockClient(local_only=True, developer_id="alice")
 
     def _boom_modified():
@@ -296,7 +295,6 @@ def test_reconcile_modified_files_error_active_fallback_error(monkeypatch):
 def test_reconcile_handles_resume_multi_refresh_and_summary_cleanup_paths(monkeypatch):
     """Drive reconcile through resume/multi/refresh categories and cleanup error
     path."""
-
     c = mod.LockClient(local_only=True, developer_id="alice")
 
     # Modified files: one resumed, one multi-session, one refreshed (no token),
@@ -382,7 +380,6 @@ def test_reconcile_handles_resume_multi_refresh_and_summary_cleanup_paths(monkey
 
 def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
     """Cover non-Windows upstream check + diff code path and status-only fallback."""
-
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
@@ -418,7 +415,6 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
 
 def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatch):
     """Deleted files from unpushed history remain in-progress for locking."""
-
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
@@ -449,7 +445,6 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
 
 def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     """Directory-like status entries ending in '/' are ignored."""
-
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
