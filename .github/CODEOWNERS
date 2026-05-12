@@ -5,10 +5,3 @@
 
 # All files in the repository are owned by you.
 * @KirilMT
-
-# Core runtime and developer tooling
-/src/ @KirilMT
-/scripts/ @KirilMT
-/tests/ @KirilMT
-/.github/ @KirilMT
-/.agents/ @KirilMT

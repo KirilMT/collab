@@ -1,4 +1,4 @@
-﻿"""Centralized logging helpers for the collab utilities.
+"""Centralized logging helpers for the collab utilities.
 
 This module configures a repository-scoped logs directory at `logs/` and provides an
 idempotent helper to wire FileHandlers and a console handler without producing duplicate
@@ -38,10 +38,20 @@ def _read_clean_env_path(name: str) -> Optional[str]:
 
 
 def _resolve_runtime_root() -> str:
-    """Resolve runtime root under the current project."""
+    """Resolve runtime root for the current project.
+
+    Preference order:
+      1. COLLAB_HOME env override
+      2. COLLAB_STATE_DIR env override (backwards compatibility/test isolation)
+      3. Fallback to project root
+    """
     home_override = _read_clean_env_path("COLLAB_HOME")
     if home_override:
         return os.path.abspath(home_override)
+
+    state_override = _read_clean_env_path("COLLAB_STATE_DIR")
+    if state_override:
+        return os.path.abspath(state_override)
 
     project_root = _read_clean_env_path("COLLAB_PROJECT_ROOT") or os.path.abspath(
         os.getcwd()
@@ -60,7 +70,11 @@ def _ensure_dir(path: str) -> None:
 
 
 def _is_test_mode() -> bool:
-    return os.getenv("COLLAB_TEST_MODE") == "1"
+    return (
+        os.getenv("COLLAB_TEST_MODE") == "1"
+        or os.getenv("TESTING") == "1"
+        or "PYTEST_CURRENT_TEST" in os.environ
+    )
 
 
 def _prune_old_log_files(

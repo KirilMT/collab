@@ -6,6 +6,8 @@ $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $projectRoot = Split-Path -Parent $scriptPath
 Set-Location $projectRoot
 
+$script:IsWin = ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -match "Windows")
+
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "   Collab Development Setup" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
@@ -262,10 +264,12 @@ if (-not (Check-GitHubCLI)) {
 # Step 3: Python Development Tools
 Write-Host "`n[Dev Step 3/6] Installing Python development tools..." -ForegroundColor Yellow
 
-$pipPath = ".\.venv\Scripts\pip.exe"
-$pythonPath = ".\.venv\Scripts\python.exe"
-$pipPath = $pipPath.Replace('..\', '.\')
-$pythonPath = $pythonPath.Replace('..\', '.\')
+$venvBin = if ($script:IsWin -or (Test-Path (Join-Path $projectRoot ".venv\Scripts"))) { "Scripts" } else { "bin" }
+$pythonExe = if ($script:IsWin) { "python.exe" } else { "python" }
+$pipExe = if ($script:IsWin) { "pip.exe" } else { "pip" }
+
+$pipPath = Join-Path $projectRoot ".venv\$venvBin\$pipExe"
+$pythonPath = Join-Path $projectRoot ".venv\$venvBin\$pythonExe"
 
 if (-not (Test-Path $pipPath)) {
     Write-Error "   pip not found at $pipPath"
@@ -347,7 +351,8 @@ else {
     Write-Host "   [WARN] .gitmessage not found, skipping commit template setup" -ForegroundColor Yellow
 }
 
-$preCommitExe = ".\.venv\Scripts\pre-commit.exe"
+$preCommitExeName = if ($script:IsWin) { "pre-commit.exe" } else { "pre-commit" }
+$preCommitExe = Join-Path $projectRoot ".venv\$venvBin\$preCommitExeName"
 $hasPreCommit = $false
 
 if (Test-Path $preCommitExe) {
@@ -427,8 +432,8 @@ if (Test-Path $envFile) {
 # IDE Auto-Detection & Configuration
 Write-Host "`n   Detecting IDE environment..." -ForegroundColor Yellow
 
-$detectedIDE = $null
-if ($env:TERM_PROGRAM -eq "vscode") {
+$detectedIDE = "unknown"
+if ($env:TERM_PROGRAM -eq "vscode" -or $env:TERM_PROGRAM -eq "Antigravity" -or $env:TERM_PROGRAM -eq "cursor") {
     $detectedIDE = "vscode"
 }
 elseif ($env:TERMINAL_EMULATOR -like "*JetBrains*") {
@@ -466,11 +471,11 @@ switch ($detectedIDE) {
         $xmlSrc = Join-Path $projectRoot "pycharm\Collab_Lock_Watcher.xml"
         if (Test-Path $xmlSrc) {
             try {
-                New-Item -ItemType Directory -Force -Path $ideaRunConfigDir | Out-Null
+                New-Item -ItemType Directory -Force -Path $ideaRunConfigDir -ErrorAction SilentlyContinue | Out-Null
                 Copy-Item -Path $xmlSrc -Destination (Join-Path $ideaRunConfigDir "Collab_Lock_Watcher.xml") -Force
                 Write-Host "     - PyCharm run configuration installed " -NoNewline -ForegroundColor White
                 Write-Host "OK" -ForegroundColor Green
-                Write-Host "     - Open Run > Collab Lock Watcher to start the watcher." -ForegroundColor Gray
+                Write-Host "     - Open Run > Collab Lock Watcher to start the watcher in PyCharm." -ForegroundColor Gray
             }
             catch {
                 Write-Host "     - PyCharm run config install failed (non-fatal)" -ForegroundColor Yellow
@@ -486,7 +491,7 @@ switch ($detectedIDE) {
 Write-Host "`n========================================" -ForegroundColor Cyan
 if ($script:ErrorCount -eq 0) {
     Write-Host "   Development Setup Complete!" -ForegroundColor Green
-    Write-Host "   (Production + Dev Tools)" -ForegroundColor Gray
+    Write-Host "   (Production + Dev Tools + Daemon Active)" -ForegroundColor Gray
 }
 else {
     Write-Host "   Setup completed with $($script:ErrorCount) warning(s)" -ForegroundColor Yellow
@@ -500,14 +505,16 @@ Write-Host "================================================================" -F
 Write-Host ""
 switch ($detectedIDE) {
     "vscode" {
-        Write-Host "  1. Install the Collab Locks extension in VS Code:" -ForegroundColor White
-        Write-Host "     Press F1 > 'Developer: Install Extension from Location...'" -ForegroundColor Magenta
-        Write-Host "     Select vscode-extension\collab-locks\ and reload VS Code." -ForegroundColor Magenta
-        Write-Host "     Extension activation will start daemon automatically." -ForegroundColor Gray
+        Write-Host "  1. Collab extension installed (Core Step 6)." -ForegroundColor White
+        Write-Host "     Press " -NoNewline -ForegroundColor Gray
+        Write-Host "F1 > 'Developer: Reload Window'" -NoNewline -ForegroundColor Magenta
+        Write-Host " if locks don't appear." -ForegroundColor Gray
     }
     default {
-        Write-Host "  1. Start watcher manually if needed:" -ForegroundColor White
-        Write-Host "     python -m src.main daemon-start" -ForegroundColor Magenta
+        Write-Host "  1. Collaborative daemon should be active (Core Step 9)." -ForegroundColor White
+        Write-Host "     Use " -NoNewline -ForegroundColor Gray
+        Write-Host "'collab active'" -NoNewline -ForegroundColor Magenta
+        Write-Host " to verify." -ForegroundColor Gray
     }
 }
 Write-Host ""

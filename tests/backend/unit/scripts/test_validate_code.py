@@ -180,13 +180,11 @@ def test_configure_coverage_data_file_applies_temp_routing_locally(monkeypatch):
     assert "collab" in validate_code.os.getenv("COVERAGE_FILE")
 
 
-def test_run_command_retries_known_tool_with_python_module(monkeypatch):
+def test_run_command_uses_python_module_resolution(monkeypatch):
     calls = []
 
     def _fake_run(cmd, **_kwargs):
         calls.append(cmd)
-        if len(calls) == 1:
-            raise FileNotFoundError("ruff not found")
         return MagicMock(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr(validate_code.subprocess, "run", _fake_run)
@@ -199,8 +197,9 @@ def test_run_command_retries_known_tool_with_python_module(monkeypatch):
 
     assert success is True
     assert output == "ok"
-    assert len(calls) == 2
-    assert calls[1][:3] == [validate_code.sys.executable, "-m", "ruff"]
+    assert len(calls) == 1
+    # Should use python -m resolution pre-emptively
+    assert calls[0][:3] == [validate_code.sys.executable, "-m", "ruff"]
 
 
 def test_get_changed_files_collects_all_three_sources(monkeypatch):

@@ -21,6 +21,7 @@ def test_graceful_shutdown_git_fallback(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
@@ -48,6 +49,7 @@ def test_graceful_shutdown_smart_release(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
@@ -83,6 +85,7 @@ def test_graceful_shutdown_with_exception(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
@@ -113,6 +116,8 @@ def test_graceful_shutdown_releases_locks(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     # Return locks to release
     locks_data = [
@@ -142,6 +147,7 @@ def test_graceful_shutdown_test_mode_returns_early(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
 
     lc = mod.LockClient(developer_id="test_user")
     lc._graceful_shutdown()
@@ -304,6 +310,7 @@ def test_graceful_shutdown_active_raises(monkeypatch, tmp_path):
 def _make_client(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())

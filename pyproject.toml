@@ -3,14 +3,14 @@ requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "collab"
+name = "collab-runtime"
 version = "0.2.2"
 description = "Collaborative file locking runtime"
-readme = "README.md"
+readme = "README_pypi.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-  { name = "Collab Runtime Team" }
+  { name = "KirilMT", email = "kiril.mt95@gmail.com" }
 ]
 keywords = ["collaboration", "file-locking", "supabase", "cli", "developer-tools"]
 classifiers = [
@@ -33,12 +33,14 @@ dependencies = [
 
 [project.scripts]
 collab = "src.lock_client:main"
-collab-watcher = "src.live_locks_watcher:main"
-collab-legacy = "src.main:main"
+collab-watcher = "collab.live_locks_watcher:main"
 
 [tool.setuptools]
-packages = ["src"]
 package-dir = {"src" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["*"]
 
 [tool.setuptools.package-data]
 src = ["dashboard/index.html"]

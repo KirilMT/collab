@@ -34,7 +34,7 @@ When the watcher detects a conflict (file locked by another developer):
    ```
    [10:30] WARNING: ⚠ CONFLICT: src/lock_client.py is locked by @bob
                      — your changes may cause a merge conflict.
-                     Run: python -m src.main dashboard
+                     Run: collab dashboard
    ```
 3. **Commits are blocked** — the `pre-commit` hook prevents committing
    files locked by another developer
@@ -52,7 +52,7 @@ When the watcher detects a conflict (file locked by another developer):
 - **Automatic (Signal)**: When PyCharm sends SIGINT/SIGTERM on IDE close, the watcher
   performs a clean shutdown. **All active locks are strictly preserved** in Supabase
   so they are safe until your next session or till you push your code.
-- **CLI**: `python -m src.main daemon-stop`
+- **CLI**: `collab daemon-stop`
 
 ## Installing the Run Configuration Manually
 

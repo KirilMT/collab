@@ -1,4 +1,4 @@
-﻿"""CLI orchestration layer for the collab package.
+"""CLI orchestration layer for the collab package.
 
 Separates command-line interface concerns from the core LockClient library, enabling
 plugin/extension architecture for library consumers.
@@ -52,6 +52,7 @@ def _ensure_watcher_running(client: object, command: str) -> bool:
         logger.debug("Failed to determine daemon status before auto-start: %s", exc)
 
     try:
+        logger.info("Auto-starting watcher daemon for command: %s", command)
         getattr(client, "daemon_start")()
         return True
     except Exception as exc:
@@ -415,8 +416,8 @@ def main() -> None:
     """Entry point for the collab CLI.
 
     Orchestrates exception handling and error logging for the command-line interface.
-    Can be called from run.py, python -m src.main, or package consumers that want to
-    invoke the CLI programmatically.
+    Can be called from run.py, collab CLI, or package consumers that want to invoke the
+    CLI programmatically.
     """
     try:
         _run_cli()

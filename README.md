@@ -37,9 +37,12 @@ This creates:
 - Auto-history trigger on lock release
 - Automatic history retention (30 days by default)
 
-### 2. Run the Development Setup
+### 2. Install the Package
 
-One command handles everything — dependencies, `.env` configuration, and VS Code integration:
+The `collab` command-line tool is distributed as `collab-runtime` on PyPI.
+
+**Development Setup (from source):**
+One command handles everything — dependencies, `.env` configuration, and IDE integration:
 
 **Windows (PowerShell):**
 
@@ -53,15 +56,19 @@ One command handles everything — dependencies, `.env` configuration, and VS Co
 ./scripts/setup.sh
 ```
 
-The script automatically:
+**End-User Install (via pip):**
+
+```bash
+pip install collab-runtime
+```
+
+The setup script automatically:
 
 - Creates a Python virtual environment (`.venv`)
-- Installs Python dependencies (`supabase`, `psutil`, `plyer`, etc.)
+- Installs `collab-runtime` and its dependencies
 - Prompts for Supabase credentials if `.env` is missing
 - Copies git pre-commit hooks
-- Installs repository tooling dependencies from `package.json` (Prettier and YAML plugin)
-
-`node_modules` in the repository root is expected for formatting/validation scripts and is not part of the runtime lock engine.
+- Installs IDE extensions (VS Code, etc.)
 
 ### 3. Environment Variables
 
@@ -173,9 +180,6 @@ collab daemon-stop
 # Foreground watcher (internal/diagnostics)
 collab watch --interval 5 --timeout 0
 
-# Alternate foreground watcher invocation
-python -m src.main watch --interval 5 --timeout 0
-
 # View lock dashboard
 collab dashboard
 ```
@@ -188,19 +192,21 @@ The extension warns you when a locked file is opened and provides dashboard acce
 
 ### Installation
 
-Extension source is included in this repository at `vscode-extension/collab-locks/`.
+The extension is primarily distributed via the **Collab Runtime** Python package. When you open a repository in VS Code, the extension will automatically check for the runtime and prompt you to install it if missing.
 
-Install it from VS Code:
+**Automatic Install:**
+
+1. Open VS Code in a collab-enabled repository.
+2. If prompted, click **[Install via pip]**.
+
+**Manual Install (from source):**
 
 1. Press `F1` -> `Developer: Install Extension from Location...`
 2. Select `vscode-extension/collab-locks/`
 3. Reload VS Code
 
-Lifecycle behavior:
-
-- On activation/startup, extension runs `python -m src.main daemon-start`
-- On deactivate/window reload/close, extension runs `python -m src.main daemon-stop`
-- Locks are preserved by watcher graceful shutdown and resumed on next startup
+**CLI Install:**
+If you have the `collab` CLI installed, the extension is often provisioned automatically by `scripts/setup-dev.ps1`.
 
 ### Features
 
@@ -374,10 +380,10 @@ cat .env  # Verify SUPABASE_URL and SUPABASE_ANON_KEY
 
 ### `collab` command not found
 
-**Fix:** Reinstall the package:
+**Fix:** Ensure your virtual environment is active or install the package:
 
 ```bash
-python -m pip install .
+pip install collab-runtime
 ```
 
 ### `python collab.py daemon-status` fails with file-not-found
@@ -388,12 +394,6 @@ Use:
 
 ```bash
 collab daemon-status
-```
-
-or:
-
-```bash
-python -m src.main daemon-status
 ```
 
 ### VS Code extension not loading

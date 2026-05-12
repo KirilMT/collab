@@ -1,4 +1,4 @@
-﻿"""Standalone lock watcher for PyCharm and other IDEs.
+"""Standalone lock watcher for PyCharm and other IDEs.
 
 Monitors local git status and subscribes to Supabase Realtime for
 collaborative file lock notifications. Uses plyer for cross-platform
@@ -76,7 +76,9 @@ def _read_clean_env_path(name: str) -> Optional[str]:
 
 _project_root_override = _read_clean_env_path("COLLAB_PROJECT_ROOT")
 _PROJECT_ROOT = os.path.abspath(_project_root_override or os.getcwd())
-_runtime_base = _read_clean_env_path("COLLAB_HOME")
+_runtime_base = _read_clean_env_path("COLLAB_HOME") or _read_clean_env_path(
+    "COLLAB_STATE_DIR"
+)
 if _runtime_base:
     _COLLAB_ROOT = os.path.abspath(_runtime_base)
 else:
@@ -551,7 +553,7 @@ def _scan_remote_locks(client) -> None:
                 br = lock.get("branch_name") or "main"
                 reason = lock.get("reason") or "No reason"
                 msg = f"🔒 [LOCKED] {fp} — @{owner} (branch: {br}, reason: {reason})"
-                logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
+                logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
             continue
 
         # For locks owned by others: warn once per lock and include branch/reason
@@ -865,7 +867,7 @@ def _reconcile_on_startup(client) -> None:
         logger.info("Ephemeral developer — skipping startup reconciliation.")
         return
 
-    logger.info("Starting lock reconciliation...")
+    logger.debug("Starting lock reconciliation...")
 
     # Step A: Fetch existing owned locks from Supabase
     try:
@@ -996,7 +998,7 @@ def _reconcile_on_startup(client) -> None:
                 _local_owned_locks.add(fp)
                 n_newly_locked += 1
                 msg = f"🔒 [LOCKED] {fp} — acquired lock for dirty file at startup"
-                logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
+                logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         except Exception:
             logger.exception("Failed to acquire lock for %s during reconciliation", fp)
 

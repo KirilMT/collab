@@ -13,6 +13,8 @@ $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $projectRoot = Split-Path -Parent $scriptPath
 Set-Location $projectRoot
 
+$script:IsWin = ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -match "Windows")
+
 # Only show header if not called from dev script
 if (-not $CalledFromDev) {
     Write-Host "`n========================================" -ForegroundColor Cyan
@@ -43,7 +45,7 @@ function Refresh-EnvPath {
 }
 
 # Step 1: Check Prerequisites
-Write-Host "[Step 1/7] Checking prerequisites..." -ForegroundColor Yellow
+Write-Host "[Step 1/9] Checking prerequisites..." -ForegroundColor Yellow
 
 # Step 1.1: Check for Python
 function Check-Python {
@@ -216,7 +218,7 @@ if (-not (Check-Git)) {
 }
 
 # Step 2: Create Virtual Environment
-Write-Host "`n[Step 2/7] Setting up virtual environment..." -ForegroundColor Yellow
+Write-Host "`n[Step 2/9] Setting up virtual environment..." -ForegroundColor Yellow
 if (-not (Test-Path ".venv")) {
     Write-Host "   Creating " -NoNewline -ForegroundColor White
     Write-Host ".venv" -NoNewline -ForegroundColor Magenta
@@ -237,7 +239,7 @@ else {
 }
 
 # Step 3: Install Dependencies
-Write-Host "`n[Step 3/7] Installing core dependencies..." -ForegroundColor Yellow
+Write-Host "`n[Step 3/9] Installing core dependencies..." -ForegroundColor Yellow
 
 $pipPath = ".\.venv\Scripts\pip.exe"
 $pythonPath = ".\.venv\Scripts\python.exe"
@@ -279,21 +281,18 @@ else {
 if (Test-Path "requirements.txt") {
     Write-Host "   Installing core dependencies from " -NoNewline -ForegroundColor White
     Write-Host "requirements.txt" -NoNewline -ForegroundColor Magenta
-    Write-Host "..." -ForegroundColor White
-    Write-Host ""
+    Write-Host "..." -NoNewline -ForegroundColor White
 
-    & $pipPath install -r requirements.txt
+    # Run pip quietly and suppress stderr noise
+    $pipInstall = & $pipPath install -r requirements.txt --quiet --no-warn-script-location 2>&1
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host ""
-        Write-Host "   Core dependencies installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-Host " OK" -ForegroundColor Green
     }
     else {
-        Write-Host ""
-        Write-Host "   Core dependencies installation " -NoNewline -ForegroundColor White
-        Write-Host "FAILED" -ForegroundColor Red
-        Write-Error "pip install failed. Check the output above for errors."
+        Write-Host " FAILED" -ForegroundColor Red
+        Write-Host "`n   Error details:" -ForegroundColor Yellow
+        $pipInstall | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
         exit 1
     }
 }
@@ -303,50 +302,54 @@ else {
 }
 
 # Step 4: Install Collab Package
-Write-Host "`n[Step 4/7] Installing collab package..." -ForegroundColor Yellow
-Write-Host "   Installing " -NoNewline -ForegroundColor White
-Write-Host "collab" -NoNewline -ForegroundColor Magenta
-Write-Host " from PyPI..." -ForegroundColor White
+Write-Host "`n[Step 4/9] Installing collab package..." -ForegroundColor Yellow
 
-# Check if collab is already installed (idempotent)
-$collabCheckOutput = (& $pythonPath -m pip show collab 2>&1)
+# Ensure any conflicting public 'collab' package is uninstalled
+Write-Host "   Checking for conflicting 'collab' package..." -ForegroundColor Gray
+& $pythonPath -m pip uninstall collab -y --quiet 2>&1 | Out-Null
+
+$collabSpec = $env:COLLAB_RUNTIME_SPEC
+if (-not $collabSpec) {
+    if (Test-Path "src\lock_client.py") {
+        $collabSpec = "-e ."
+        Write-Host "   Detected collab source repository. Using editable install..." -ForegroundColor Gray
+    } else {
+        $collabSpec = "collab-runtime"
+        Write-Host "   Installing latest collab-runtime from registry..." -ForegroundColor Gray
+    }
+} else {
+    Write-Host "   Installing defined spec: $collabSpec..." -ForegroundColor Gray
+}
+
+Write-Host "   Installing " -NoNewline -ForegroundColor White
+Write-Host "$collabSpec" -NoNewline -ForegroundColor Magenta
+Write-Host "..." -NoNewline -ForegroundColor White
+
+& $pipPath install $collabSpec --quiet --no-warn-script-location 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    $versionLine = $collabCheckOutput | Where-Object { $_ -match "^Version:" }
-    if ($versionLine) {
-        $installedVersion = $versionLine -replace "^Version:\s*", ""
-        Write-Host "   collab $installedVersion already installed " -NoNewline -ForegroundColor White
+    # Check if installed
+    $collabCheckOutput = (& $pythonPath -m pip show collab-runtime 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        $versionLine = $collabCheckOutput | Where-Object { $_ -match "^Version:" }
+        if ($versionLine) {
+            $installedVersion = $versionLine -replace "^Version:\s*", ""
+            Write-Host "   collab-runtime $installedVersion installed " -NoNewline -ForegroundColor White
+            Write-Host "OK" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "   collab package installed " -NoNewline -ForegroundColor White
         Write-Host "OK" -ForegroundColor Green
     }
 }
 else {
-    # Not installed, install it from PyPI
-    # Support version pinning via environment variable or default to latest
-    $collabVersion = $env:COLLAB_VERSION
-    if ($collabVersion) {
-        $packageSpec = "collab==$collabVersion"
-        Write-Host "   Installing pinned version: $collabVersion..." -ForegroundColor Gray
-    }
-    else {
-        $packageSpec = "collab"
-        Write-Host "   Installing latest version from PyPI..." -ForegroundColor Gray
-    }
-
-    & $pipPath install $packageSpec --quiet
-    if ($LASTEXITCODE -eq 0) {
-        $collabVersion = & $pythonPath -m pip show collab 2>&1 | Where-Object { $_ -match "^Version:" } | ForEach-Object { $_ -replace "^Version:\s*", "" }
-        Write-Host "   collab $collabVersion installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
-    }
-    else {
-        Write-Host "   collab package installation " -NoNewline -ForegroundColor White
-        Write-Host "FAILED" -ForegroundColor Red
-        Write-Warning "Check the output above for errors."
-        $script:ErrorCount++
-    }
+    Write-Host "   collab package installation " -NoNewline -ForegroundColor White
+    Write-Host "FAILED" -ForegroundColor Red
+    Write-Warning "Check the output above for errors."
+    $script:ErrorCount++
 }
 
 # Step 5: Environment Configuration
-Write-Host "`n[Step 5/7] Configuring environment..." -ForegroundColor Yellow
+Write-Host "`n[Step 5/9] Configuring environment..." -ForegroundColor Yellow
 if (-not (Test-Path ".env")) {
     if (Test-Path ".env.example") {
         Copy-Item ".env.example" ".env"
@@ -472,58 +475,70 @@ else {
 }
 
 # Step 6: VS Code Extension Installation (Optional)
-Write-Host "`n[Step 6/7] Installing VS Code extension (optional)..." -ForegroundColor Yellow
+Write-Host "`n[Step 6/9] Installing VS Code extension (optional)..." -ForegroundColor Yellow
 
-$vscodeExtensionPath = Join-Path $projectRoot "vscode-extension" "collab-locks"
-if (Test-Path $vscodeExtensionPath) {
-    $packageJsonPath = Join-Path $vscodeExtensionPath "package.json"
-    if (Test-Path $packageJsonPath) {
-        Write-Host "   Found VS Code extension at " -NoNewline -ForegroundColor White
-        Write-Host "vscode-extension/collab-locks" -NoNewline -ForegroundColor Magenta
-        Write-Host " ..." -ForegroundColor White
+Write-Host "   Fetching extension from GitHub Releases..." -ForegroundColor Gray
 
-        if (Get-Command code -ErrorAction SilentlyContinue) {
-            Write-Host "   VS Code CLI found, installing extension..." -ForegroundColor Gray
-            try {
-                Push-Location $vscodeExtensionPath
-                code --install-extension $vscodeExtensionPath --force 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "   VS Code extension installed " -NoNewline -ForegroundColor White
-                    Write-Host "OK" -ForegroundColor Green
+$ideCommands = @("code", "code-insiders", "cursor", "codium", "antigravity")
+$cliFound = $false
+foreach ($ide in $ideCommands) {
+    if (Get-Command $ide -ErrorAction SilentlyContinue) {
+        $cliFound = $true
+        break
+    }
+}
+
+if ($cliFound) {
+    try {
+        $tempVsix = if ($IsWindows) { Join-Path $env:TEMP "collab-locks-latest.vsix" } else { "/tmp/collab-locks-latest.vsix" }
+        # Since this is a public repo, we can fetch the latest release asset via GitHub API
+        $releaseUrl = "https://api.github.com/repos/KirilMT/collab/releases/latest"
+        $releaseInfo = Invoke-RestMethod -Uri $releaseUrl -ErrorAction Stop
+
+        $vsixAsset = $releaseInfo.assets | Where-Object { $_.name -match '\.vsix$' } | Select-Object -First 1
+
+        if ($vsixAsset) {
+            Invoke-WebRequest -Uri $vsixAsset.browser_download_url -OutFile $tempVsix -ErrorAction Stop
+
+            foreach ($ide in $ideCommands) {
+                if (Get-Command $ide -ErrorAction SilentlyContinue) {
+                    Write-Host "   Installing into $ide... " -NoNewline -ForegroundColor Gray
+                    & $ide --install-extension $tempVsix --force 2>&1 | Out-Null
+
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "OK" -ForegroundColor Green
+                    } else {
+                        Write-Host "WARN" -ForegroundColor Yellow
+                    }
                 }
-                else {
-                    Write-Host "   VS Code extension installation " -NoNewline -ForegroundColor White
-                    Write-Host "WARN" -ForegroundColor Yellow
-                }
-                Pop-Location
             }
-            catch {
-                Write-Host "   VS Code extension installation " -NoNewline -ForegroundColor White
-                Write-Host "WARN" -ForegroundColor Yellow
-            }
+            Remove-Item $tempVsix -ErrorAction SilentlyContinue
+        } else {
+            Write-Host "   No .vsix asset found on latest GitHub release " -NoNewline -ForegroundColor White
+            Write-Host "WARN" -ForegroundColor Yellow
         }
-        else {
-            Write-Host "   VS Code CLI not found. Extension must be installed manually:" -ForegroundColor Gray
-            Write-Host "     1. Open VS Code" -ForegroundColor Gray
-            Write-Host "     2. Go to Extensions (Ctrl+Shift+X)" -ForegroundColor Gray
-            Write-Host "     3. Search for 'collab-locks'" -ForegroundColor Gray
-            Write-Host "     Or run: code --install-extension vscode-extension/collab-locks" -ForegroundColor Gray
-        }
+    }
+    catch {
+        Write-Host "   VS Code extension installation failed " -NoNewline -ForegroundColor White
+        Write-Host "WARN" -ForegroundColor Yellow
     }
 }
 else {
-    Write-Host "   VS Code extension not found " -NoNewline -ForegroundColor White
-    Write-Host "SKIPPED" -ForegroundColor Yellow
+    Write-Host "   No supported IDE CLIs found. Extension must be installed manually:" -ForegroundColor Gray
+    Write-Host "     1. Open your IDE (VS Code, Cursor, Antigravity)" -ForegroundColor Gray
+    Write-Host "     2. Go to Extensions -> '...' -> 'Install from VSIX'" -ForegroundColor Gray
 }
 
 # Step 7: Smoke Tests (Health Checks)
-Write-Host "`n[Step 7/7] Running smoke tests..." -ForegroundColor Yellow
+Write-Host "`n[Step 7/9] Running smoke tests..." -ForegroundColor Yellow
 
 $smokeTestsPassed = $true
 
 # Test 1: Check if collab command is available
 Write-Host "   Testing collab command availability..." -ForegroundColor Gray
-$collabCmd = Join-Path $projectRoot ".venv" "Scripts" "collab.exe"
+$venvBin = if ($script:IsWin -or (Test-Path (Join-Path $projectRoot ".venv\Scripts"))) { "Scripts" } else { "bin" }
+$collabExe = if ($script:IsWin) { "collab.exe" } else { "collab" }
+$collabCmd = Join-Path $projectRoot ".venv\$venvBin\$collabExe"
 if (Test-Path $collabCmd) {
     # Use --help for health check because collab CLI does not expose --version.
     & $collabCmd --help 2>&1 | Out-Null
@@ -563,11 +578,38 @@ if ($smokeTestsPassed) {
     Write-Host "OK" -ForegroundColor Green
 }
 
+# Step 8: Ensuring Collaborative Daemon is running
+Write-Host "`n[Step 8/9] Ensuring Collaborative Daemon is running..." -ForegroundColor Yellow
+
+if (Test-Path $pythonPath) {
+    $collabExe = Join-Path (Split-Path $pythonPath) "collab.exe"
+    & $collabExe daemon-status | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "   Starting daemon in background..." -ForegroundColor Gray
+        & $collabExe daemon-start
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   Daemon started successfully " -NoNewline -ForegroundColor White
+            Write-Host "OK" -ForegroundColor Green
+        } else {
+            Write-Host "   Failed to start daemon " -NoNewline -ForegroundColor White
+            Write-Host "WARN" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "   Daemon is already running " -NoNewline -ForegroundColor White
+        Write-Host "OK" -ForegroundColor Green
+    }
+}
+
+# Step 9: Final Verification
+Write-Host "`n[Step 9/9] Final verification..." -ForegroundColor Yellow
+& $collabExe daemon-status
+
 # Final Summary - Only show if not called from dev script
 if (-not $CalledFromDev) {
     Write-Host "`n========================================" -ForegroundColor Cyan
     if ($script:ErrorCount -eq 0) {
         Write-Host "   Installation Complete!" -ForegroundColor Green
+        Write-Host "   (Production + Daemon Active)" -ForegroundColor Gray
     }
     else {
         Write-Host "   Installation completed with $($script:ErrorCount) warning(s)" -ForegroundColor Yellow
@@ -593,4 +635,12 @@ if (-not $CalledFromDev) {
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
+}
+
+if ($script:ErrorCount -gt 0) {
+    exit $script:ErrorCount
+} elseif (-not $smokeTestsPassed) {
+    exit 1
+} else {
+    exit 0
 }

@@ -240,7 +240,7 @@ Or run `python scripts/format_code.py`.
 Before editing:
 
 1. Identify all files to be changed.
-2. Run `collab active` (or `python -m src.main active`).
+2. Run `collab active`.
 3. If a target file is locked by another developer, stop and report.
 4. Never force-release another developer's lock.
 
@@ -283,5 +283,5 @@ Workflow procedures are in `.agents/skills/`:
 
 ## Version
 
-**Version:** 0.1.1
-**Last Updated:** May 6, 2026
+**Version:** 0.2.2
+**Last Updated:** May 13, 2026

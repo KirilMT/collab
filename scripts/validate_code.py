@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cleanup import clean_default  # noqa: E402
+from cleanup import clean_default, clean_packaging  # noqa: E402
 
 # Load .env variables so validate_code.py knows about local configuration
 _load_dotenv: Optional[Callable[..., bool]]
@@ -83,11 +83,15 @@ if sys.stderr.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Additional fix for Windows UnicodeEncodeError when printing special characters
-if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass  # Fallback to default behavior if reconfigure fails
+# Only call reconfigure if it exists and sys.stdout is a standard stream
+# (not a wrapped TextIOWrapper)
+if sys.platform == "win32":
+    orig_stdout = sys.__stdout__ if hasattr(sys, "__stdout__") else None
+    if orig_stdout and hasattr(orig_stdout, "reconfigure"):
+        try:
+            orig_stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass  # Fallback to default behavior if reconfigure fails
 
 
 class Colors:
@@ -450,12 +454,17 @@ def run_command(
         Tuple of (success: bool, output: str)
     """
     try:
-        print(f"Running: {' '.join(command)}")
+        # Prefer python -m for known tools to ensure strict virtual environment
+        # affinity and avoid PATH resolution ambiguities (especially on Windows).
+        resolved_command = _python_module_fallback_command(command)
+        active_command = resolved_command if resolved_command else command
+
+        print(f"Running: {' '.join(active_command)}")
 
         # On Windows, npm/npx are .cmd files that need cmd.exe to execute.
         # Instead of shell=True (B602 security risk), prefix with cmd /c.
-        if sys.platform == "win32" and command[0] in ("npm", "npx"):
-            command = ["cmd", "/c"] + command
+        if sys.platform == "win32" and active_command[0] in ("npm", "npx"):
+            active_command = ["cmd", "/c"] + active_command
 
         # IRONCLAD MODE: Fresh, minimal env to mirror CI clean state.
         # Blocks local shell variables from masking configuration gaps.
@@ -474,7 +483,16 @@ def run_command(
             "PYTHONIOENCODING": "utf-8",
             "TESTING": "1",
             "CI": "true",
+            "COLLAB_SILENT_DAEMON": "1",
+            "COLLAB_TEST_MODE": "1",
         }
+
+        # Propagate test-isolation state dir so module-level code in
+        # lock_client / live_locks_watcher resolves a sandboxed PID path
+        # *before* conftest.py even runs.
+        _state_dir = os.environ.get("COLLAB_STATE_DIR")
+        if _state_dir:
+            ironclad_env["COLLAB_STATE_DIR"] = _state_dir
 
         coverage_file = os.environ.get("COVERAGE_FILE")
         if coverage_file:
@@ -502,33 +520,15 @@ def run_command(
         if env:
             ironclad_env.update(env)
 
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                env=ironclad_env,
-            )
-        except FileNotFoundError:
-            fallback_command = _python_module_fallback_command(command)
-            if not fallback_command:
-                raise
-            print_warning(
-                f"{command[0]} not found via PATH; retrying with: "
-                f"{' '.join(fallback_command)}"
-            )
-            result = subprocess.run(
-                fallback_command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                env=ironclad_env,
-            )
+        result = subprocess.run(
+            active_command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=ironclad_env,
+        )
 
         if result.returncode == 0:
             print_success(f"{description} passed")
@@ -1261,9 +1261,18 @@ def validate_javascript_frontend(
 
 def _run_cleanup() -> None:
     print_header("CLEANUP")
-    count = clean_default(dry_run=False)
-    if count:
-        print_success(f"Removed {count} generated artifact(s) — repo is clean.")
+    # Default cleanup (coverage + test output)
+    count_default = clean_default(dry_run=False)
+
+    # Packaging cleanup (dist/, build/, wheel metadata, *.egg-info, .venv.verify)
+    # Run unconditionally so packaging artifacts are removed automatically
+    # after validation runs. We call the function directly (no interactive
+    # prompts) because this is a programmatic invocation.
+    count_packaging = clean_packaging(dry_run=False)
+
+    total = count_default + count_packaging
+    if total:
+        print_success(f"Removed {total} generated artifact(s) — repo is clean.")
     else:
         print_success("Nothing to clean — repo is already clean.")
 

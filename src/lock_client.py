@@ -1,4 +1,4 @@
-﻿"""Supabase-backed collaborative file lock client.
+"""Supabase-backed collaborative file lock client.
 
 Provides atomic lock acquisition, release, and daemon management for preventing merge
 conflicts in multi-developer workflows.
@@ -170,18 +170,8 @@ def _resolve_project_root() -> str:
     return os.path.abspath(os.getcwd())
 
 
-def _resolve_runtime_root(project_root: str) -> str:
-    """Resolve persistent runtime state directory for the current project."""
-    home_override = _read_clean_env_path("COLLAB_HOME")
-    if home_override:
-        return os.path.abspath(home_override)
-    return project_root
-
-
+# Resolve project root first — used by state-dir helpers below
 _PROJECT_ROOT = _resolve_project_root()
-_COLLAB_ROOT = _resolve_runtime_root(_PROJECT_ROOT)
-_RESOURCE_ROOT = _THIS_DIR
-os.makedirs(_COLLAB_ROOT, exist_ok=True)
 
 
 def _is_test_mode() -> bool:
@@ -194,8 +184,8 @@ def _is_test_mode() -> bool:
 
 
 def _get_state_dir() -> str:
-    """Return a per-workspace state directory outside the repo for non- essential
-    runtime markers (heartbeat, shutdown marker, startup summary). This avoids creating
+    """Return a per-workspace state directory outside the repo for non-essential runtime
+    markers (heartbeat, shutdown marker, startup summary). This avoids creating
     transient files inside the workspace tree.
 
     The location can be overridden with the `COLLAB_STATE_DIR` env var for testing or
@@ -207,15 +197,17 @@ def _get_state_dir() -> str:
             os.makedirs(state_dir, exist_ok=True)
         except Exception:
             pass
-        return state_dir
+        return os.path.abspath(str(state_dir))
 
     try:
         import hashlib as _hashlib
         import tempfile as _tempfile
 
-        h = _hashlib.sha1(
-            _PROJECT_ROOT.encode("utf-8"), usedforsecurity=False
-        ).hexdigest()[:8]
+        # Normalize slashes and case for cross-runtime consistency (CLI vs Extension)
+        norm_root = _PROJECT_ROOT.replace("/", "\\").lower().rstrip("\\")
+        h = _hashlib.sha1(norm_root.encode("utf-8"), usedforsecurity=False).hexdigest()[
+            :8
+        ]
         base_tmp = _tempfile.gettempdir()
         # Use a collab-specific namespace for runtime state dirs.
         current_prefix = "collab_runtime"
@@ -228,13 +220,49 @@ def _get_state_dir() -> str:
             os.makedirs(sd, exist_ok=True)
         except Exception:
             pass
-        return sd
+        return os.path.abspath(str(sd))
     except Exception:
-        # Fallback to the repository runtime root (best-effort)
-        return _COLLAB_ROOT
+        # Fallback: prefer the configured runtime root if available (keeps
+        # backwards-compatible test and import-time semantics), otherwise
+        # fall back to the project root or current working directory.
+        try:
+            fallback = globals().get("_COLLAB_ROOT")
+            if fallback:
+                return os.path.abspath(str(fallback))
+        except Exception:
+            pass
+        try:
+            return os.path.abspath(_PROJECT_ROOT)
+        except Exception:
+            return os.getcwd()
+
+
+def _resolve_runtime_root(project_root: str) -> str:
+    """Resolve persistent runtime root for the current project.
+
+    Preference order:
+      1. `COLLAB_HOME` env override
+      2. Fallback to project root
+    """
+    home_override = _read_clean_env_path("COLLAB_HOME")
+    if home_override:
+        return os.path.abspath(home_override)
+
+    # Fallback to state dir for backwards compatibility in tests/custom setups
+    state_override = _read_clean_env_path("COLLAB_STATE_DIR")
+    if state_override:
+        return os.path.abspath(state_override)
+
+    return project_root
+
+
+_COLLAB_ROOT = _resolve_runtime_root(_PROJECT_ROOT)
+_RESOURCE_ROOT = _THIS_DIR
+os.makedirs(_COLLAB_ROOT, exist_ok=True)
 
 
 def _state_path(name: str) -> str:
+    # Ensure we use the normalized state directory
     return os.path.join(_get_state_dir(), name)
 
 
@@ -286,7 +314,8 @@ EPHEMERAL_PREFIXES = ["test_dev", "ci"]
 # PID file lives at project root unless overridden.
 # Tests can override this via COLLAB_PID_FILE env var to avoid interfering with
 # the live production watcher.
-PID_FILE = os.getenv("COLLAB_PID_FILE") or os.path.join(_COLLAB_ROOT, ".daemon.pid")
+# PID file location (transient state)
+PID_FILE = os.getenv("COLLAB_PID_FILE") or os.path.join(_get_state_dir(), ".daemon.pid")
 
 # Maximum retry attempts for network errors
 MAX_RETRIES = 3
@@ -775,7 +804,7 @@ class LockClient:
                 if owner == self.developer_id:
                     br = lock.get("branch_name") or "main"
                     reason = lock.get("reason") or "Auto-Watch Sync"
-                    logger.info(
+                    logger.debug(
                         "🔒 [LOCKED] %s — @%s (branch: %s, reason: %s)",
                         fp,
                         owner,
@@ -963,10 +992,12 @@ class LockClient:
             res = _retry_on_network_error(
                 lambda: client.table("file_locks").select("*").execute()
             )
-        except Exception:
+        except Exception as e:
+            logger.error("Exception in active() Supabase query: %s", e)
             return []
         _, data, error = self._parse_response(res)
         if error:
+            logger.error("Supabase error in active(): %s", error)
             return []
         return data or []
 
@@ -1322,7 +1353,7 @@ class LockClient:
         try:
             stop_file = _state_path(".stop_request")
             if os.path.exists(stop_file):
-                logger.info(
+                logger.debug(
                     (
                         "Found stale stop request %s — removing before "
                         "starting new watcher"
@@ -1451,8 +1482,6 @@ class LockClient:
         # On Linux/Mac or non-venv Windows, it stays identical to proc.pid.
         actual_pid = None
         for i in range(100):  # 10 seconds max
-            if i == 20:
-                print("... waiting for watcher to initialize ...")
             pid = self._read_pid()
             if pid and self._is_process_alive(pid):
                 if sys.platform != "win32" or pid != proc.pid:
@@ -1587,14 +1616,9 @@ class LockClient:
                             break
                         time.sleep(0.1)
 
-                    try:
-                        if os.path.exists(stop_file):
-                            os.remove(stop_file)
-                            logger.info("Removed stop request file: %s", stop_file)
-                    except Exception:
-                        logger.debug(
-                            "Failed to remove stop request file: %s", stop_file
-                        )
+                    # Do NOT remove the stop request here; the IDE extension
+                    # needs to see it to avoid triggering an auto-restart.
+                    # The next watcher startup will clean it up.
 
                     # If the stopped PID matched the canonical PID file, remove it
                     try:
@@ -1798,6 +1822,21 @@ class LockClient:
         killed = 0
         pids_to_check: set[int] = set()
 
+        is_test = _is_test_mode()
+
+        def _should_kill(cmdline: str) -> bool:
+            cmd = cmdline.lower()
+            if "lock_client" not in cmd:
+                return False
+
+            # Safeguard: prevent test runs from killing production daemons.
+            is_test_watcher = (
+                "pytest-of-" in cmd
+                or "collab_test_" in cmd
+                or "mockcmms_pytest_collab_" in cmd
+            )
+            return is_test_watcher if is_test else not is_test_watcher
+
         if sys.platform == "win32":
             # Check multiple Python executable names
             python_images = ["python.exe", "pythonw.exe", "python3.exe"]
@@ -1853,7 +1892,7 @@ class LockClient:
                     except Exception:
                         inspected = False
 
-                    if inspected and cmd and "lock_client" in cmd.lower():
+                    if inspected and cmd and _should_kill(cmd):
                         print(f"Killing orphaned lock_client (PID: {pid})")
                         subprocess.run(
                             ["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -1883,7 +1922,7 @@ class LockClient:
                                 errors="ignore",
                             )
                             out = (result.stdout or "").lower()
-                            if "lock_client" in out:
+                            if _should_kill(out):
                                 print(f"Killing orphaned lock_client (PID: {pid})")
                                 subprocess.run(
                                     ["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -1913,7 +1952,7 @@ class LockClient:
                     text=True,
                 )
                 for line in result.stdout.split("\n"):
-                    if "lock_client" in line.lower() and "python" in line.lower():
+                    if "python" in line.lower() and _should_kill(line):
                         parts = line.split()
                         if len(parts) >= 2:
                             try:
@@ -2104,6 +2143,18 @@ class LockClient:
             token = None
         self._write_pid(os.getpid(), parent_pid=self._parent_pid, token=token)
         logger.info("Wrote PID metadata to %s (PID: %d)", PID_FILE, os.getpid())
+
+        # Defensive: remove any stale stop-request file on startup so we don't
+        # immediately shut down. The IDE extension or CLI may have left this
+        # behind from a previous session.
+        try:
+            stop_file = _state_path(".stop_request")
+            if os.path.exists(stop_file):
+                os.remove(stop_file)
+                logger.info("Removed stale stop request on watch loop entry.")
+        except Exception:
+            pass
+
         self._register_signal_handlers()
         # Start a low-latency OS-level parent monitor (Windows) to detect
         # parent termination without relying on WMIC/tasklist polling.
@@ -2224,7 +2275,6 @@ class LockClient:
                                     actual_pid = os.getpid()
 
                                 matched = False
-                                remove_file = False
 
                                 # TOKEN:<token> takes precedence
                                 if txt.startswith("TOKEN:"):
@@ -2239,13 +2289,11 @@ class LockClient:
                                         and requested_token == my_token
                                     ):
                                         matched = True
-                                        remove_file = True
                                 elif txt.startswith("PID:"):
                                     try:
                                         requested_pid = int(txt.split(":", 1)[1])
                                         if requested_pid in (actual_pid, os.getpid()):
                                             matched = True
-                                            remove_file = True
                                     except Exception:
                                         matched = False
                                 else:
@@ -2258,7 +2306,6 @@ class LockClient:
                                                 os.getpid(),
                                             ):
                                                 matched = True
-                                                remove_file = True
                                     except Exception:
                                         matched = False
 
@@ -2270,15 +2317,11 @@ class LockClient:
                                         ),
                                         stop_file,
                                     )
-                                    if remove_file:
-                                        try:
-                                            os.remove(stop_file)
-                                        except Exception as exc:
-                                            logger.debug(
-                                                "Failed to remove stop marker %s: %s",
-                                                stop_file,
-                                                exc,
-                                            )
+                                    # Do NOT remove the stop_file here. The IDE
+                                    # extension needs to see it after the process
+                                    # exits to avoid an automatic restart.
+                                    # The next watcher startup (via daemon_start)
+                                    # will clean it up.
                                     self._graceful_shutdown(reason="stop_requested")
                                     return
                         except Exception as exc:
@@ -2601,36 +2644,18 @@ class LockClient:
                         last_change_time = _safe_now()
                         new_files = current_modified - last_modified
                         if new_files:
-                            ts = _safe_now().strftime("%H:%M:%S")
-                            logger.info("[%s] Detected: %s", ts, list(new_files))
+                            logger.info("Detected local changes: %s", list(new_files))
                             branch = self._get_current_branch()
                             ok, failed, msg = self.acquire_multiple(
                                 list(new_files),
                                 branch_name=branch,
                                 reason="Auto-Watch Sync",
                             )
-                            if ok:
-                                for fp in sorted(new_files):
-                                    logger.info(
-                                        (
-                                            "🔒 [LOCKED] %s — @%s (branch: %s, "
-                                            "reason: Auto-Watch Sync)"
-                                        ),
-                                        fp,
-                                        self.developer_id,
-                                        branch or "main",
-                                    )
-                            else:
+                            if not ok:
                                 logger.warning("⚠️ CONFLICT ALERT: %s", msg)
 
                         released = last_modified - current_modified
                         if released:
-                            ts = _safe_now().strftime("%H:%M:%S")
-                            for fp in sorted(released):
-                                logger.info(
-                                    "🔓 [RELEASED] %s — lock released (file finalized)",
-                                    fp,
-                                )
                             ok, count, _ = self.release_multiple(list(released))
                             if ok and count > 0:
                                 logger.info("🔓 [RELEASED] %d file(s) released", count)
@@ -2852,6 +2877,12 @@ class LockClient:
         n_kept = 0
         try:
             active_locks = self.active()
+            logger.debug(
+                "Graceful shutdown: fetched %d active locks from Supabase. "
+                "My dev ID: %s",
+                len(active_locks),
+                self.developer_id,
+            )
             my_locks = [
                 lk for lk in active_locks if lk.get("developer_id") == self.developer_id
             ]
@@ -3061,7 +3092,7 @@ class LockClient:
 
         # Only log start message if there's work to do
         if any([n_released, n_newly_locked, n_readopted, n_refreshed, n_multi]):
-            logger.info("Starting lock reconciliation...")
+            logger.debug("Starting lock reconciliation...")
 
         # Process stale locks
         if stale:
@@ -3137,6 +3168,11 @@ class LockClient:
             logger.info("  Token refresh: %d lock(s)", n_refreshed)
 
         # Write startup summary to file for VSCode extension notification
+        # Skip if silencing is requested (e.g., during tests)
+        if os.environ.get("COLLAB_SILENT_DAEMON"):
+            logger.debug("Skipping startup summary (COLLAB_SILENT_DAEMON set)")
+            return git_modified
+
         try:
             import json
 
@@ -3479,6 +3515,7 @@ class LockClient:
             "live_locks_watcher" in s
             or ("lock_client.py" in s and "watch" in s)
             or ("collab.core.lock_client" in s and "watch" in s)
+            or ("collab" in s and "watch" in s)
         )
 
     @staticmethod
@@ -4094,7 +4131,11 @@ class LockClient:
 
                 # Found Code.exe - this is the actual IDE window
                 # Use the FIRST one found (closest to terminal), not the deepest one
-                if name_lower == "code.exe" and code_exe_pid is None:
+                if (
+                    name_lower
+                    in ("code.exe", "antigravity.exe", "cursor.exe", "vscodium.exe")
+                    and code_exe_pid is None
+                ):
                     code_exe_pid = current_pid
                     logger.debug(
                         "Found outermost Code.exe in process tree (PID: %d)",
@@ -4105,9 +4146,13 @@ class LockClient:
                 # Found node.exe extension host - walk up to find Code.exe
                 if name_lower == "node.exe" and ppid:
                     next_name, next_ppid = self._get_process_info_local(ppid)
-                    if next_name and "code" in next_name.lower():
+                    if next_name and any(
+                        x in next_name.lower()
+                        for x in ("code", "antigravity", "cursor", "vscodium")
+                    ):
                         logger.debug(
-                            "Detected VSCode via node.exe parent (PID: %d)", ppid
+                            "Detected VSCode-like IDE via node.exe parent (PID: %d)",
+                            ppid,
                         )
                         return ppid, "node_parent"
 
@@ -4157,9 +4202,15 @@ class LockClient:
                     )
                     if name:
                         name_lower = name.lower()
-                        if name_lower == "code.exe":
+                        if name_lower in (
+                            "code.exe",
+                            "antigravity.exe",
+                            "cursor.exe",
+                            "vscodium.exe",
+                        ):
                             logger.info(
-                                "Found VSCode Code.exe via simple walk (PID: %d)",
+                                "Found VSCode-like IDE %s via simple walk (PID: %d)",
+                                name,
                                 parent,
                             )
                             return parent, "simple_walk"
@@ -4175,11 +4226,14 @@ class LockClient:
         except Exception as e:
             logger.debug("Simple parent walk failed: %s", e)
 
-        # Ultimate fallback: just use immediate parent
-        ppid = os.getppid()
-        if ppid > 0 and self._is_process_alive(ppid):
-            logger.info("Falling back to immediate parent PID: %d", ppid)
-            return ppid, "immediate_parent"
+        # Fallback 2: Return immediate parent if alive (last resort)
+        try:
+            ppid = os.getppid()
+            if ppid > 0 and self._is_process_alive(ppid):
+                logger.info("Falling back to immediate parent (PID: %d)", ppid)
+                return ppid, "immediate_parent"
+        except Exception as e:
+            logger.debug("Immediate parent fallback failed: %s", e)
 
         logger.warning("Could not determine parent IDE/terminal PID")
         return None, "unknown"

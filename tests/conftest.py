@@ -21,14 +21,14 @@ import pytest
 
 _session_temp_dir = tempfile.mkdtemp(prefix="collab_test_")
 
+os.environ["COLLAB_STATE_DIR"] = _session_temp_dir
 os.environ["COLLAB_PID_FILE"] = os.path.join(_session_temp_dir, "daemon.pid")
 os.environ["COLLAB_TEST_MODE"] = "1"
 
-# We intentionally mock these at the top level for tests to avoid hitting
-# real endpoints if _get_create_client fallback triggers early.
-# NOTE: Port must be ≤ 65535; using 5432 (PostgreSQL default) as placeholder.
-os.environ.setdefault("SUPABASE_URL", "http://localhost:5432")
-os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
+# We forcibly mock these for ALL tests to prevent accidental production leakage.
+# Individual tests can still use monkeypatch if they need specific dummy values.
+os.environ["SUPABASE_URL"] = "http://localhost:54321"
+os.environ["SUPABASE_ANON_KEY"] = "test-anon-key-session"
 
 
 def _cleanup_session_temp():

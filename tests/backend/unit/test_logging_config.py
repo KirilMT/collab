@@ -82,7 +82,10 @@ def test_is_test_mode_reflects_environment(monkeypatch):
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
     assert lc._is_test_mode() is True
 
+    # Clear all test-mode signals to simulate production context
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
+    monkeypatch.delenv("TESTING", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     assert lc._is_test_mode() is False
 
 

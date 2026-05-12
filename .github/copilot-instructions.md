@@ -51,12 +51,19 @@ Before outputting any terminal command, internally verify it is compatible with 
 
 Before editing any file:
 
-1. List all files the task will touch
-2. Run `collab active` (or `python -m src.main active` from the repo root) to check locks
-3. If locked by another developer — **stop and report**. Do not edit.
-4. If unlocked, proceed — lock acquisition/release is automatic
+1. List all files the task will touch.
+2. Run `collab active`.
+3. If a target file is locked by another developer, stop and report.
+4. Never force-release another developer's lock.
 
-**ABSOLUTELY FORBIDDEN:** Never force-release another developer's lock.
+### Troubleshooting
+
+If you suspect a lock is stale or the watcher is unresponsive:
+
+1. Run `collab daemon-status`.
+2. If stopped, run `collab daemon-start`.
+3. Check `collab active`.
+4. If still blocked, check `collab status path/to/file.py` to see the exact owner.
 
 ---
 

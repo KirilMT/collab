@@ -528,8 +528,8 @@ def test_daemon_status_prefers_entrypoint(tmp_path, monkeypatch):
 
         # Run the CLI status command with dummy SUPABASE env to avoid credential checks
         env = dict(os.environ)
-        env["SUPABASE_URL"] = env.get("SUPABASE_URL", "http://example.invalid")
-        env["SUPABASE_ANON_KEY"] = env.get("SUPABASE_ANON_KEY", "anon")
+        env["SUPABASE_URL"] = "http://localhost:54321"
+        env["SUPABASE_ANON_KEY"] = "test-anon-key-daemon"
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[4])
         env["COLLAB_TEST_MODE"] = "1"
         env["COLLAB_PID_FILE"] = str(pid_file)
@@ -1263,7 +1263,7 @@ def test_cleanup_orphaned_processes_unix(monkeypatch, capsys):
     client = mod.LockClient(developer_id="tester", local_only=True)
 
     # Simulate ps output containing a lock_client line for a fake pid
-    fake_ps = "user  12345  0.0  0.1 python /path/to/lock_client\n"
+    fake_ps = "user  12345  0.0  0.1 python /path/to/collab_test_lock_client\n"
 
     def fake_run(*a, **k):
         return types.SimpleNamespace(stdout=fake_ps, returncode=0)
@@ -3222,7 +3222,7 @@ def test_cleanup_orphaned_processes_windows_psutil_match(monkeypatch, tmp_path):
             self.pid = pid
 
         def cmdline(self):
-            return ["python", "lock_client.py", "watch"]
+            return ["python", "collab_test_lock_client.py", "watch"]
 
     class FakePsutil:
         class NoSuchProcess(Exception):
@@ -3268,7 +3268,7 @@ def test_cleanup_orphaned_processes_windows_wmic_fallback(monkeypatch):
             )
         if cmd[0] == "wmic":
             return types.SimpleNamespace(
-                stdout="CommandLine=python lock_client.py watch",
+                stdout="CommandLine=python collab_test_lock_client.py watch",
                 returncode=0,
             )
         if cmd[0] == "taskkill":
@@ -3359,8 +3359,10 @@ def test_cleanup_orphaned_processes_unix_ps_scan(monkeypatch):
         assert cmd == ["ps", "aux"]
         return types.SimpleNamespace(
             stdout=(
-                "user 34567 0.0 0.1 ? S 00:00:00 python lock_client.py watch\n"
-                "user 99999 0.0 0.1 ? S 00:00:00 python lock_client.py watch\n"
+                "user 34567 0.0 0.1 ? S 00:00:00 python "
+                "collab_test_lock_client.py watch\n"
+                "user 99999 0.0 0.1 ? S 00:00:00 python "
+                "collab_test_lock_client.py watch\n"
             ),
             returncode=0,
         )
