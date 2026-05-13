@@ -953,7 +953,8 @@ def test_daemon_status_legacy_pid_exception(monkeypatch, tmp_path):
 
     sys.modules["psutil"] = type("m", (), {"Process": BadProc})
     try:
-        assert mod.LockClient._get_cmdline_for_pid(1234) is None
+        # Use a very high PID that's guaranteed not to exist
+        assert mod.LockClient._get_cmdline_for_pid(99999999) is None
     finally:
         del sys.modules["psutil"]
 

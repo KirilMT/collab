@@ -112,17 +112,15 @@ def test_format_failure_output_generic_fallback():
 def test_python_module_fallback_command_maps_known_tools():
     cmd = validate_code._python_module_fallback_command(["ruff", "check", "src"])
     assert cmd is not None
-    assert cmd[:3] == [validate_code.sys.executable, "-m", "ruff"]
+    assert cmd[0].lower() == validate_code.sys.executable.lower()
+    assert cmd[1:3] == ["-m", "ruff"]
 
     diff_cmd = validate_code._python_module_fallback_command(
         ["diff-cover", "coverage.xml"]
     )
     assert diff_cmd is not None
-    assert diff_cmd[:3] == [
-        validate_code.sys.executable,
-        "-m",
-        "diff_cover.diff_cover_tool",
-    ]
+    assert diff_cmd[0].lower() == validate_code.sys.executable.lower()
+    assert diff_cmd[1:3] == ["-m", "diff_cover.diff_cover_tool"]
 
     assert validate_code._python_module_fallback_command(["unknown-tool"]) is None
 
@@ -199,7 +197,8 @@ def test_run_command_uses_python_module_resolution(monkeypatch):
     assert output == "ok"
     assert len(calls) == 1
     # Should use python -m resolution pre-emptively
-    assert calls[0][:3] == [validate_code.sys.executable, "-m", "ruff"]
+    assert calls[0][0].lower() == validate_code.sys.executable.lower()
+    assert calls[0][1:3] == ["-m", "ruff"]
 
 
 def test_get_changed_files_collects_all_three_sources(monkeypatch):

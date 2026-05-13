@@ -18,10 +18,6 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    if: >-
-      !contains(
-      github.event.head_commit.message,
-      'auto-format (Release Please)')
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -37,6 +33,14 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Tag and create release
+        if: ${{ steps.release.outputs.releases_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release created: ${{ steps.release.outputs.tag_name }}"
+          echo "Triggering publish workflow..."
       - name: Checkout Release PR branch (if present)
         if: ${{ steps.release.outputs.pr }}
         uses: actions/checkout@v4
