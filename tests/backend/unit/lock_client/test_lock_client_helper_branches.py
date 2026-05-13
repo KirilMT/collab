@@ -333,6 +333,16 @@ def test_is_same_machine_token_env_fallback_with_git_error(monkeypatch):
 def test_get_cmdline_for_pid_windows_wmic_and_powershell_paths(monkeypatch):
     """Cover WMIC success, WMIC failure fallback, and PowerShell success branch."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
+    # Mock psutil to raise so we fall through to the Windows-specific paths.
+    # On CI, psutil is installed and psutil.Process(PID) would return a real
+    # cmdline for an existing process, bypassing the mocked Windows fallbacks.
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(
+            Process=lambda pid: (_ for _ in ()).throw(RuntimeError("mocked"))
+        ),
+    )
     monkeypatch.setattr(
         mod.shutil, "which", lambda exe: "wmic" if exe == "wmic" else None
     )
@@ -362,6 +372,16 @@ def test_get_cmdline_for_pid_windows_wmic_and_powershell_paths(monkeypatch):
 def test_get_cmdline_for_pid_windows_outer_fallback_exception(monkeypatch):
     """Cover outer Windows fallback exception branch (returns None)."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
+    # Mock psutil to raise so we fall through to the Windows-specific paths.
+    # On CI, psutil is installed and psutil.Process(PID) would return a real
+    # cmdline for an existing process, bypassing the mocked Windows fallbacks.
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(
+            Process=lambda pid: (_ for _ in ()).throw(RuntimeError("mocked"))
+        ),
+    )
     monkeypatch.setattr(
         mod.shutil,
         "which",
