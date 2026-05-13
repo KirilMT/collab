@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.2.4](https://github.com/KirilMT/collab/compare/v0.2.3...v0.2.4) (2026-05-13)
 
-
 ### Bug Fixes
 
-* **ci:** remove skip condition blocking release-please tag creation on merge ([#26](https://github.com/KirilMT/collab/issues/26)) ([3e11b0a](https://github.com/KirilMT/collab/commit/3e11b0abc5263cfd6af940ac965c33530319c68f))
+- **ci:** remove skip condition blocking release-please tag creation on merge ([#26](https://github.com/KirilMT/collab/issues/26)) ([3e11b0a](https://github.com/KirilMT/collab/commit/3e11b0abc5263cfd6af940ac965c33530319c68f))
 
 ## [0.2.3](https://github.com/KirilMT/collab/compare/v0.2.2...v0.2.3) (2026-05-13)
 
