@@ -3428,7 +3428,6 @@ class LockClient:
                     return " ".join(cmd)
                 return str(cmd)
             except Exception:
-                # If psutil fails for this PID, continue to fallbacks
                 pass
         except Exception:
             # psutil not installed — continue to platform fallbacks
