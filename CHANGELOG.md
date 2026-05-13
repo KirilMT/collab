@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.2.3](https://github.com/KirilMT/collab/compare/v0.2.2...v0.2.3) (2026-05-13)
 
-
 ### Bug Fixes
 
-* **ci:** create GitHub Release before uploading artifacts; fix GPG signing ([#20](https://github.com/KirilMT/collab/issues/20)) ([659e64a](https://github.com/KirilMT/collab/commit/659e64afb78ff7e2bd6653a1cae7718559588c91))
+- **ci:** create GitHub Release before uploading artifacts; fix GPG signing ([#20](https://github.com/KirilMT/collab/issues/20)) ([659e64a](https://github.com/KirilMT/collab/commit/659e64afb78ff7e2bd6653a1cae7718559588c91))
 
 ## [0.2.2](https://github.com/KirilMT/collab/compare/v0.2.1...v0.2.2) (2026-05-08)
 
