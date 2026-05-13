@@ -22,7 +22,10 @@ import pytest
 
 
 def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, str]:
-    """Execute collab CLI via python -m src.main and capture results.
+    """Execute collab CLI via python -m collab.__main__ and capture results.
+
+    IMPORTANT: Runs in a fully isolated environment so destructive commands
+    (release-all, cleanup, etc.) never touch the real Supabase database.
 
     Args:
         *args: Command arguments (e.g., "active", "status", "file.py")
@@ -31,12 +34,30 @@ def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, s
     Returns:
         Tuple of (exit_code, stdout, stderr)
     """
-    cmd = [sys.executable, "-m", "src.main"] + list(args)
+    cmd = [sys.executable, "-m", "collab.__main__"] + list(args)
+
+    # Build an isolated env that prevents the subprocess from hitting
+    # real Supabase even if it re-loads .env (python-dotenv's load_dotenv
+    # does NOT override pre-existing env vars by default).
+    isolated_env = os.environ.copy()
+    isolated_env.update(
+        {
+            "COLLAB_TEST_MODE": "1",
+            "SUPABASE_URL": "http://localhost:54321",
+            "SUPABASE_ANON_KEY": "test-anon-key-integration",
+            "COLLAB_SILENT_DAEMON": "1",
+            "COLLAB_AUTO_START_WATCHER": "0",
+        }
+    )
+
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=".",
+        env=isolated_env,
     )
 
     if expect_success and result.returncode != 0:
@@ -119,8 +140,8 @@ class TestCLICommandAvailability:
 class TestBackwardCompatibilityInvocation:
     """Verify all documented invocation patterns work identically."""
 
-    def test_python_m_src_main_entrypoint(self) -> None:
-        """Verify 'python -m src.main' invocation works."""
+    def test_python_m_collab_main_entrypoint(self) -> None:
+        """Verify 'python -m collab.__main__' invocation works."""
         exit_code, stdout, _ = run_collab_cli("--help")
         assert exit_code == 0
         assert len(stdout) > 0

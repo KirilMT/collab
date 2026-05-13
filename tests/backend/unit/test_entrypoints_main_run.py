@@ -1,4 +1,4 @@
-"""Tests for entrypoint modules run.py and src/main.py."""
+"""Tests for entrypoint modules run.py and src/main.py (implementation module)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ def test_run_py_imports_main_function(monkeypatch):
     def _fake_main():
         called["n"] += 1
 
-    monkeypatch.setattr("src.main.main", _fake_main)
+    # run.py delegates to collab.__main__.main
+    monkeypatch.setattr("collab.__main__.main", _fake_main)
 
     module_globals = runpy.run_path("run.py")
     assert "main" in module_globals
@@ -28,15 +29,25 @@ def test_run_py_dunder_main_executes(monkeypatch):
     def _fake_main():
         called["n"] += 1
 
-    monkeypatch.setattr("src.main.main", _fake_main)
+    # run.py delegates to collab.__main__.main
+    monkeypatch.setattr("collab.__main__.main", _fake_main)
     runpy.run_path("run.py", run_name="__main__")
     assert called["n"] == 1
 
 
 def test_src_main_module_executes_as_script(monkeypatch):
     monkeypatch.setattr("sys.argv", ["python", "daemon-status"])
-    with pytest.raises(SystemExit) as exc:
-        runpy.run_module("src.main", run_name="__main__")
+    # Ensure package 'src' is not present in sys.modules to avoid
+    # runpy runtime-warning about pre-imported package state.
+    import sys as _sys
+
+    saved = _sys.modules.pop("src", None)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            runpy.run_module("src.main", run_name="__main__")
+    finally:
+        if saved is not None:
+            _sys.modules["src"] = saved
 
     assert exc.value.code in (0, 1)
 

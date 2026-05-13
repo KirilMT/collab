@@ -177,6 +177,42 @@ class TestMainCLI:
         assert "[DRY-RUN]" in out
         assert "Nothing to clean" in out
 
+    def test_packaging_dry_run(self, monkeypatch, tmp_path, capsys):
+        # Dry-run should list packaging artifacts without deleting
+        (tmp_path / "dist").mkdir()
+        monkeypatch.setattr(cleanup, "ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["cleanup.py", "--packaging", "--dry-run"])
+        rc = cleanup.main()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[DRY-RUN]" in out
+        assert "Cleaning packaging artifacts" in out
+
+    def test_packaging_abort_on_no(self, monkeypatch, tmp_path, capsys):
+        # If user answers 'no' to confirmation, main should abort with code 2
+        (tmp_path / "dist").mkdir()
+        monkeypatch.setattr(cleanup, "ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["cleanup.py", "--packaging"])
+        monkeypatch.setattr("builtins.input", lambda prompt: "n")
+        rc = cleanup.main()
+        assert rc == 2
+        out = capsys.readouterr().out
+        assert "Aborted by user." in out
+
+    def test_packaging_confirm_yes_removes(self, monkeypatch, tmp_path, capsys):
+        # If user confirms, packaging artifacts should be removed
+        d = tmp_path / "dist"
+        d.mkdir()
+        (tmp_path / "build").mkdir()
+        monkeypatch.setattr(cleanup, "ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["cleanup.py", "--packaging"])
+        monkeypatch.setattr("builtins.input", lambda prompt: "y")
+        rc = cleanup.main()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Removed" in out or "Would remove" in out
+        assert not d.exists()
+
 
 def test_clean_glob_duplicate_and_value_error_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cleanup, "ROOT", tmp_path)

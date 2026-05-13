@@ -11,9 +11,12 @@ Usage:
     python scripts/cleanup.py --all        # Clean everything including caches
     python scripts/cleanup.py --coverage   # Only coverage reporting
                                            # (.coverage, htmlcov/, coverage/)
-    python scripts/cleanup.py --tests      # Only test output
+    python scripts/cleanup.py --tests      # Only remove test runner output
+    python scripts/cleanup.py --packaging  # Only remove packaging outputs
     python scripts/cleanup.py --caches     # Only tool caches (pycache, mypy, ruff)
     python scripts/cleanup.py --dry-run    # Show what would be deleted without deleting
+    python scripts/cleanup.py --packaging --yes
+                                           # Non-interactive/CI removal
 """
 
 import argparse
@@ -54,9 +57,27 @@ TEST_OUTPUT_ARTIFACTS: List[str] = [
     ".jscpd",  # JSCPD internal cache
 ]
 
+# Packaging-specific outputs (separate from test artifacts)
+PACKAGING_ARTIFACTS: List[str] = [
+    ".venv.verify",  # ephemeral venv used by packaging smoke tests
+    "dist",  # wheel and sdist output
+    "build",  # build workspace used during packaging
+    "pip-wheel-metadata",  # pip wheel metadata dir
+]
+
 # Glob patterns for scattered test output files
 TEST_OUTPUT_GLOB_PATTERNS: List[str] = [
     "pytest-cache-files-*",  # Randomly named temporary directories from test runners
+]
+
+# Formatting tool artifacts
+FORMATTING_GLOB_PATTERNS: List[str] = [
+    "**/*.isorted",  # isort backup files created during formatting (recursive)
+]
+
+# Packaging-specific glob patterns
+PACKAGING_GLOB_PATTERNS: List[str] = [
+    "*.egg-info",  # packaging metadata directories
 ]
 
 # Tool caches that speed up subsequent runs but pollute the repo visually.
@@ -222,7 +243,8 @@ def clean_caches(dry_run: bool = False) -> int:
 
 
 def clean_default(dry_run: bool = False) -> int:
-    """Remove test artifacts and coverage reporting (default behaviour).
+    """Remove test artifacts, coverage reporting, and formatting artifacts (default
+    behaviour).
 
     Keeps tool caches (.pytest_cache, .mypy_cache, etc.) intact so
     subsequent runs stay fast.
@@ -233,11 +255,13 @@ def clean_default(dry_run: bool = False) -> int:
     Returns:
         Total number of items cleaned.
     """
-    return clean_coverage(dry_run) + clean_test_output(dry_run)
+    return (
+        clean_coverage(dry_run) + clean_test_output(dry_run) + clean_formatting(dry_run)
+    )
 
 
 def clean_all(dry_run: bool = False) -> int:
-    """Remove everything: coverage, test output, AND tool caches.
+    """Remove everything: coverage, test output, formatting artifacts, AND tool caches.
 
     Args:
         dry_run: If True, only report what would be removed.
@@ -246,6 +270,35 @@ def clean_all(dry_run: bool = False) -> int:
         Total number of items cleaned.
     """
     return clean_default(dry_run) + clean_caches(dry_run)
+
+
+def clean_formatting(dry_run: bool = False) -> int:
+    """Remove formatting tool artifacts (*.isorted files from isort).
+
+    Args:
+        dry_run: If True, only report what would be removed.
+
+    Returns:
+        Total number of items cleaned.
+    """
+    print("Cleaning formatting artifacts...")
+    return _clean_glob(FORMATTING_GLOB_PATTERNS, dry_run)
+
+
+def clean_packaging(dry_run: bool = False) -> int:
+    """Remove packaging build outputs: dist/, build/, wheel metadata, and egg-info dirs.
+
+    Args:
+        dry_run: If True, only report what would be removed.
+
+    Returns:
+        Total number of items cleaned.
+    """
+    print("Cleaning packaging artifacts...")
+    total = 0
+    total += _clean_items(PACKAGING_ARTIFACTS, dry_run)
+    total += _clean_glob(PACKAGING_GLOB_PATTERNS, dry_run)
+    return total
 
 
 def main() -> int:
@@ -272,6 +325,11 @@ def main() -> int:
         help="Only remove test runner output",
     )
     group.add_argument(
+        "--packaging",
+        action="store_true",
+        help="Remove packaging artifacts (dist, build, wheel metadata)",
+    )
+    group.add_argument(
         "--caches",
         action="store_true",
         help="Only remove tool caches (__pycache__, .mypy_cache, .ruff_cache, etc.)",
@@ -280,6 +338,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="Show what would be deleted without actually deleting anything",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Assume yes to prompts (non-interactive/CI friendly)",
     )
 
     args = parser.parse_args()
@@ -298,6 +361,19 @@ def main() -> int:
     elif args.tests:
         count = clean_test_output(args.dry_run)
         label = "test output artifacts"
+    elif args.packaging:
+        # Require confirmation for packaging removal (unless --dry-run/--yes)
+        if not args.dry_run and not args.yes:
+            reply = (
+                input("Remove packaging outputs (dist/, build/, egg-info)? [y/N]: ")
+                .strip()
+                .lower()
+            )
+            if reply not in ("y", "yes"):
+                print("Aborted by user.")
+                return 2
+        count = clean_packaging(args.dry_run)
+        label = "packaging artifacts"
     elif args.caches:
         count = clean_caches(args.dry_run)
         label = "tool caches"

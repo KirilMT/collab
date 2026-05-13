@@ -89,21 +89,35 @@ def test_get_state_dir_non_test_mode_uses_shared_temp_dir(monkeypatch, tmp_path)
 def test_get_state_dir_handles_makedirs_error_and_import_fallback(
     monkeypatch, tmp_path
 ):
-    """Cover both makedirs exception paths and final _COLLAB_ROOT fallback."""
+    """Cover makedirs exception paths and the _COLLAB_ROOT fallback with stronger, less-
+    duplicative assertions."""
+    # 1) When COLLAB_STATE_DIR is provided but os.makedirs fails, we still
+    #    return the provided env path (absolute) and the directory is not
+    #    created due to the makedirs failure.
     monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         mod.os,
         "makedirs",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no mkdir")),
     )
-    assert mod._get_state_dir() == str(tmp_path / "state")
+    got_env = mod._get_state_dir()
+    assert os.path.abspath(got_env) == os.path.abspath(str(tmp_path / "state"))
+    assert not os.path.isdir(got_env)
 
-    # Default temp-dir branch with os.makedirs failure should still return path.
+    # 2) Default temp-dir branch (non-test mode) still returns a collab_runtime_
+    #    path even if makedirs raises; ensure it's absolute and has the right
+    #    basename shape (and not a test-suffixed name).
     monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
     monkeypatch.setattr(mod.tempfile, "gettempdir", lambda: str(tmp_path))
     sd = mod._get_state_dir()
-    assert "collab_runtime_" in sd
+    assert os.path.isabs(sd)
+    sd_name = os.path.basename(sd)
+    assert sd_name.startswith("collab_runtime_")
+    # The runtime name may include a test-suffix in CI/pytest runs; we only
+    # enforce the shared prefix shape here to avoid flakiness.
 
+    # 3) If hashlib cannot be imported, we should fall back to the configured
+    #    _COLLAB_ROOT value (string form).
     import builtins as _builtins
 
     real_import = _builtins.__import__
@@ -114,7 +128,8 @@ def test_get_state_dir_handles_makedirs_error_and_import_fallback(
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(_builtins, "__import__", _fake_import)
-    assert mod._get_state_dir() == mod._COLLAB_ROOT
+    got_fallback = mod._get_state_dir()
+    assert os.path.abspath(got_fallback) == os.path.abspath(str(mod._COLLAB_ROOT))
 
 
 def test_quiet_console_loggers_swallow_setlevel_errors(monkeypatch):
@@ -141,6 +156,133 @@ def test_quiet_console_loggers_swallow_setlevel_errors(monkeypatch):
     monkeypatch.setattr(mod.logging, "getLogger", _get_logger)
     with mod._quiet_console_loggers(names=["httpx"]):
         pass
+
+
+def test_get_state_dir_test_mode_suffix(monkeypatch, tmp_path):
+    """When test mode is enabled the state-dir uses the '_test_' suffix."""
+    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    monkeypatch.setenv("TESTING", "1")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "1")
+    monkeypatch.setattr(mod.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    sd = mod._get_state_dir()
+    assert "collab_runtime_" in sd
+    assert "_test_" in sd
+
+
+def test_get_state_dir_with_env_creates_and_returns(monkeypatch, tmp_path):
+    """When `COLLAB_STATE_DIR` is set, `_get_state_dir` should create and return it."""
+    target = tmp_path / "state_env"
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(target))
+    # Ensure no pre-existing dir
+    if target.exists():
+        import shutil as _sh
+
+        _sh.rmtree(target)
+
+    got = mod._get_state_dir()
+    assert os.path.abspath(got) == os.path.abspath(str(target))
+    assert os.path.isdir(got)
+
+
+def test_resolve_runtime_root_prefers_COLLAB_HOME(monkeypatch, tmp_path):
+    """`_resolve_runtime_root` should return `COLLAB_HOME` when present."""
+    home = tmp_path / "home_dir"
+    monkeypatch.setenv("COLLAB_HOME", str(home))
+    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
+
+    got = mod._resolve_runtime_root(mod._PROJECT_ROOT)
+    assert os.path.abspath(got) == os.path.abspath(str(home))
+
+
+def test_resolve_runtime_root_prefers_COLLAB_STATE_DIR_when_no_home(
+    monkeypatch, tmp_path
+):
+    """`_resolve_runtime_root` should return `COLLAB_STATE_DIR` if `COLLAB_HOME`
+    absent."""
+    monkeypatch.delenv("COLLAB_HOME", raising=False)
+    sd = tmp_path / "state_dir"
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(sd))
+
+    got = mod._resolve_runtime_root(mod._PROJECT_ROOT)
+    assert os.path.abspath(got) == os.path.abspath(str(sd))
+
+
+def test_get_state_dir_fallback_str_raises_uses_project_root(monkeypatch):
+    """If `_COLLAB_ROOT` exists but its `str()` raises, fall back to project root."""
+    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
+
+    import builtins as _builtins
+
+    real_import = _builtins.__import__
+
+    def _fake_import(name, *a, **k):
+        if name == "hashlib":
+            raise ImportError("no hashlib")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(_builtins, "__import__", _fake_import)
+
+    class _BadStr:
+        def __str__(self):
+            raise RuntimeError("bad str")
+
+    # Ensure _COLLAB_ROOT is present but its str() raises
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", _BadStr(), raising=False)
+
+    got = mod._get_state_dir()
+    assert os.path.abspath(got) == os.path.abspath(mod._PROJECT_ROOT)
+
+
+def test_get_state_dir_import_failure_no_fallback_returns_project_root(
+    monkeypatch, tmp_path
+):
+    """When hashlib.sha1 raises and `_COLLAB_ROOT` is missing, return project root."""
+    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
+    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
+    monkeypatch.delenv("TESTING", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    # Ensure no _COLLAB_ROOT to exercise the project-root fallback
+    monkeypatch.delattr(mod, "_COLLAB_ROOT", raising=False)
+
+    # Replace hashlib with a fake that raises when sha1 is invoked
+    fake_hashlib = types.SimpleNamespace(
+        sha1=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sha1 fail"))
+    )
+    monkeypatch.setitem(sys.modules, "hashlib", fake_hashlib)
+
+    # Keep tempfile deterministic for the sd branch
+    monkeypatch.setattr(mod.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    got = mod._get_state_dir()
+    assert os.path.abspath(got) == os.path.abspath(mod._PROJECT_ROOT)
+
+
+def test_get_state_dir_abspath_failure_returns_getcwd(monkeypatch):
+    """If `os.path.abspath` raises, `_get_state_dir` falls back to `os.getcwd()`."""
+    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
+    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
+    monkeypatch.delenv("TESTING", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    monkeypatch.delattr(mod, "_COLLAB_ROOT", raising=False)
+
+    fake_hashlib = types.SimpleNamespace(
+        sha1=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sha1"))
+    )
+    monkeypatch.setitem(sys.modules, "hashlib", fake_hashlib)
+
+    # Force abspath to raise so we hit the final os.getcwd() fallback
+    monkeypatch.setattr(
+        mod.os.path,
+        "abspath",
+        lambda p: (_ for _ in ()).throw(RuntimeError("abspath fail")),
+    )
+
+    got = mod._get_state_dir()
+    assert got == os.getcwd()
 
 
 def test_get_session_token_component_fallbacks(monkeypatch):
@@ -191,6 +333,16 @@ def test_is_same_machine_token_env_fallback_with_git_error(monkeypatch):
 def test_get_cmdline_for_pid_windows_wmic_and_powershell_paths(monkeypatch):
     """Cover WMIC success, WMIC failure fallback, and PowerShell success branch."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
+    # Mock psutil to raise so we fall through to the Windows-specific paths.
+    # On CI, psutil is installed and psutil.Process(PID) would return a real
+    # cmdline for an existing process, bypassing the mocked Windows fallbacks.
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(
+            Process=lambda pid: (_ for _ in ()).throw(RuntimeError("mocked"))
+        ),
+    )
     monkeypatch.setattr(
         mod.shutil, "which", lambda exe: "wmic" if exe == "wmic" else None
     )
@@ -220,6 +372,16 @@ def test_get_cmdline_for_pid_windows_wmic_and_powershell_paths(monkeypatch):
 def test_get_cmdline_for_pid_windows_outer_fallback_exception(monkeypatch):
     """Cover outer Windows fallback exception branch (returns None)."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
+    # Mock psutil to raise so we fall through to the Windows-specific paths.
+    # On CI, psutil is installed and psutil.Process(PID) would return a real
+    # cmdline for an existing process, bypassing the mocked Windows fallbacks.
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(
+            Process=lambda pid: (_ for _ in ()).throw(RuntimeError("mocked"))
+        ),
+    )
     monkeypatch.setattr(
         mod.shutil,
         "which",
@@ -398,10 +560,12 @@ def test_scan_remote_locks_logs_owned_locks(monkeypatch):
 
     c._client = _FakeClient()
     info_calls = []
+    debug_calls = []
     monkeypatch.setattr(mod.logger, "info", lambda *a, **k: info_calls.append(a))
+    monkeypatch.setattr(mod.logger, "debug", lambda *a, **k: debug_calls.append(a))
 
     c._scan_remote_locks()
-    assert any("[LOCKED]" in str(call[0]) for call in info_calls)
+    assert any("[LOCKED]" in str(call[0]) for call in debug_calls)
 
 
 def test_scan_remote_locks_handles_exceptions(monkeypatch):
@@ -572,7 +736,7 @@ def test_cleanup_orphaned_processes_windows_and_unix_branches(monkeypatch):
 
     def _run_unix(args, **kwargs):
         return types.SimpleNamespace(
-            stdout="u 3333 0 0 python lock_client\n", returncode=0
+            stdout="u 3333 0 0 python collab_test_lock_client\n", returncode=0
         )
 
     monkeypatch.setattr(mod.subprocess, "run", _run_unix)

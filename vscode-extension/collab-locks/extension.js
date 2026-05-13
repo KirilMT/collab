@@ -19,9 +19,10 @@ function getStateDir(workspaceRoot) {
   const env = process.env.COLLAB_STATE_DIR;
   if (env) return env;
   try {
+    const normRoot = workspaceRoot.replace(/\//g, "\\").toLowerCase().replace(/\\+$/, "");
     const h = crypto
       .createHash("sha1")
-      .update(workspaceRoot)
+      .update(normRoot)
       .digest("hex")
       .slice(0, 8);
     // Keep namespace aligned with src/lock_client.py::_get_state_dir().
@@ -30,7 +31,7 @@ function getStateDir(workspaceRoot) {
       try {
         fs.mkdirSync(dir, { recursive: true });
       } catch (e) {
-        // Best effort.
+        logToCollab(`Failed to create state dir: ${e.message}`, "DEBUG");
       }
     }
     return dir;
@@ -42,7 +43,42 @@ function getStateDir(workspaceRoot) {
 let statusBarItem;
 let supabaseClient = null;
 let currentSubscription = null;
+let summaryPoller = null;
 let watcherProcess = null;
+
+/**
+ * Standardized logging to the central collab.log file.
+ * Mimics Python log format: [YYYY-MM-DD HH:MM:SS] LEVEL collab.extension: message
+ */
+function logToCollab(message, level = "INFO") {
+  try {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) return;
+    const logDir = path.join(workspaceRoot, "logs");
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, "collab.log");
+
+    const now = new Date();
+    // Format: YYYY-MM-DD HH:MM:SS
+    const dateStr = now.toISOString().replace(/T/, " ").replace(/\..+/, "");
+    const entry = `[${dateStr}] ${level} collab.extension: ${message}\n`;
+    fs.appendFileSync(logFile, entry);
+  } catch (e) {
+    // Best effort: don't crash the extension over logging, but don't swallow silently
+    console.error(`[collab] Failed to append to collab.log: ${e.message}`);
+  }
+  try {
+    const workspaceRoot = getWorkspaceRoot();
+    if (workspaceRoot) {
+      const debugLog = path.join(workspaceRoot, "logs", "extension_debug.log");
+      const now = new Date();
+      const dateStr = now.toISOString().replace(/T/, " ").replace(/\..+/, "");
+      fs.appendFileSync(debugLog, `[${dateStr}] ${level} ${message}\n`);
+    }
+  } catch (e) {
+    console.error(`[collab] Failed to append to extension_debug.log: ${e.message}`);
+  }
+}
 let watcherHeartbeatInterval = null;
 let watcherHeartbeatFile = null;
 let watcherHeartbeatTicks = 0;
@@ -58,10 +94,41 @@ function scheduleWatcherRestart(reason) {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) return;
   if (watcherRestartTimer) return;
+
+  const stateDir = getStateDir(workspaceRoot);
+  const stopFile = path.join(stateDir, ".stop_request");
+  const shutdownFile = path.join(stateDir, ".shutdown_complete");
+
+  if (outputChannel) {
+    outputChannel.appendLine(`[collab] Watcher exited: ${reason}. Checking if restart is needed...`);
+    outputChannel.appendLine(`[collab] State directory: ${stateDir}`);
+  }
+
+  // Robust check for intentional stops: sometimes the file system takes a few
+  // milliseconds to reflect the file creation/presence after process exit.
+  let isIntentional = false;
+  for (let i = 0; i < 3; i++) {
+    if (fs.existsSync(stopFile) || fs.existsSync(shutdownFile)) {
+      isIntentional = true;
+      break;
+    }
+    // Tiny delay before retry
+    const start = Date.now();
+    while (Date.now() - start < 100) { /* sync sleep */ }
+  }
+
+  if (isIntentional) {
+    if (outputChannel)
+      outputChannel.appendLine(
+        `[collab] Watcher stopped intentionally; skipping auto-restart.`,
+      );
+    return;
+  }
+
   if (watcherRestartAttempts >= 3) {
     if (outputChannel)
       outputChannel.appendLine(
-        `[collab] Watcher restart limit reached; not retrying (${reason})`,
+        `[collab] Watcher restart limit reached; not retrying.`,
       );
     return;
   }
@@ -87,15 +154,37 @@ function showStartupNotificationOnce(message, key) {
   try {
     if (startupNotificationShown) return;
     if (key && lastStartupNotificationKey === key) return;
+    // Safety: do NOT show startup summaries if a stop is currently requested.
+    // This prevents confusing "Startup Summary" popups during a manual daemon-stop.
+    if (message.includes("Startup Summary")) {
+      try {
+        const workspaceRoot = getWorkspaceRoot();
+        if (workspaceRoot) {
+          const stateDir = getStateDir(workspaceRoot);
+          if (fs.existsSync(path.join(stateDir, ".stop_request"))) {
+            if (outputChannel) outputChannel.appendLine(`[collab] Suppressing startup summary because stop is requested.`);
+            return;
+          }
+        }
+      } catch (e) {
+        logToCollab(`Failed to check stop request status: ${e.message}`, "DEBUG");
+      }
+    }
+
     startupNotificationShown = true;
     lastStartupNotificationKey = key || null;
+
     vscode.window.showInformationMessage(message);
+
+    if (outputChannel) outputChannel.appendLine(`[collab] Notification: ${message}`);
+    logToCollab(`Notification: ${message}`);
+
     setTimeout(() => {
       startupNotificationShown = false;
       lastStartupNotificationKey = null;
     }, 5000);
   } catch (e) {
-    // Best effort.
+    logToCollab(`Notification helper failed: ${e.message}`, "DEBUG");
   }
 }
 
@@ -103,8 +192,14 @@ function getWorkspaceRoot() {
   return vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || null;
 }
 
-function getPythonCommand(workspaceRoot) {
-  const venvPython = path.join(workspaceRoot, ".venv", "Scripts", "python.exe");
+/* function getPythonCommand(workspaceRoot) { ... } */
+function _getPythonCommand(workspaceRoot) {
+  if (!workspaceRoot) return "python";
+  const isWin = process.platform === "win32";
+  const venvPython = isWin
+    ? path.join(workspaceRoot, ".venv", "Scripts", "python.exe")
+    : path.join(workspaceRoot, ".venv", "bin", "python");
+
   if (fs.existsSync(venvPython)) {
     return venvPython;
   }
@@ -129,18 +224,13 @@ function detectCollab(workspaceRoot) {
 
   // If workspace has venv, check there first
   if (workspaceRoot) {
-    const venvCollab = path.join(
-      workspaceRoot,
-      ".venv",
-      "Scripts",
-      "collab.exe",
-    );
-    const venvWatcher = path.join(
-      workspaceRoot,
-      ".venv",
-      "Scripts",
-      "collab-watcher.exe",
-    );
+    const isWin = process.platform === "win32";
+    const venvBin = isWin ? "Scripts" : "bin";
+    const ext = isWin ? ".exe" : "";
+
+    const venvCollab = path.join(workspaceRoot, ".venv", venvBin, `collab${ext}`);
+    const venvWatcher = path.join(workspaceRoot, ".venv", venvBin, `collab-watcher${ext}`);
+
     if (fs.existsSync(venvCollab)) {
       return { command: venvCollab, version: null };
     }
@@ -158,8 +248,8 @@ function detectCollab(workspaceRoot) {
         stdio: ["ignore", "pipe", "pipe"],
       }).trim();
       return { command: candidate.cmd, version: versionOut || null };
-    } catch (_e) {
-      // Not found, try next
+    } catch (e) {
+      logToCollab(`Candidate ${candidate.cmd} not found: ${e.message}`, "DEBUG");
     }
   }
 
@@ -189,10 +279,16 @@ function getVSCodeWindowPid() {
             `wmic process where "ProcessId=${parentPid}" get Name /value`,
             { encoding: "utf8", timeout: 5000 },
           );
-          if (nameOut.toLowerCase().includes("code")) return parentPid;
+          if (
+            nameOut.toLowerCase().includes("code") ||
+            nameOut.toLowerCase().includes("antigravity") ||
+            nameOut.toLowerCase().includes("cursor") ||
+            nameOut.toLowerCase().includes("codium")
+          )
+            return parentPid;
         }
-      } catch (_e) {
-        // WMIC failed, fall through.
+      } catch (e) {
+        logToCollab(`WMIC parent check failed: ${e.message}`, "DEBUG");
       }
     }
     return process.pid;
@@ -250,8 +346,8 @@ function loadConfig() {
         timeout: 3000,
       }).trim();
       if (gitName) user = gitName;
-    } catch (_e) {
-      // ignore
+    } catch (e) {
+      logToCollab(`Git config check failed: ${e.message}`, "DEBUG");
     }
   }
 
@@ -260,7 +356,9 @@ function loadConfig() {
   }
 
   if (!url || !key) return null;
-  return { url, key, user: user || "unknown" };
+  const result = { url, key, user: user || "unknown" };
+  logToCollab(`Extension config loaded. User: ${result.user}`);
+  return result;
 }
 
 function getRelativeActivePath() {
@@ -293,6 +391,8 @@ async function updateStatusBar() {
       .eq("file_path", activeFile)
       .limit(1);
 
+    logToCollab(`Status bar check for ${activeFile}: found ${data ? data.length : 0} locks. Error: ${error ? JSON.stringify(error) : "none"}`);
+
     if (error || !data || data.length === 0) {
       statusBarItem.text = "$(unlock) Unlocked";
       statusBarItem.tooltip = `${activeFile} is not locked`;
@@ -315,6 +415,7 @@ async function updateStatusBar() {
     }
   } catch (e) {
     statusBarItem.text = "$(unlock) Locks";
+    logToCollab(`Status bar update failed: ${e.message}`, "DEBUG");
   }
 }
 
@@ -358,7 +459,7 @@ async function checkLockOnFileOpen() {
         else if (selection === "Show Locks") cmdShowAll();
       });
   } catch (e) {
-    // Non-fatal.
+    logToCollab(`Open check failed: ${e.message}`, "DEBUG");
   }
 }
 
@@ -368,12 +469,14 @@ async function checkLockOnFileOpen() {
 function subscribeToChanges() {
   if (!supabaseClient) return;
   try {
+    logToCollab("Initializing Supabase Realtime subscription...");
     currentSubscription = supabaseClient
       .channel("vscode-locks")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "file_locks" },
         (payload) => {
+          logToCollab(`Realtime event received: ${payload.eventType} on ${payload.new?.file_path || "unknown"}`);
           updateStatusBar();
           if (
             payload.eventType === "INSERT" ||
@@ -407,9 +510,11 @@ function subscribeToChanges() {
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        logToCollab(`Realtime subscription status: ${status}`);
+      });
   } catch (e) {
-    // Non-fatal.
+    logToCollab(`Realtime subscription failed: ${e.message}`, "DEBUG");
   }
 }
 
@@ -475,14 +580,15 @@ function showStartupNotification() {
 
   try {
     showStartupNotificationOnce(msg, JSON.stringify(stats));
-  } catch (_e) {
+  } catch (e) {
     try {
       vscode.window.showInformationMessage(msg);
-    } catch (_e2) {
-      // Best effort.
+    } catch (e2) {
+      logToCollab(`Fallback notification failed: ${e2.message}`, "DEBUG");
     }
   }
 
+  logToCollab(`Summary collection complete: ${summaryBuffer.length} items.`);
   collectingSummary = false;
   summaryBuffer = [];
   summaryTimeout = null;
@@ -511,6 +617,44 @@ function handleConflictFromWatcher(msg) {
     });
 }
 
+/**
+ * Global poller for startup summaries.
+ * Catches summaries from both extension-started and CLI-started watchers.
+ */
+function startGlobalSummaryPoller(workspaceRoot) {
+  if (summaryPoller) return;
+  const stateDir = getStateDir(workspaceRoot);
+
+  summaryPoller = setInterval(() => {
+    try {
+      const stateSummary = path.join(stateDir, ".startup_summary.json");
+      const repoSummary = path.join(workspaceRoot, ".startup_summary.json");
+      let summaryFile = fs.existsSync(stateSummary)
+        ? stateSummary
+        : (fs.existsSync(repoSummary) ? repoSummary : null);
+
+      if (summaryFile) {
+        const data = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+        const msg = `Collab Locks — Startup Summary: [` +
+                    ` Re-adopted: ${data.readopted || 0} lock(s) |` +
+                    ` Stale released: ${data.stale_released || 0} lock(s) |` +
+                    ` Newly locked: ${data.newly_locked || 0} file(s) |` +
+                    ` Conflicts: ${data.conflicts || 0} file(s) ]`;
+
+        showStartupNotificationOnce(msg, JSON.stringify(data));
+
+        try {
+          fs.unlinkSync(summaryFile);
+        } catch (e) {
+          logToCollab(`Failed to delete summary file: ${e.message}`, "DEBUG");
+        }
+      }
+    } catch (e) {
+      logToCollab(`Global summary poller tick failed: ${e.message}`, "DEBUG");
+    }
+  }, 2000);
+}
+
 // =========================================================================
 // Watcher management
 // =========================================================================
@@ -518,13 +662,19 @@ function startWatcher() {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) return;
 
+  if (watcherProcess) {
+    if (outputChannel)
+      outputChannel.appendLine(`[collab] Watcher already running (PID: ${watcherProcess.pid}); skipping start.`);
+    return;
+  }
+
   if (outputChannel) {
     outputChannel.appendLine(`[collab] VS Code extension starting...`);
     outputChannel.appendLine(`[collab] Workspace: ${workspaceRoot}`);
   }
 
   const stateDir = getStateDir(workspaceRoot);
-  const pidFile = path.join(workspaceRoot, ".daemon.pid");
+  const pidFile = path.join(stateDir, ".daemon.pid");
 
   // Detect installed collab runtime
   const collabRuntime = detectCollab(workspaceRoot);
@@ -535,12 +685,17 @@ function startWatcher() {
       );
     }
     vscode.window.showErrorMessage(
-      `Collab Runtime Not Found: ${collabRuntime.error}`,
+      `Collab Runtime requires the Python package to be installed.`,
+      "Install via pip",
       "View Setup Guide",
     ).then((selection) => {
-      if (selection === "View Setup Guide") {
+      if (selection === "Install via pip") {
+        const terminal = vscode.window.createTerminal("Collab Setup");
+        terminal.show();
+        terminal.sendText("pip install collab-runtime");
+      } else if (selection === "View Setup Guide") {
         vscode.env.openExternal(
-          vscode.Uri.parse("https://github.com/collab-runtime/setup"),
+          vscode.Uri.parse("https://github.com/KirilMT/collab"),
         );
       }
     });
@@ -586,10 +741,14 @@ function startWatcher() {
       let pid = null;
       let stopPayload = null;
       if (pidData.startsWith("{")) {
-        const meta = JSON.parse(pidData);
-        pid = meta.pid;
-        if (meta && typeof meta.token === "string" && meta.token.trim()) {
-          stopPayload = `TOKEN:${meta.token.trim()}`;
+        try {
+          const meta = JSON.parse(pidData);
+          pid = meta.pid;
+          if (meta && typeof meta.token === "string" && meta.token.trim()) {
+            stopPayload = `TOKEN:${meta.token.trim()}`;
+          }
+        } catch (e) {
+          logToCollab(`Failed to parse PID metadata: ${e.message}`, "DEBUG");
         }
       } else {
         pid = parseInt(pidData, 10);
@@ -608,13 +767,14 @@ function startWatcher() {
         const isAlive = (p) => {
           try {
             if (process.platform === "win32") {
-              execSync(`tasklist /FI "PID eq ${p}"`, { stdio: "pipe" });
+              execSync(`tasklist /FI "PID eq ${p}"`, { stdio: "ignore" });
               return true;
             } else {
               process.kill(p, 0);
               return true;
             }
           } catch (e) {
+            logToCollab(`isAlive check failed for ${p}: ${e.message}`, "DEBUG");
             return false;
           }
         };
@@ -626,20 +786,21 @@ function startWatcher() {
             try {
               fs.fsyncSync(fd);
             } catch (e) {
-              /* ignore */
+              logToCollab(`fsync failed for stop_request: ${e.message}`, "DEBUG");
             }
           } finally {
             try {
               fs.closeSync(fd);
             } catch (e) {
-              /* ignore */
+              logToCollab(`close failed for stop_request: ${e.message}`, "DEBUG");
             }
           }
-        } catch (e) {
+        } catch (err) {
           if (outputChannel)
             outputChannel.appendLine(
-              `[collab] Failed to write stop_request: ${e.message}`,
+              `[collab] Failed to write stop_request: ${err.message}`,
             );
+          logToCollab(`Failed to write stop_request: ${err.message}`, "WARN");
         }
 
         if (outputChannel)
@@ -667,6 +828,7 @@ function startWatcher() {
               waited += 200;
             }
           } catch (e) {
+            logToCollab(`Ping wait failed: ${e.message}`, "DEBUG");
             waited += 200;
           }
         }
@@ -679,12 +841,7 @@ function startWatcher() {
           try {
             if (fs.existsSync(shutdownFile)) fs.unlinkSync(shutdownFile);
           } catch (e) {
-            /* ignore */
-          }
-          try {
-            if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
-          } catch (e) {
-            /* ignore */
+            logToCollab(`Failed to unlink shutdown file: ${e.message}`, "DEBUG");
           }
         } else {
           if (outputChannel)
@@ -698,21 +855,29 @@ function startWatcher() {
               process.kill(-pid, "SIGKILL");
             }
           } catch (e) {
-            /* best effort */
+            logToCollab(`Failed to force-kill stale watcher: ${e.message}`, "DEBUG");
           }
         }
+
+        try {
+          if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
+        } catch (e) {
+          logToCollab(`Failed to unlink stop request file: ${e.message}`, "DEBUG");
+        }
+
         try {
           if (fs.existsSync(pidFile)) fs.unlinkSync(pidFile);
         } catch (e) {
-          /* ignore */
+          logToCollab(`Failed to unlink pid file: ${e.message}`, "DEBUG");
         }
       }
     } catch (e) {
-      /* best effort cleanup */
+      logToCollab(`Global cleanup error in startWatcher: ${e.message}`, "WARN");
     }
   }
 
-  const pythonCmd = getPythonCommand(workspaceRoot);
+  /* const pythonCmd = getPythonCommand(workspaceRoot); */
+  const _pythonCmd = "python";
   const parentPid = getVSCodeWindowPid() || process.pid;
 
   if (outputChannel)
@@ -725,21 +890,27 @@ function startWatcher() {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(heartbeatFile, `${Date.now()}\n`, { encoding: "utf8" });
 
+    const args = [
+      "watch",
+      "--interval",
+      "5",
+      "--timeout",
+      "0",
+      "--parent-pid",
+      String(parentPid),
+      "--heartbeat-file",
+      heartbeatFile,
+      "--heartbeat-grace-seconds",
+      "20",
+      "--pid-file",
+      path.join(stateDir, ".daemon.pid"),
+    ];
+
+    logToCollab(`Spawning watcher: ${collabRuntime.command} ${args.join(" ")}`);
+
     watcherProcess = spawn(
       collabRuntime.command,
-      [
-        "watch",
-        "--interval",
-        "5",
-        "--timeout",
-        "0",
-        "--parent-pid",
-        String(parentPid),
-        "--heartbeat-file",
-        heartbeatFile,
-        "--heartbeat-grace-seconds",
-        "20",
-      ],
+      args,
       {
         cwd: workspaceRoot,
         stdio: ["ignore", "pipe", "pipe"],
@@ -762,7 +933,7 @@ function startWatcher() {
             );
         }
       } catch (e) {
-        /* ignore */
+        logToCollab(`Heartbeat tick failed: ${e.message}`, "DEBUG");
       }
     }, 2000);
 
@@ -789,49 +960,12 @@ function startWatcher() {
       });
     }
 
-    // Poll for startup summary file (more reliable than log-parsing alone).
-    let pollCount = 0;
-    const startupPollInterval = setInterval(() => {
-      pollCount++;
-      const stateSummary = path.join(stateDir, ".startup_summary.json");
-      const repoSummary = path.join(workspaceRoot, ".startup_summary.json");
-      let summaryFile = fs.existsSync(stateSummary)
-        ? stateSummary
-        : fs.existsSync(repoSummary)
-          ? repoSummary
-          : null;
-
-      if (summaryFile) {
-        try {
-          const data = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-          const msg =
-            `Collab Locks — Startup Summary: [` +
-            ` Re-adopted: ${data.readopted || 0} lock(s) |` +
-            ` Stale released: ${data.stale_released || 0} lock(s) |` +
-            ` Newly locked: ${data.newly_locked || 0} file(s) |` +
-            ` Conflicts: ${data.conflicts || 0} file(s) ]`;
-          showStartupNotificationOnce(msg, JSON.stringify(data));
-          try {
-            fs.unlinkSync(summaryFile);
-          } catch (e) {
-            /* ignore */
-          }
-        } catch (e) {
-          /* ignore parse errors */
-        }
-      }
-
-      if (pollCount > 60) clearInterval(startupPollInterval); // 30s max
-    }, 500);
-
     watcherProcess.on("error", (_err) => {
-      clearInterval(startupPollInterval);
       watcherProcess = null;
       scheduleWatcherRestart(`error: ${_err?.message || "unknown"}`);
     });
 
     watcherProcess.on("exit", (code, signal) => {
-      clearInterval(startupPollInterval);
       watcherProcess = null;
       scheduleWatcherRestart(
         `exit code=${code ?? "null"} signal=${signal ?? "null"}`,
@@ -907,7 +1041,30 @@ async function cmdReleaseAll() {
   updateStatusBar();
 }
 
-function cmdOpenDashboard() {
+async function cmdDebugCheck() {
+  const config = loadConfig();
+  const workspaceRoot = getWorkspaceRoot();
+  const activeFile = getRelativeActivePath();
+
+  if (!config || !workspaceRoot || !activeFile) {
+    vscode.window.showErrorMessage(`Debug Check Failed: Config=${!!config}, Root=${!!workspaceRoot}, File=${!!activeFile}`);
+    return;
+  }
+
+  try {
+    const { data, error } = await supabaseClient
+      .from("file_locks")
+      .select("*")
+      .eq("file_path", activeFile);
+
+    const msg = `Collab Debug:\nFile: ${activeFile}\nUser: ${config.user}\nLocks Found: ${data ? data.length : 0}\nError: ${error ? error.message : "none"}`;
+    vscode.window.showInformationMessage(msg);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Debug Check Error: ${err.message}`);
+  }
+}
+
+async function cmdOpenDashboard() {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) return;
 
@@ -952,6 +1109,7 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("collabLocks.showAll", cmdShowAll),
     vscode.commands.registerCommand("collabLocks.releaseAll", cmdReleaseAll),
+    vscode.commands.registerCommand("collabLocks.debugCheck", cmdDebugCheck),
     vscode.commands.registerCommand(
       "collabLocks.openDashboard",
       cmdOpenDashboard,
@@ -1036,10 +1194,24 @@ function activate(context) {
       outputChannel.appendLine(
         `[collab] Runtime check failed: ${collabRuntime.error}`,
       );
+    logToCollab(`Runtime check failed: ${collabRuntime.error}`, "ERROR");
     return;
   }
 
+  // Clear any stale stop request on activation so we start fresh
+  try {
+    const stateDir = getStateDir(workspaceRoot);
+    const stopFile = path.join(stateDir, ".stop_request");
+    if (fs.existsSync(stopFile)) {
+      fs.unlinkSync(stopFile);
+      if (outputChannel) outputChannel.appendLine(`[collab] Cleared stale stop request on activation.`);
+    }
+  } catch (e) {
+    logToCollab(`Failed to clear stale stop request: ${e.message}`, "WARN");
+  }
+
   startWatcher();
+  startGlobalSummaryPoller(workspaceRoot);
   subscribeToChanges();
 
   updateStatusBar();
@@ -1058,7 +1230,7 @@ function deactivate() {
 
   const workspaceRoot = getWorkspaceRoot();
   const stateDir = workspaceRoot ? getStateDir(workspaceRoot) : os.tmpdir();
-  const pidFile = workspaceRoot ? path.join(workspaceRoot, ".daemon.pid") : null;
+  const pidFile = workspaceRoot ? path.join(stateDir, ".daemon.pid") : null;
 
   if (outputChannel)
     outputChannel.appendLine(`[collab] VS Code deactivating — cleaning up...`);
@@ -1084,10 +1256,10 @@ function deactivate() {
           stopPayload = `PID:${parsed}`;
         }
       }
-    } catch (e) {
+    } catch (err) {
       if (outputChannel)
         outputChannel.appendLine(
-          `[collab] WARNING: failed to parse PID metadata: ${e.message}`,
+          `[collab] WARNING: failed to parse PID metadata: ${err.message}`,
         );
     }
   }
@@ -1104,13 +1276,14 @@ function deactivate() {
     const isAlive = (p) => {
       try {
         if (process.platform === "win32") {
-          execSync(`tasklist /FI "PID eq ${p}"`, { stdio: "pipe" });
+          execSync(`tasklist /FI "PID eq ${p}"`, { stdio: "ignore" });
           return true;
         } else {
           process.kill(p, 0);
           return true;
         }
       } catch (e) {
+        logToCollab(`isAlive check failed for ${p} on deactivation: ${e.message}`, "DEBUG");
         return false;
       }
     };
@@ -1126,21 +1299,22 @@ function deactivate() {
         fs.writeSync(fd, stopPayload || `PID:${pid}`);
         try {
           fs.fsyncSync(fd);
-        } catch (e) {
-          /* ignore */
+        } catch (err) {
+          logToCollab(`fsync failed on deactivation: ${err.message}`, "DEBUG");
         }
       } finally {
         try {
           fs.closeSync(fd);
-        } catch (e) {
-          /* ignore */
+        } catch (err) {
+          logToCollab(`close failed on deactivation: ${err.message}`, "DEBUG");
         }
       }
-    } catch (e) {
+    } catch (err) {
       if (outputChannel)
         outputChannel.appendLine(
-          `[collab] Failed to write stop_request: ${e.message}`,
+          `[collab] Failed to write stop_request: ${err.message}`,
         );
+      logToCollab(`Failed to write stop_request: ${err.message}`, "WARN");
     }
 
     if (outputChannel)
@@ -1166,6 +1340,7 @@ function deactivate() {
           waited += 200;
         }
       } catch (e) {
+        logToCollab(`Ping wait failed on deactivation: ${e.message}`, "DEBUG");
         waited += 200;
       }
 
@@ -1186,8 +1361,8 @@ function deactivate() {
             `[collab] Watcher shutdown detected: ${kept} locks kept`,
           );
         fs.unlinkSync(shutdownFile);
-      } catch (e) {
-        /* ignore */
+      } catch (err) {
+        logToCollab(`Failed to handle shutdown file: ${err.message}`, "DEBUG");
       }
     }
 
@@ -1203,7 +1378,7 @@ function deactivate() {
           process.kill(-pid, "SIGKILL");
         }
       } catch (e) {
-        /* best effort */
+        logToCollab(`Force-kill failed: ${e.message}`, "DEBUG");
       }
     } else {
       if (outputChannel)
@@ -1214,7 +1389,7 @@ function deactivate() {
       if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
       if (outputChannel) outputChannel.appendLine(`[collab] Cleaned up stop request file`);
     } catch (e) {
-      /* ignore */
+      logToCollab(`Failed to cleanup stop file: ${e.message}`, "DEBUG");
     }
     watcherProcess = null;
   } else if (outputChannel) {
@@ -1227,7 +1402,7 @@ function deactivate() {
     try {
       clearInterval(watcherHeartbeatInterval);
     } catch (e) {
-      /* ignore */
+      logToCollab(`Failed to clear heartbeat interval: ${e.message}`, "DEBUG");
     }
     watcherHeartbeatInterval = null;
   }
@@ -1236,7 +1411,7 @@ function deactivate() {
       if (fs.existsSync(watcherHeartbeatFile)) fs.unlinkSync(watcherHeartbeatFile);
       if (outputChannel) outputChannel.appendLine(`[collab] Cleaned up heartbeat file`);
     } catch (e) {
-      /* ignore */
+      logToCollab(`Failed to cleanup heartbeat file: ${e.message}`, "DEBUG");
     }
     watcherHeartbeatFile = null;
   }
@@ -1246,7 +1421,7 @@ function deactivate() {
       currentSubscription.unsubscribe();
       if (outputChannel) outputChannel.appendLine(`[collab] Unsubscribed from Realtime`);
     } catch (e) {
-      /* best effort */
+      logToCollab(`Failed to unsubscribe: ${e.message}`, "DEBUG");
     }
     currentSubscription = null;
   }

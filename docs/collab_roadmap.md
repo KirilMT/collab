@@ -1,6 +1,6 @@
 # Collab Runtime Project Roadmap
 
-_Updated May 4, 2026_ (Phase 0.5 Infrastructure Scaffolding)
+_Updated May 13, 2026_ (Phase 5 — Hardening kickoff)
 
 ---
 
@@ -47,13 +47,13 @@ This roadmap is a living document that evolves with the project.
 
 ## 🔥 ACTIVE WORK
 
-**Current Phase:** Phase 2 — Update Extension to Call Installed Package
-**Status:** 📅 Ready to begin — Phase 1 complete, exit criteria verified
-**Started:** May 8, 2026
-**Target Completion:** May 9, 2026
+**Current Phase:** Phase 5 — Hardening
+**Status:** 🔄 Commencing Workstream A (Central Subprocess Wrapper)
+**Started:** May 13, 2026
+**Target Completion:** May 20, 2026
 
 > [!NOTE]
-> Infrastructure scaffolding: Complete repository setup with development tooling, CI/CD, testing framework, and AI agent governance.
+> All migration phases (1-4.7) are successfully completed. The repository is now a standalone package with auto-provisioning extension. Phase 5 focuses on security, reliability, and error taxonomy.
 
 ---
 
@@ -69,7 +69,7 @@ This roadmap is a living document that evolves with the project.
 
 - [ ] Ensure CLI command parity with current implementation
 - [ ] Verify all tests pass against new package layout
-- [ ] Test module entrypoint (`python -m src.main`)
+- [x] Test module entrypoint (`python -m collab` / `collab --help`)
 - [ ] Build and test wheel distribution
 
 ### Phase 2 — Update Extension to Call Installed Package
@@ -110,11 +110,14 @@ This roadmap is a living document that evolves with the project.
 | Phase 0.5: Infrastructure complete         | May 5, 2026  | ✅     |
 | Phase 0: Behavioral contract approved      | May 5, 2026  | ✅     |
 | Phase 1: Package CLI parity verified       | May 7, 2026  | ✅     |
-| Phase 2: Extension calls installed package | May 9, 2026  | ⏳     |
-| Phase 3: Setup scripts working             | May 10, 2026 | ⏳     |
-| Phase 4: mockCMMS `.collab` removed        | May 12, 2026 | ⏳     |
-| Phase 5: Hardening complete                | May 15, 2026 | ⏳     |
-| First stable release (v0.2.0)              | May 17, 2026 | ⏳     |
+| Phase 2: Extension calls installed package | May 7, 2026  | ✅     |
+| Phase 3: Setup scripts working             | May 7, 2026  | ✅     |
+| Phase 4: mockCMMS `.collab` removed        | May 8, 2026  | ✅     |
+| Phase 4.5: Package published to TestPyPI   | May 12, 2026 | ✅     |
+| Phase 4.6: Legacy entrypoint removed       | May 12, 2026 | ✅     |
+| Phase 4.7: Extension distribution          | May 12, 2026 | ✅     |
+| Phase 5: Hardening complete                | TBD          | 🔄     |
+| First stable release (v1.0.0)              | TBD          | 🔄     |
 
 ---
 
@@ -134,8 +137,8 @@ This roadmap is a living document that evolves with the project.
 
 ### Documentation Pages
 
-- [ ] Expand `docs/API.md` with detailed endpoint/function documentation
-- [ ] Expand `docs/ARCHITECTURE.md` to ~100-150 lines and include diagrams
+- [x] Expand `docs/API.md` with detailed endpoint/function documentation
+- [x] Expand `docs/ARCHITECTURE.md` to ~100-150 lines and include diagrams
 - [ ] Add `docs/SECURITY.md` with security best practices and testing guidelines
 - [ ] Add `docs/PERFORMANCE.md` with performance tuning and testing guidelines
 - [ ] Add `docs/TROUBLESHOOTING.md` with common issues and resolutions

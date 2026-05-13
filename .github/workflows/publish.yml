@@ -1,0 +1,132 @@
+---
+name: Publish Release
+
+"on":
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-${{ github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-verify-publish:
+    name: Build, verify, publish
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine auditwheel
+
+      - name: Build wheel and sdist
+        run: |
+          python -m build --sdist --wheel --outdir dist/
+
+      - name: Packaging smoke check (ephemeral venv)
+        run: |
+          python -m venv .venv.verify
+          .venv.verify/bin/pip install --upgrade pip
+          .venv.verify/bin/pip install dist/*.whl
+          .venv.verify/bin/python <<'PY'
+          import importlib
+          print(importlib.import_module('collab').__version__)
+          PY
+          .venv.verify/bin/collab --help || true
+
+      - name: Generate SBOM and requirements from ephemeral venv
+        run: |
+          # Install a small toolset into the ephemeral venv and emit a
+          # simple SBOM-like JSON and a requirements freeze for provenance.
+          .venv.verify/bin/pip install pip-licenses
+          .venv.verify/bin/pip-licenses --format=json > dist/sbom-deps.json
+          .venv.verify/bin/pip freeze > dist/requirements-venv.txt
+
+      - name: Sign artifacts (optional)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "GPG_PRIVATE_KEY is not set, skipping signing."
+            exit 0
+          fi
+          # Import provided GPG private key (from secrets) and create
+          # ASCII-armored detached signatures for all files in dist/.
+          echo "$GPG_PRIVATE_KEY" > private.key
+          gpg --batch --import private.key
+          for f in dist/*; do
+            gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
+          done
+          rm -f private.key
+
+      - name: Upload dist artifacts (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist/*
+
+      - name: Publish artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          REGISTRY_URL: ${{ vars.REGISTRY_URL || secrets.REGISTRY_URL }}
+          TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
+        run: |
+          python -m pip install --upgrade twine
+          # Default to PyPI if REGISTRY_URL unset
+          REG_URL="${REGISTRY_URL:-https://upload.pypi.org/legacy/}"
+          python -m twine upload \
+            --repository-url "$REG_URL" \
+            -u "$TWINE_USERNAME" \
+            -p "$TWINE_PASSWORD" \
+            dist/*
+
+  build-verify-publish-extension:
+    name: Build and Publish VS Code Extension
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: vscode-extension/collab-locks/package-lock.json
+
+      - name: Install dependencies
+        working-directory: vscode-extension/collab-locks
+        run: npm ci
+
+      - name: Build VSIX Package
+        working-directory: vscode-extension/collab-locks
+        run: npx vsce package
+
+      - name: Attach VSIX to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: vscode-extension/collab-locks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VSIX_FILE=$(ls *.vsix)
+          gh release upload ${{ github.ref_name }} "$VSIX_FILE" --clobber

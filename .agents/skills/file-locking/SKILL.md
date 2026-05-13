@@ -20,9 +20,9 @@ description: Use BEFORE any file modification. Check locks, edit safely with aut
 
 ## Why This Matters
 
-This repository uses a **collaborative file locking system** (`.collab/`) to prevent merge conflicts when multiple developers or AI agents work simultaneously. Editing a file that another developer has locked will cause conflicts.
+This repository uses a **collaborative file locking system** (Supabase Realtime) to prevent merge conflicts when multiple developers or AI agents work simultaneously. Editing a file that another developer has locked will cause conflicts.
 
-**Rule: Never edit a file without verifying it is either unlocked or already locked by the current developer (the dev using this AI agent).**
+**Rule: Never edit a file without verifying it is either unlocked or already locked by the current developer.**
 
 ---
 
@@ -37,13 +37,13 @@ Before touching anything, enumerate the **complete list of files** the task requ
 Check all active locks at once:
 
 ```bash
-python -m src.main active
+collab active
 ```
 
 Optional targeted check:
 
 ```bash
-python -m src.main status path/to/file.py
+collab status path/to/file.py
 ```
 
 Cross-reference the active lock list against your planned file list.

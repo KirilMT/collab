@@ -374,7 +374,7 @@ def test_cleanup_orphaned_processes_unix_cli(monkeypatch, capsys):
     monkeypatch.setattr(sys, "platform", "linux", raising=False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
 
-    out_line = "root 9999 0.0 0 0 ? S 0:00 python lock_client"
+    out_line = "root 9999 0.0 0 0 ? S 0:00 python collab_test_lock_client"
 
     def fake_run(*a, **k):
         return types.SimpleNamespace(stdout=out_line)

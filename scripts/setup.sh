@@ -66,7 +66,7 @@ if [ "$CALLED_FROM_DEV" = false ]; then
     print_banner
 fi
 
-print_step 1 7 "Checking prerequisites..."
+print_step 1 9 "Checking prerequisites..."
 
 # Check Python (prefer python3, fallback to python if version output is valid)
 PYTHON_CMD=""
@@ -111,7 +111,7 @@ GIT_VERSION=$(git --version)
 echo "   Found: $GIT_VERSION" >&2
 print_success "Git OK"
 
-print_step 2 7 "Setting up virtual environment..."
+print_step 2 9 "Setting up virtual environment..."
 
 if [ ! -d ".venv" ]; then
     echo "   Creating ${MAGENTA}.venv${NC}..." >&2
@@ -127,7 +127,7 @@ else
     print_success ".venv exists"
 fi
 
-print_step 3 7 "Installing core dependencies..."
+print_step 3 9 "Installing core dependencies..."
 
 VENV_LAYOUT=""
 if [ -f ".venv/bin/python" ] && [ -f ".venv/bin/pip" ]; then
@@ -154,11 +154,12 @@ echo "   Ensuring pip is up to date..." >&2
 if [ -f "requirements.txt" ]; then
     echo "   Installing core dependencies from ${MAGENTA}requirements.txt${NC}..." >&2
     echo ""
-    if "$VENV_PIP" install -r requirements.txt; then
-        echo ""
+    # Quiet installation
+    "$VENV_PIP" install -r requirements.txt --quiet --no-warn-script-location >/dev/null 2>&1
+
+    if [ $? -eq 0 ]; then
         print_success "Core dependencies installed"
     else
-        echo ""
         print_error "Core dependencies installation failed"
         exit 1
     fi
@@ -167,26 +168,23 @@ else
     ((ERROR_COUNT++))
 fi
 
-print_step 4 7 "Installing collab package..."
-echo "   Installing ${MAGENTA}collab${NC} from PyPI..." >&2
-
-COLLAB_CHECK=$("$VENV_PIP" show collab 2>&1 || true)
-if echo "$COLLAB_CHECK" | grep -q "^Name: collab"; then
-    INSTALLED_VERSION=$(echo "$COLLAB_CHECK" | grep "^Version:" | cut -d' ' -f2)
-    echo "   collab $INSTALLED_VERSION already installed" >&2
-    print_success "collab installed"
-else
-    if [ -n "$COLLAB_VERSION" ]; then
-        PACKAGE_SPEC="collab==$COLLAB_VERSION"
+print_step 4 9 "Installing collab package..."
+    if [ -f "src/lock_client.py" ]; then
+        PACKAGE_SPEC="-e ."
+        echo "   Detected collab source repository. Using editable install..." >&2
+    elif [ -n "$COLLAB_VERSION" ]; then
+        PACKAGE_SPEC="collab-runtime==$COLLAB_VERSION"
         echo "   Installing pinned version: $COLLAB_VERSION..." >&2
     else
-        PACKAGE_SPEC="collab"
-        echo "   Installing latest version from PyPI..." >&2
+        PACKAGE_SPEC="collab-runtime"
+        echo "   Installing latest version from registry..." >&2
     fi
 
-    if "$VENV_PIP" install "$PACKAGE_SPEC" --quiet; then
-        INSTALLED_VERSION=$("$VENV_PIP" show collab 2>&1 | grep "^Version:" | cut -d' ' -f2)
-        echo "   collab $INSTALLED_VERSION installed" >&2
+    # Ensure any conflicting public 'collab' package is uninstalled
+    echo "   Checking for conflicting 'collab' package..." >&2
+    "$VENV_PIP" uninstall collab -y --quiet 2>/dev/null || true
+
+    if "$VENV_PIP" install $PACKAGE_SPEC --quiet; then
         print_success "collab installed"
     else
         print_error "collab package installation failed"
@@ -194,7 +192,7 @@ else
     fi
 fi
 
-print_step 5 7 "Configuring environment..."
+print_step 5 9 "Configuring environment..."
 
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
@@ -286,32 +284,54 @@ else
     echo "   ${YELLOW}Warning: pre-commit not found. Run ./scripts/setup-dev.sh to install repository hooks.${NC}" >&2
 fi
 
-print_step 6 7 "Installing VS Code extension (optional)..."
+print_step 6 9 "Installing VS Code extension (optional)..."
 
-VSCODE_EXT_DIR="$PROJECT_ROOT/vscode-extension/collab-locks"
-if [ -f "$VSCODE_EXT_DIR/package.json" ]; then
-    echo "   Found VS Code extension at ${MAGENTA}vscode-extension/collab-locks${NC} ..." >&2
+echo "   Fetching extension from GitHub Releases..." >&2
 
-    if command -v code >/dev/null 2>&1; then
-        echo "   VS Code CLI found, installing extension..." >&2
-        if (cd "$VSCODE_EXT_DIR" && code --install-extension . --force >/dev/null 2>&1); then
-            print_success "VS Code extension installed"
+IDE_COMMANDS=("code" "code-insiders" "cursor" "codium" "antigravity")
+CLI_FOUND=false
+for ide in "${IDE_COMMANDS[@]}"; do
+    if command -v "$ide" >/dev/null 2>&1; then
+        CLI_FOUND=true
+        break
+    fi
+done
+
+if [ "$CLI_FOUND" = true ]; then
+    TEMP_VSIX="/tmp/collab-locks-latest.vsix"
+
+    if command -v curl >/dev/null 2>&1; then
+        VSIX_URL=$(curl -s https://api.github.com/repos/KirilMT/collab/releases/latest | grep "browser_download_url.*vsix" | cut -d '"' -f 4 | head -n 1)
+
+        if [ -n "$VSIX_URL" ]; then
+            if curl -sL "$VSIX_URL" -o "$TEMP_VSIX"; then
+                for ide in "${IDE_COMMANDS[@]}"; do
+                    if command -v "$ide" >/dev/null 2>&1; then
+                        echo "   Installing into $ide..." >&2
+                        if "$ide" --install-extension "$TEMP_VSIX" --force >/dev/null 2>&1; then
+                            print_success "Extension installed for $ide"
+                        else
+                            echo "   ${YELLOW}Warning: Extension installation failed for $ide.${NC}" >&2
+                        fi
+                    fi
+                done
+                rm -f "$TEMP_VSIX"
+            else
+                echo "   ${YELLOW}Warning: Failed to download .vsix from GitHub release.${NC}" >&2
+            fi
         else
-            echo "   ${YELLOW}Warning: VS Code extension installation failed (non-critical).${NC}" >&2
+            echo "   ${YELLOW}Warning: No .vsix asset found on latest GitHub release.${NC}" >&2
         fi
     else
-        echo "   ${YELLOW}VS Code CLI not found. Extension must be installed manually:${NC}" >&2
-        echo "     1. Open VS Code" >&2
-        echo "     2. Go to Extensions (Ctrl+Shift+X)" >&2
-        echo "     3. Search for 'collab-locks'" >&2
-        echo "     Or run: code --install-extension vscode-extension/collab-locks" >&2
+        echo "   ${YELLOW}Warning: curl is required to download the extension.${NC}" >&2
     fi
 else
-    echo "   VS Code extension not found" >&2
-    echo "   ${YELLOW}SKIPPED${NC}" >&2
+    echo "   ${YELLOW}No supported IDE CLIs found. Extension must be installed manually:${NC}" >&2
+    echo "     1. Open your IDE (VS Code, Cursor, Antigravity)" >&2
+    echo "     2. Go to Extensions -> '...' -> 'Install from VSIX'" >&2
 fi
 
-print_step 7 7 "Running smoke tests..."
+print_step 7 9 "Running smoke tests..."
 
 SMOKE_TESTS_PASSED=true
 
@@ -348,12 +368,30 @@ if [ "$SMOKE_TESTS_PASSED" = true ]; then
     print_success "All smoke tests passed"
 fi
 
+print_step 8 9 "Ensuring Collaborative Daemon is running..."
+if [ -f "$VENV_PYTHON" ]; then
+    COLLAB_BIN="$(dirname "$VENV_PYTHON")/collab"
+    if ! "$COLLAB_BIN" daemon-status >/dev/null 2>&1; then
+        echo "   Starting daemon in background..." >&2
+        if "$COLLAB_BIN" daemon-start; then
+            print_success "Daemon started successfully"
+        else
+            echo -e "   ${YELLOW}Warning: Failed to start daemon${NC}" >&2
+        fi
+    else
+        print_success "Daemon is already running"
+    fi
+fi
+
+print_step 9 9 "Final verification..."
+"$COLLAB_BIN" daemon-status
+
 if [ "$CALLED_FROM_DEV" = false ]; then
     echo ""
     echo -e "${CYAN}========================================"
     if [ $ERROR_COUNT -eq 0 ]; then
         echo -e "   Installation Complete!"
-        echo -e "   ${GREEN}✓ Setup successful${NC}"
+        echo -e "   ${GRAY}(Production + Daemon Active)${NC}"
     else
         echo -e "   Installation completed with ${YELLOW}$ERROR_COUNT warning(s)${NC}"
     fi

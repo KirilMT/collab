@@ -92,10 +92,17 @@ Before editing files:
 
 1. List files you expect to modify.
 2. Run `collab active`.
-3. If a target file is locked by another developer, stop and coordinate.
-4. Never force-release locks owned by someone else.
+3. If a target file is locked by another developer, stop and report.
+4. Never force-release another developer's lock.
 
-For local CLI fallback, `python -m src.main active` is acceptable.
+### Troubleshooting
+
+If you suspect a lock is stale or the watcher is unresponsive:
+
+1. Run `collab daemon-status`.
+2. If stopped, run `collab daemon-start`.
+3. Check `collab active`.
+4. If still blocked, check `collab status path/to/file.py` to see the exact owner.
 
 ## Branching and PR Flow
 
