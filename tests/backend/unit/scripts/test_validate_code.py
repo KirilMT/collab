@@ -426,10 +426,12 @@ def test_main_file_filtering_short_circuit(monkeypatch):
 
 def test_run_cleanup_output_paths(monkeypatch, capsys):
     monkeypatch.setattr(validate_code, "clean_default", lambda dry_run=False: 2)
+    monkeypatch.setattr(validate_code, "clean_packaging", lambda dry_run=False: 0)
     validate_code._run_cleanup()
     assert "Removed 2 generated artifact(s)" in capsys.readouterr().out
 
     monkeypatch.setattr(validate_code, "clean_default", lambda dry_run=False: 0)
+    monkeypatch.setattr(validate_code, "clean_packaging", lambda dry_run=False: 0)
     validate_code._run_cleanup()
     assert "Nothing to clean" in capsys.readouterr().out
 

@@ -70,6 +70,11 @@ TEST_OUTPUT_GLOB_PATTERNS: List[str] = [
     "pytest-cache-files-*",  # Randomly named temporary directories from test runners
 ]
 
+# Formatting tool artifacts
+FORMATTING_GLOB_PATTERNS: List[str] = [
+    "**/*.isorted",  # isort backup files created during formatting (recursive)
+]
+
 # Packaging-specific glob patterns
 PACKAGING_GLOB_PATTERNS: List[str] = [
     "*.egg-info",  # packaging metadata directories
@@ -238,7 +243,8 @@ def clean_caches(dry_run: bool = False) -> int:
 
 
 def clean_default(dry_run: bool = False) -> int:
-    """Remove test artifacts and coverage reporting (default behaviour).
+    """Remove test artifacts, coverage reporting, and formatting artifacts (default
+    behaviour).
 
     Keeps tool caches (.pytest_cache, .mypy_cache, etc.) intact so
     subsequent runs stay fast.
@@ -249,11 +255,13 @@ def clean_default(dry_run: bool = False) -> int:
     Returns:
         Total number of items cleaned.
     """
-    return clean_coverage(dry_run) + clean_test_output(dry_run)
+    return (
+        clean_coverage(dry_run) + clean_test_output(dry_run) + clean_formatting(dry_run)
+    )
 
 
 def clean_all(dry_run: bool = False) -> int:
-    """Remove everything: coverage, test output, AND tool caches.
+    """Remove everything: coverage, test output, formatting artifacts, AND tool caches.
 
     Args:
         dry_run: If True, only report what would be removed.
@@ -262,6 +270,19 @@ def clean_all(dry_run: bool = False) -> int:
         Total number of items cleaned.
     """
     return clean_default(dry_run) + clean_caches(dry_run)
+
+
+def clean_formatting(dry_run: bool = False) -> int:
+    """Remove formatting tool artifacts (*.isorted files from isort).
+
+    Args:
+        dry_run: If True, only report what would be removed.
+
+    Returns:
+        Total number of items cleaned.
+    """
+    print("Cleaning formatting artifacts...")
+    return _clean_glob(FORMATTING_GLOB_PATTERNS, dry_run)
 
 
 def clean_packaging(dry_run: bool = False) -> int:

@@ -79,6 +79,7 @@ blob-report/
 *.bak
 *.backup
 *.orig
+*.isorted
 temp/
 output/
 
