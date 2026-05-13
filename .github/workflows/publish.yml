@@ -62,6 +62,7 @@ jobs:
       - name: Sign artifacts (optional)
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
@@ -73,7 +74,7 @@ jobs:
           echo "$GPG_PRIVATE_KEY" > private.key
           gpg --batch --import private.key
           for f in dist/*; do
-            gpg --batch --yes --pinentry-mode loopback --armor \
+            gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}" --armor \
               --detach-sign --output "${f}.asc" "$f"
           done
           rm -f private.key
