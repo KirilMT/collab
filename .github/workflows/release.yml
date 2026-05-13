@@ -37,7 +37,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-
       - name: Checkout Release PR branch (if present)
         if: ${{ steps.release.outputs.pr }}
         uses: actions/checkout@v4
@@ -72,3 +71,12 @@ jobs:
           else
             echo "No formatting changes to commit."
           fi
+
+      - name: Trigger CI on release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          PR_BRANCH="${{ fromJson(steps.release.outputs.pr).headBranchName }}"
+          echo "Triggering CI workflow on branch: ${PR_BRANCH}"
+          gh workflow run ci.yml --ref "${PR_BRANCH}"
