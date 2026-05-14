@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.2.6](https://github.com/KirilMT/collab/compare/v0.2.5...v0.2.6) (2026-05-14)
 
-
 ### Bug Fixes
 
-* **release:** json parsing error ([#37](https://github.com/KirilMT/collab/issues/37)) ([2a2de27](https://github.com/KirilMT/collab/commit/2a2de277d6adb2b515c6582c0a8da2dda2a21e96))
+- **release:** json parsing error ([#37](https://github.com/KirilMT/collab/issues/37)) ([2a2de27](https://github.com/KirilMT/collab/commit/2a2de277d6adb2b515c6582c0a8da2dda2a21e96))
 
 ## [0.2.5](https://github.com/KirilMT/collab/compare/v0.2.4...v0.2.5) (2026-05-14)
 
