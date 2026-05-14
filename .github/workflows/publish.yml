@@ -85,13 +85,14 @@ jobs:
       - name: Generate SBOM and requirements
         run: |
           set -euo pipefail
+          mkdir -p dist-extra
           .venv.verify/bin/pip install \
             pip-licenses
           .venv.verify/bin/pip-licenses \
             --format=json \
-            > dist/sbom-deps.json
+            > dist-extra/sbom-deps.json
           .venv.verify/bin/pip freeze \
-            > dist/requirements-venv.txt
+            > dist-extra/requirements-venv.txt
 
       - name: Sign artifacts
         env:
@@ -111,8 +112,9 @@ jobs:
           trap 'rm -f private.key' EXIT
           gpg --batch --import private.key
           gpg --list-secret-keys
-          for f in dist/*; do
+          for f in dist/* dist-extra/*; do
             [ -f "$f" ] || continue
+            BASENAME=$(basename "$f")
             gpg --batch --yes \
               --pinentry-mode loopback \
               --passphrase \
@@ -120,7 +122,9 @@ jobs:
               --local-user \
                 "${GPG_KEY_ID}" \
               --armor --detach-sign \
-              --output "${f}.asc" "$f"
+              --output \
+                "dist-extra/${BASENAME}.asc" \
+                "$f"
           done
 
       - name: Resolve tag name
@@ -176,17 +180,19 @@ jobs:
             ${{ steps.tag.outputs.name }}
         run: |
           set -euo pipefail
-          ls dist/* 1>/dev/null 2>&1 \
-            || { echo "No artifacts"; exit 1; }
           gh release upload \
             "$TAG_NAME" dist/* --clobber
+          gh release upload \
+            "$TAG_NAME" dist-extra/* --clobber
 
       - name: Upload dist artifacts (debug)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dist-artifacts
-          path: dist/*
+          path: |
+            dist/*
+            dist-extra/*
 
       - name: Publish to PyPI
         if: >-

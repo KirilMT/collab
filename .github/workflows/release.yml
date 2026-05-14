@@ -9,7 +9,7 @@ name: Release
 
 concurrency:
   group: >-
-    release-$${{ github.workflow }}-$${{ github.ref }}
+    release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -108,7 +108,7 @@ jobs:
 
       - name: Log release output
         if: >-
-          ${{ steps.release.outputs.releases_created }}
+          steps.release.outputs.releases_created
         run: |
           echo "Release created:"
           echo "${{ steps.release.outputs.tag_name }}"
@@ -117,10 +117,14 @@ jobs:
         if: steps.release.outputs.pr
         uses: actions/checkout@v4
         with:
-          ref: >
-            ${{ fromJson(steps.release.outputs.pr).headBranchName }}
+          ref: >-
+            ${{ steps.release.outputs.pr
+            && fromJson(
+            steps.release.outputs.pr
+            ).headBranchName
+            || '' }}
           fetch-depth: 0
-          token: >
+          token: >-
             ${{ secrets.RELEASE_PLEASE_TOKEN
             || secrets.GITHUB_TOKEN }}
 
@@ -128,8 +132,12 @@ jobs:
         if: steps.release.outputs.pr
         working-directory: vscode-extension/collab-locks
         env:
-          TARGET_BRANCH: >
-            ${{ fromJson(steps.release.outputs.pr).headBranchName }}
+          TARGET_BRANCH: >-
+            ${{ steps.release.outputs.pr
+            && fromJson(
+            steps.release.outputs.pr
+            ).headBranchName
+            || '' }}
         run: |
           set -euo pipefail
           npm install \
