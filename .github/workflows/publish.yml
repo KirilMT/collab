@@ -210,7 +210,18 @@ jobs:
             || { echo "No sdist"; exit 1; }
           python -m twine upload \
             --skip-existing \
-            dist/*.whl dist/*.tar.gz
+            --verbose \
+            dist/*.whl dist/*.tar.gz || {
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo "Upload successful"
+            else
+              echo "Upload failed with code $EXIT_CODE"
+              echo "This may be due to version already existing on PyPI"
+              echo "Check: https://pypi.org/project/collab-runtime/"
+              exit $EXIT_CODE
+            fi
+          }
 
   build-verify-publish-extension:
     name: Build and publish VS Code extension
