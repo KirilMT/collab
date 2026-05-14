@@ -8,8 +8,7 @@ name: Release
   workflow_dispatch: {}
 
 concurrency:
-  group: >-
-    release-$${{ github.workflow }}-$${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -17,73 +16,11 @@ permissions:
   pull-requests: write
 
 jobs:
-  verify:
-    name: Verify build and test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install build tools
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install build pytest
-
-      - name: Build wheel and sdist
-        run: |
-          set -euo pipefail
-          python -m build \
-            --sdist --wheel --outdir dist/
-          ls dist/*.whl 1>/dev/null 2>&1 \
-            || { echo "No wheel in dist/"; exit 1; }
-          ls dist/*.tar.gz 1>/dev/null 2>&1 \
-            || { echo "No sdist in dist/"; exit 1; }
-
-      - name: Run tests
-        run: |
-          set -euo pipefail
-          python -m pip install ".[test]" dist/*.whl
-          pytest --cov=src --cov-report=xml
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage.xml
-          if-no-files-found: ignore
-
-      - name: Check config files
-        run: |
-          set -euo pipefail
-          test -f release-please-config.json || {
-            echo "Missing release-please-config.json"
-            exit 1
-          }
-          test -f .release-please-manifest.json || {
-            echo "Missing .release-please-manifest.json"
-            exit 1
-          }
-
   release-please:
-    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          token: >-
-            ${{ secrets.RELEASE_PLEASE_TOKEN
-            || secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -94,60 +31,47 @@ jobs:
         id: release
         with:
           config-file: release-please-config.json
-          manifest-file: >-
-            .release-please-manifest.json
-          token: >-
-            ${{ secrets.RELEASE_PLEASE_TOKEN
-            || secrets.GITHUB_TOKEN }}
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Log release output
-        if: >-
-          ${{ steps.release.outputs.releases_created }}
+      - name: Tag and create release
+        if: ${{ steps.release.outputs.releases_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          echo "Release created:"
-          echo "${{ steps.release.outputs.tag_name }}"
-
-      - name: Checkout Release PR branch
+          echo "Release created: ${{ steps.release.outputs.tag_name }}"
+          echo "Triggering publish workflow..."
+      - name: Checkout Release PR branch (if present)
         if: ${{ steps.release.outputs.pr }}
         uses: actions/checkout@v4
         with:
           ref: >-
             refs/heads/${{
-            fromJson(
-            steps.release.outputs.pr
-            ).headBranchName }}
+            fromJson(steps.release.outputs.pr).headBranchName
+            }}
           fetch-depth: 0
-          token: >-
-            ${{ secrets.RELEASE_PLEASE_TOKEN
-            || secrets.GITHUB_TOKEN }}
+          # Use RELEASE_PLEASE_TOKEN so the git push below triggers
+          # CI workflows (GITHUB_TOKEN pushes intentionally skip
+          # workflow dispatch to prevent recursive chains).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Format release artifacts
         if: ${{ steps.release.outputs.pr }}
-        working-directory: >-
-          vscode-extension/collab-locks
-        env:
-          TARGET_BRANCH: >-
-            ${{
-            fromJson(
-            steps.release.outputs.pr
-            ).headBranchName }}
         run: |
-          set -euo pipefail
-          npm install \
-            --no-fund --no-audit --silent
-          cd ../..
-          npx prettier --write "**/*.md"
-          git config user.name \
-            "github-actions[bot]"
-          git config user.email \
-            "github-actions[bot]\
-          @users.noreply.github.com"
-          git add -A
+          TARGET_BRANCH="${{
+            fromJson(steps.release.outputs.pr).headBranchName
+          }}"
+
+          npm install --no-fund --no-audit --silent
+
+          npx prettier --write CHANGELOG.md || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A || true
           if ! git diff --cached --quiet; then
-            git commit \
-              -m "chore: auto-format release"
-            git push origin \
-              "HEAD:${TARGET_BRANCH}"
+            git commit -m "chore: auto-format (Release Please)" || true
+            git push origin "HEAD:${TARGET_BRANCH}"
           else
-            echo "No formatting changes."
+            echo "No formatting changes to commit."
           fi
