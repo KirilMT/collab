@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7](https://github.com/KirilMT/collab/compare/v0.2.6...v0.2.7) (2026-05-14)
+
+
+### Bug Fixes
+
+* **ci:** resolve GitHub Actions failures ([#39](https://github.com/KirilMT/collab/issues/39)) ([cc29cca](https://github.com/KirilMT/collab/commit/cc29cca23d0fa2b5f30e60f5120305d7a8e7054d))
+
 ## [0.2.6](https://github.com/KirilMT/collab/compare/v0.2.5...v0.2.6) (2026-05-14)
 
 ### Bug Fixes
