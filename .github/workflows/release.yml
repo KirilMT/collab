@@ -114,24 +114,22 @@ jobs:
           echo "${{ steps.release.outputs.tag_name }}"
 
       - name: Checkout Release PR branch
-        if: ${{ steps.release.outputs.pr != '' }}
+        if: ${{ steps.release.outputs.pr }}
         uses: actions/checkout@v4
         with:
           ref: >-
-            refs/heads/${{
-            fromJson(steps.release.outputs.pr).headBranchName }}
+            ${{ fromJson(steps.release.outputs.pr).headBranchName }}
           fetch-depth: 0
           token: >-
             ${{ secrets.RELEASE_PLEASE_TOKEN
             || secrets.GITHUB_TOKEN }}
 
       - name: Format release artifacts
-        if: ${{ steps.release.outputs.pr != '' }}
+        if: ${{ steps.release.outputs.pr }}
         working-directory: vscode-extension/collab-locks
         env:
           TARGET_BRANCH: >-
-            ${{
-            fromJson(steps.release.outputs.pr).headBranchName }}
+            ${{ fromJson(steps.release.outputs.pr).headBranchName }}
         run: |
           set -euo pipefail
           npm install \
