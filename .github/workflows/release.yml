@@ -32,11 +32,11 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install build tools
+      - name: Install build tools and test dependencies
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install build
+          pip install build pytest pytest-cov
 
       - name: Build wheel and sdist
         run: |
@@ -48,12 +48,12 @@ jobs:
           ls dist/*.tar.gz 1>/dev/null 2>&1 \
             || { echo "No sdist in dist/"; exit 1; }
 
-      - name: Install wheel with test extras
+      - name: Install wheel
         run: |
           set -euo pipefail
           WHL=$(ls dist/*.whl | head -1)
-          echo "Installing: ${WHL}[test]"
-          pip install "${WHL}[test]"
+          echo "Installing: ${WHL}"
+          pip install "${WHL}"
 
       - name: Run tests
         run: |
