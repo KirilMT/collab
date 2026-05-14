@@ -142,8 +142,8 @@ jobs:
       - name: Create or reuse GitHub Release
         if: >-
           startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: >-
             ${{ secrets.GITHUB_TOKEN }}
@@ -164,8 +164,8 @@ jobs:
       - name: Attach dist artifacts to release
         if: >-
           startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: >-
             ${{ secrets.GITHUB_TOKEN }}
@@ -188,13 +188,11 @@ jobs:
       - name: Publish to registry
         if: >-
           startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || github.event_name == 'workflow_dispatch'
         env:
-          TWINE_USERNAME: >-
-            ${{ secrets.TWINE_USERNAME }}
-          TWINE_PASSWORD: >-
-            ${{ secrets.TWINE_PASSWORD }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.REGISTRY_API_TOKEN }}
           TWINE_REPOSITORY_URL: >-
             ${{ vars.REGISTRY_URL
             || secrets.REGISTRY_URL
@@ -202,10 +200,9 @@ jobs:
             }}
         run: |
           set -euo pipefail
-          if [ -z "${TWINE_USERNAME:-}" ] \
-            || [ -z "${TWINE_PASSWORD:-}" ]; then
-            echo "Twine credentials not set."
-            exit 0
+          if [ -z "${TWINE_PASSWORD:-}" ]; then
+            echo "Registry token not set; skip."
+            exit 1
           fi
           ls dist/*.whl 1>/dev/null 2>&1 \
             || { echo "No wheel"; exit 1; }
@@ -245,6 +242,7 @@ jobs:
           vscode-extension/collab-locks
         run: |
           set -euo pipefail
+          ln -sf ../../LICENSE LICENSE
           npx vsce package
           ls *.vsix 1>/dev/null 2>&1 \
             || { echo "No .vsix found"; exit 1; }
@@ -268,8 +266,8 @@ jobs:
       - name: Attach VSIX to GitHub Release
         if: >-
           startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+          || github.event_name == 'repository_dispatch'
+          || github.event_name == 'workflow_dispatch'
         working-directory: >-
           vscode-extension/collab-locks
         env:
