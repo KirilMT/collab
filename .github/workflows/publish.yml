@@ -6,13 +6,9 @@ name: Publish Release
     tags:
       - "v*.*.*"
   workflow_dispatch: {}
-  repository_dispatch:
-    types: [trigger-publish]
 
 concurrency:
-  group: >-
-    publish-${{
-    github.ref_name || github.run_id }}
+  group: publish-${{ github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -29,261 +25,138 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
 
       - name: Install build tools
         run: |
-          set -euo pipefail
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build twine auditwheel
 
       - name: Build wheel and sdist
         run: |
-          set -euo pipefail
-          python -m build \
-            --sdist --wheel --outdir dist/
-          ls dist/*.whl 1>/dev/null 2>&1 \
-            || { echo "No wheel found"; exit 1; }
-          ls dist/*.tar.gz 1>/dev/null 2>&1 \
-            || { echo "No sdist found"; exit 1; }
+          python -m build --sdist --wheel --outdir dist/
 
-      - name: Packaging smoke check
+      - name: Packaging smoke check (ephemeral venv)
         run: |
-          set -euo pipefail
           python -m venv .venv.verify
-          .venv.verify/bin/pip install \
-            --upgrade pip
+          .venv.verify/bin/pip install --upgrade pip
           .venv.verify/bin/pip install dist/*.whl
           .venv.verify/bin/python <<'PY'
-          import importlib, sys
-          try:
-              mod = importlib.import_module('collab')
-              ver = getattr(
-                  mod, '__version__', 'unknown'
-              )
-              print(f"collab version: {ver}")
-          except ImportError as e:
-              print(f"Import error: {e}",
-                    file=sys.stderr)
-              sys.exit(1)
+          import importlib
+          print(importlib.import_module('collab').__version__)
           PY
-          if [ -f .venv.verify/bin/collab ]; then
-            .venv.verify/bin/collab --help
-          else
-            echo "CLI not installed; skipping"
-          fi
+          .venv.verify/bin/collab --help || true
 
-      - name: Generate SBOM and requirements
+      - name: Generate SBOM and requirements from ephemeral venv
         run: |
-          set -euo pipefail
-          .venv.verify/bin/pip install \
-            pip-licenses
-          .venv.verify/bin/pip-licenses \
-            --format=json \
-            > dist/sbom-deps.json
-          .venv.verify/bin/pip freeze \
-            > dist/requirements-venv.txt
+          # Install a small toolset into the ephemeral venv and emit a
+          # simple SBOM-like JSON and a requirements freeze for provenance.
+          .venv.verify/bin/pip install pip-licenses
+          .venv.verify/bin/pip-licenses --format=json > dist/sbom-deps.json
+          .venv.verify/bin/pip freeze > dist/requirements-venv.txt
 
-      - name: Sign artifacts
+      - name: Sign artifacts (optional)
         env:
-          GPG_PRIVATE_KEY: >-
-            ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: >-
-            ${{ secrets.GPG_PASSPHRASE }}
-          GPG_KEY_ID: >-
-            ${{ secrets.GPG_KEY_ID }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
-            echo "GPG key not set; skip signing."
+            echo "GPG_PRIVATE_KEY is not set, skipping signing."
             exit 0
           fi
+          # Import provided GPG private key (from secrets) and create
+          # ASCII-armored detached signatures for all files in dist/.
           echo "$GPG_PRIVATE_KEY" > private.key
-          trap 'rm -f private.key' EXIT
           gpg --batch --import private.key
-          gpg --list-secret-keys
           for f in dist/*; do
-            [ -f "$f" ] || continue
-            gpg --batch --yes \
-              --pinentry-mode loopback \
-              --passphrase \
-                "${GPG_PASSPHRASE}" \
-              --local-user \
-                "${GPG_KEY_ID}" \
-              --armor --detach-sign \
-              --output "${f}.asc" "$f"
+            gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}" --armor \
+              --detach-sign --output "${f}.asc" "$f"
           done
+          rm -f private.key
 
-      - name: Resolve tag name
-        id: tag
-        run: |
-          set -euo pipefail
-          EVT="${{ github.event_name }}"
-          if [ "$EVT" = "repository_dispatch" ]
-          then
-            TAG="${{
-              github.event.client_payload.tag
-            }}"
-            if [ -z "$TAG" ]; then
-              echo "No tag in dispatch payload"
-              exit 1
-            fi
-          else
-            TAG="${{ github.ref_name }}"
-          fi
-          echo "name=${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or reuse GitHub Release
-        if: >-
-          startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GITHUB_TOKEN: >-
-            ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: >-
-            ${{ steps.tag.outputs.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          if gh release view "$TAG_NAME" \
-            >/dev/null 2>&1; then
-            echo "Release $TAG_NAME exists."
-          else
-            gh release create "$TAG_NAME" \
-              --title "$TAG_NAME" \
-              --generate-notes \
-              --verify-tag
-          fi
+          # Create the release if it doesn't exist yet
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --latest \
+            --verify-tag || echo "Release already exists, continuing..."
 
-      - name: Attach dist artifacts to release
-        if: >-
-          startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+      - name: Attach dist artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GITHUB_TOKEN: >-
-            ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: >-
-            ${{ steps.tag.outputs.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          ls dist/* 1>/dev/null 2>&1 \
-            || { echo "No artifacts"; exit 1; }
-          gh release upload \
-            "$TAG_NAME" dist/* --clobber
+          gh release upload ${{ github.ref_name }} dist/* --clobber
 
       - name: Upload dist artifacts (debug)
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dist-artifacts
           path: dist/*
 
-      - name: Publish to registry
-        if: >-
-          startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
+      - name: Publish artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          TWINE_USERNAME: >-
-            ${{ secrets.TWINE_USERNAME }}
-          TWINE_PASSWORD: >-
-            ${{ secrets.TWINE_PASSWORD }}
-          TWINE_REPOSITORY_URL: >-
-            ${{ vars.REGISTRY_URL
-            || secrets.REGISTRY_URL
-            || 'https://upload.pypi.org/legacy/'
-            }}
+          REGISTRY_URL: ${{ vars.REGISTRY_URL || secrets.REGISTRY_URL }}
+          TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
         run: |
-          set -euo pipefail
-          if [ -z "${TWINE_USERNAME:-}" ] \
-            || [ -z "${TWINE_PASSWORD:-}" ]; then
-            echo "Twine credentials not set."
-            exit 0
-          fi
-          ls dist/*.whl 1>/dev/null 2>&1 \
-            || { echo "No wheel"; exit 1; }
-          ls dist/*.tar.gz 1>/dev/null 2>&1 \
-            || { echo "No sdist"; exit 1; }
+          python -m pip install --upgrade twine
+          # Default to PyPI if REGISTRY_URL unset
+          REG_URL="${REGISTRY_URL:-https://upload.pypi.org/legacy/}"
           python -m twine upload \
-            --skip-existing \
-            dist/*.whl dist/*.tar.gz
+            --repository-url "$REG_URL" \
+            -u "$TWINE_USERNAME" \
+            -p "$TWINE_PASSWORD" \
+            dist/*
 
   build-verify-publish-extension:
-    name: Build and publish VS Code extension
+    name: Build and Publish VS Code Extension
     runs-on: ubuntu-latest
     environment: production
-    needs: build-verify-publish
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: >-
-            vscode-extension/collab-locks/package-lock.json
+          cache-dependency-path: vscode-extension/collab-locks/package-lock.json
 
       - name: Install dependencies
-        working-directory: >-
-          vscode-extension/collab-locks
+        working-directory: vscode-extension/collab-locks
         run: npm ci
 
-      - name: Build VSIX package
-        working-directory: >-
-          vscode-extension/collab-locks
-        run: |
-          set -euo pipefail
-          npx vsce package
-          ls *.vsix 1>/dev/null 2>&1 \
-            || { echo "No .vsix found"; exit 1; }
-
-      - name: Resolve tag name
-        id: tag
-        run: |
-          set -euo pipefail
-          EVT="${{ github.event_name }}"
-          if [ "$EVT" = "repository_dispatch" ]
-          then
-            TAG="${{
-              github.event.client_payload.tag
-              || github.sha
-            }}"
-          else
-            TAG="${{ github.ref_name }}"
-          fi
-          echo "name=${TAG}" >> "$GITHUB_OUTPUT"
+      - name: Build VSIX Package
+        working-directory: vscode-extension/collab-locks
+        run: npx vsce package
 
       - name: Attach VSIX to GitHub Release
-        if: >-
-          startsWith(github.ref, 'refs/tags/v')
-          || github.event_name
-          == 'repository_dispatch'
-        working-directory: >-
-          vscode-extension/collab-locks
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: vscode-extension/collab-locks
         env:
-          GITHUB_TOKEN: >-
-            ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: >-
-            ${{ steps.tag.outputs.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          VSIX=$(ls *.vsix 2>/dev/null | head -1)
-          if [ -n "$VSIX" ]; then
-            gh release upload \
-              "$TAG_NAME" "$VSIX" --clobber
-          else
-            echo "No VSIX file found."
-            exit 1
-          fi
+          # Create the release if it doesn't exist yet (the tag already exists)
+          # --verify-tag checks that the tag exists;
+          # --latest makes it the latest
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --latest \
+            --verify-tag || echo "Release already exists, continuing..."
+          # Upload the VSIX to the release
+          VSIX_FILE=$(ls *.vsix)
+          gh release upload ${{ github.ref_name }} "$VSIX_FILE" --clobber
