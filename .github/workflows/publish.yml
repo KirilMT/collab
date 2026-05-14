@@ -24,6 +24,9 @@ jobs:
     name: Build, verify, publish
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      id-token: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build
 
       - name: Build wheel and sdist
         run: |
@@ -185,43 +188,15 @@ jobs:
           name: dist-artifacts
           path: dist/*
 
-      - name: Publish to registry
+      - name: Publish to PyPI
         if: >-
           startsWith(github.ref, 'refs/tags/v')
           || github.event_name == 'repository_dispatch'
           || github.event_name == 'workflow_dispatch'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.REGISTRY_API_TOKEN }}
-          TWINE_REPOSITORY_URL: >-
-            ${{ vars.REGISTRY_URL
-            || secrets.REGISTRY_URL
-            || 'https://upload.pypi.org/legacy/'
-            }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TWINE_PASSWORD:-}" ]; then
-            echo "Registry token not set; skip."
-            exit 1
-          fi
-          ls dist/*.whl 1>/dev/null 2>&1 \
-            || { echo "No wheel"; exit 1; }
-          ls dist/*.tar.gz 1>/dev/null 2>&1 \
-            || { echo "No sdist"; exit 1; }
-          python -m twine upload \
-            --skip-existing \
-            --verbose \
-            dist/*.whl dist/*.tar.gz || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 0 ]; then
-              echo "Upload successful"
-            else
-              echo "Upload failed with code $EXIT_CODE"
-              echo "This may be due to version already existing on PyPI"
-              echo "Check: https://pypi.org/project/collab-runtime/"
-              exit $EXIT_CODE
-            fi
-          }
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
 
   build-verify-publish-extension:
     name: Build and publish VS Code extension
