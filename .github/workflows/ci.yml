@@ -3,13 +3,21 @@ name: CI Pipeline
 
 "on":
   push:
-    branches: [main, develop, "release-please--branches--**"]
+    # main/develop only. Do not push-trigger release-please branches: those PRs
+    # already run this workflow via pull_request (avoids duplicate runs when
+    # release-please or release.yml pushes chore: auto-format release).
+    branches: [main, develop]
   pull_request:
+    # All PRs targeting main/develop (feature branches, release-please, etc.)
     branches: [main, develop]
   workflow_dispatch: {}
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # One active run per PR (synchronize cancels stale) or per branch push.
+  group: >-
+    ci-${{ github.workflow }}-${{
+      github.event.pull_request.number || github.ref
+    }}
   cancel-in-progress: true
 
 jobs:
