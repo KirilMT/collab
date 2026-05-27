@@ -52,7 +52,7 @@ pip install "collab-runtime>=0.2.2"
 
 ### 1 — Create the Database Schema
 
-In your Supabase project, open **SQL Editor** and run the contents of [`schema.sql`](https://github.com/KirilMT/collab/blob/main/schema.sql).
+In your Supabase project, open **SQL Editor** and run the contents of [`supabase/schema.sql`](https://github.com/KirilMT/collab/blob/main/supabase/schema.sql).
 
 This creates the `file_locks` table, `file_locks_history` audit table, the atomic `acquire_lock()` RPC, Row Level Security policies, and Realtime publication.
 
@@ -139,7 +139,7 @@ The optional VS Code extension provides lock-on-open warnings, a status bar indi
 **Install from source** (extension is bundled in the [GitHub repository](https://github.com/KirilMT/collab)):
 
 1. Press `F1` → **Developer: Install Extension from Location...**
-2. Select the `vscode-extension/collab-locks/` directory
+2. Select the `editors/vscode/collab-locks/` directory
 3. Reload VS Code
 
 Once installed, the extension automatically starts and stops the background daemon with your VS Code window.
@@ -173,7 +173,7 @@ Lock release follows the same path in reverse and writes an entry to `file_locks
 
 - Lock correctness is enforced at the database level via atomic RPC — no client-side race conditions.
 - Force-release requires `SUPABASE_SERVICE_ROLE_KEY`; regular releases are scoped to the owning developer.
-- Row Level Security (RLS) is configured on all tables via `schema.sql`.
+- Row Level Security (RLS) is configured on all tables via `supabase/schema.sql`.
 - Never commit secrets; use `.env` for local configuration only.
 
 ---

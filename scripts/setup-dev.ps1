@@ -851,7 +851,7 @@ switch ($detectedIDE) {
 
         Invoke-SetupDevCollabLocksVsixInstall
 
-        $vscodeExtDir = Join-Path $projectRoot 'vscode-extension\collab-locks'
+        $vscodeExtDir = Join-Path $projectRoot 'editors\vscode\collab-locks'
         $packageJson = Join-Path $vscodeExtDir 'package.json'
         if (Test-Path $packageJson) {
             try {
@@ -870,7 +870,7 @@ switch ($detectedIDE) {
     'jetbrains' {
         Write-Host '     - JetBrains IDE detected' -ForegroundColor Gray
         $ideaRunConfigDir = Join-Path $projectRoot '.idea\runConfigurations'
-        $xmlSrc = Join-Path $projectRoot 'pycharm\Collab_Lock_Watcher.xml'
+        $xmlSrc = Join-Path $projectRoot 'editors\pycharm\Collab_Lock_Watcher.xml'
         if (Test-Path $xmlSrc) {
             try {
                 New-Item -ItemType Directory -Force -Path $ideaRunConfigDir -ErrorAction SilentlyContinue | Out-Null

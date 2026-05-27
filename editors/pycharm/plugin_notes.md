@@ -56,7 +56,7 @@ When the watcher detects a conflict (file locked by another developer):
 
 ## Installing the Run Configuration Manually
 
-1. Copy `pycharm/Collab_Lock_Watcher.xml` to your project's
+1. Copy `editors/pycharm/Collab_Lock_Watcher.xml` to your project's
    `.idea/runConfigurations/` directory.
 2. Restart PyCharm or use **Run > Edit Configurations** to reload.
 3. The **Collab Lock Watcher** run configuration will appear in the Run menu.

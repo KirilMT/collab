@@ -3,8 +3,8 @@
 # Release tags are NOT required — Release Please handles versioning
 # automatically based on Conventional Commit types.
 #
-# SOURCE OF TRUTH: hooks/commit-msg (tracked in git)
-# Installed to .git/hooks/commit-msg by install_hooks.sh and scripts/setup.ps1
+# SOURCE OF TRUTH: scripts/git-hooks/commit-msg (tracked in git)
+# Installed to .git/hooks/commit-msg by scripts/install_hooks.sh and scripts/setup.ps1
 
 commit_msg_file="$1"
 

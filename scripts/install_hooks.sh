@@ -1,10 +1,10 @@
 #!/bin/sh
-# Install collab hook entrypoints from hooks/ into .git/hooks.
+# Install collab hook entrypoints from scripts/git-hooks/ into .git/hooks.
 
 set -e
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SOURCE_DIR="$PROJECT_ROOT/hooks"
+SOURCE_DIR="$PROJECT_ROOT/scripts/git-hooks"
 TARGET_DIR="$PROJECT_ROOT/.git/hooks"
 
 if [ ! -d "$SOURCE_DIR" ]; then
@@ -22,4 +22,4 @@ for hook in pre-commit post-commit pre-push commit-msg; do
     chmod +x "$TARGET_DIR/$hook" 2>/dev/null || true
 done
 
-echo "[collab] Installed git hooks from hooks/ (pre-commit, post-commit, pre-push, commit-msg)"
+echo "[collab] Installed git hooks from scripts/git-hooks/ (pre-commit, post-commit, pre-push, commit-msg)"

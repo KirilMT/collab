@@ -339,8 +339,8 @@ if [ "$DETECTED_IDE" = "vscode_family" ]; then
         echo -e "     ${GRAY}- VS Code-compatible IDE detected${NC}"
     fi
     setup_dev_install_collab_locks_vsix || true
-    if [ -f "vscode-extension/collab-locks/package.json" ]; then
-        if (cd vscode-extension/collab-locks && npm install --silent >/dev/null 2>&1); then
+    if [ -f "editors/vscode/collab-locks/package.json" ]; then
+        if (cd editors/vscode/collab-locks && npm install --silent >/dev/null 2>&1); then
             echo -e "     ${WHITE}VS Code extension workspace deps (npm)${NC} ${GREEN}OK${NC}"
         else
             echo -e "     ${YELLOW}VS Code extension npm install failed (non-fatal)${NC}"
@@ -348,9 +348,9 @@ if [ "$DETECTED_IDE" = "vscode_family" ]; then
     fi
 elif [ "$DETECTED_IDE" = "jetbrains" ]; then
     echo -e "     ${GRAY}- JetBrains IDE detected${NC}"
-    if [ -f "pycharm/Collab_Lock_Watcher.xml" ]; then
+    if [ -f "editors/pycharm/Collab_Lock_Watcher.xml" ]; then
         mkdir -p .idea/runConfigurations
-        if cp -f pycharm/Collab_Lock_Watcher.xml .idea/runConfigurations/Collab_Lock_Watcher.xml; then
+        if cp -f editors/pycharm/Collab_Lock_Watcher.xml .idea/runConfigurations/Collab_Lock_Watcher.xml; then
             echo -e "     ${WHITE}PyCharm run configuration installed${NC} ${GREEN}OK${NC}"
             echo -e "     ${GRAY}- Open Run > Collab Lock Watcher in the IDE.${NC}"
         else

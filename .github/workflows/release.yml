@@ -130,7 +130,7 @@ jobs:
 
       - name: Format release artifacts
         if: steps.release.outputs.pr
-        working-directory: vscode-extension/collab-locks
+        working-directory: editors/vscode/collab-locks
         env:
           TARGET_BRANCH: >-
             ${{ steps.release.outputs.pr
@@ -142,7 +142,7 @@ jobs:
           set -euo pipefail
           npm install \
             --no-fund --no-audit --silent
-          cd ../..
+          cd ../../..
           npx prettier --write "**/*.md"
           git config user.name \
             "github-actions[bot]"

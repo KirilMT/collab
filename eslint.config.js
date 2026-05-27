@@ -26,7 +26,7 @@ module.exports = [
   },
   {
     // VS Code extension — Node.js runtime, allow unused variables prefixed with underscore
-    files: ["vscode-extension/collab-locks/**/*.js"],
+    files: ["editors/vscode/collab-locks/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",

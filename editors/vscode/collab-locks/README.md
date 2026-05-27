@@ -11,7 +11,7 @@ Run the development setup script. It auto-detects VS Code and installs extension
 Then install the extension in VS Code:
 
 1. Press F1 and run Developer: Install Extension from Location...
-2. Select vscode-extension/collab-locks/
+2. Select editors/vscode/collab-locks/
 3. Reload VS Code
 
 ## Lifecycle Behavior

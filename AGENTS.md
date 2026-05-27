@@ -74,26 +74,19 @@ Collab Runtime is a standalone collaborative file-locking package that provides 
 
 ```text
 collab/
-├── src/
-│   ├── main.py
-│   ├── lock_client.py
-│   ├── live_locks_watcher.py
-│   ├── logging_config.py
-│   └── dashboard/
-│       └── index.html
-├── tests/
-│   ├── backend/
-│   │   ├── unit/
-│   │   ├── functional/
-│   │   ├── integration/
-│   │   ├── security/
-│   │   ├── performance/
-│   │   └── reliability/
-│   └── frontend/
-│       ├── jest/
-│       └── playwright/
+├── src/                        # Python runtime implementation
+├── collab/                     # PyPI import shim (package name must stay collab)
 ├── scripts/
-├── docs/
+│   ├── git-hooks/              # Collab hook templates (installed into .git/hooks)
+│   ├── install_hooks.sh
+│   ├── setup.ps1 / setup.sh
+│   └── setup-dev.ps1 / setup-dev.sh
+├── supabase/schema.sql         # Database schema for consumer Supabase projects
+├── editors/
+│   ├── vscode/collab-locks/    # VS Code / Cursor extension
+│   └── pycharm/                # PyCharm run configuration template
+├── docs/pypi/README.md         # PyPI readme (pyproject.toml readme)
+├── tests/
 ├── .agents/
 ├── .github/
 ├── run.py
