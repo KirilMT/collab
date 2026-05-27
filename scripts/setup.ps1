@@ -719,7 +719,7 @@ else {
     Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
-# Step 6: Locking prerequisites (mockCMMS parity)
+# Step 6: Collaborative locking prerequisites
 Write-SetupStepHeader -Step 6 -Message 'Validating collaborative locking prerequisites...'
 
 if (Test-SupabaseImport -PythonExe $pythonPath) {

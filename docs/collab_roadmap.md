@@ -88,8 +88,8 @@ This roadmap is a living document that evolves with the project.
 
 ### Phase 4 — Remove In-Repo `.collab` and Decouple Validation
 
-- [ ] Remove `.collab` directory from mockCMMS repository
-- [ ] Update mockCMMS validation scripts to exclude collab internals
+- [ ] Remove legacy in-repo `.collab` directory from consumer application repositories
+- [ ] Update consumer application validation scripts to exclude collab internals
 - [ ] Benchmark app validation time improvements
 - [ ] Migrate CI/CD to separate collab pipeline
 
@@ -105,19 +105,19 @@ This roadmap is a living document that evolves with the project.
 
 ## 📊 MILESTONES
 
-| Milestone                                  | Target Date  | Status |
-| ------------------------------------------ | ------------ | ------ |
-| Phase 0.5: Infrastructure complete         | May 5, 2026  | ✅     |
-| Phase 0: Behavioral contract approved      | May 5, 2026  | ✅     |
-| Phase 1: Package CLI parity verified       | May 7, 2026  | ✅     |
-| Phase 2: Extension calls installed package | May 7, 2026  | ✅     |
-| Phase 3: Setup scripts working             | May 7, 2026  | ✅     |
-| Phase 4: mockCMMS `.collab` removed        | May 8, 2026  | ✅     |
-| Phase 4.5: Package published to TestPyPI   | May 12, 2026 | ✅     |
-| Phase 4.6: Legacy entrypoint removed       | May 12, 2026 | ✅     |
-| Phase 4.7: Extension distribution          | May 12, 2026 | ✅     |
-| Phase 5: Hardening complete                | TBD          | 🔄     |
-| First stable release (v1.0.0)              | TBD          | 🔄     |
+| Milestone                                               | Target Date  | Status |
+| ------------------------------------------------------- | ------------ | ------ |
+| Phase 0.5: Infrastructure complete                      | May 5, 2026  | ✅     |
+| Phase 0: Behavioral contract approved                   | May 5, 2026  | ✅     |
+| Phase 1: Package CLI parity verified                    | May 7, 2026  | ✅     |
+| Phase 2: Extension calls installed package              | May 7, 2026  | ✅     |
+| Phase 3: Setup scripts working                          | May 7, 2026  | ✅     |
+| Phase 4: Consumer apps decoupled from in-repo `.collab` | May 8, 2026  | ✅     |
+| Phase 4.5: Package published to TestPyPI                | May 12, 2026 | ✅     |
+| Phase 4.6: Legacy entrypoint removed                    | May 12, 2026 | ✅     |
+| Phase 4.7: Extension distribution                       | May 12, 2026 | ✅     |
+| Phase 5: Hardening complete                             | TBD          | 🔄     |
+| First stable release (v1.0.0)                           | TBD          | 🔄     |
 
 ---
 
@@ -151,7 +151,7 @@ This roadmap is a living document that evolves with the project.
 - [ ] Extract `scripts/validate_code.py` logic into `shared_collab_tools/validators.py`
 - [ ] Extract `scripts/generate_tests.py` logic into `shared_collab_tools/generators.py`
 - [ ] Publish shared package to internal registry or PyPI
-- [ ] Update `collab` and `mockCMMS` to consume the shared package
+- [ ] Update `collab` and consumer applications to consume the shared package
 
 ---
 

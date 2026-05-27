@@ -67,7 +67,7 @@ and this project adheres to
 
 ### Features
 
-- **hooks:** align collab hook lifecycle and CI parity with mockCMMS ([27c5ce3](https://github.com/KirilMT/collab/commit/27c5ce39d1f6849fadbe5458d3437dc65d8c3f68))
+- **hooks:** align collab hook lifecycle and CI parity with consumer application patterns ([27c5ce3](https://github.com/KirilMT/collab/commit/27c5ce39d1f6849fadbe5458d3437dc65d8c3f68))
 - **infra:** Phase 0.5 infrastructure scaffolding and frontend parity ([fca3d51](https://github.com/KirilMT/collab/commit/fca3d51f8f99dc5bcc26cee0162d691c4e43ddfd))
 - **phase1:** complete migration Phase 1 and add shell-compatibility skill ([27ee505](https://github.com/KirilMT/collab/commit/27ee50569ee69b83b96d77d636d4dbb79cf14cd1))
 - **phase2:** update extension to call installed collab package ([ea7dbe6](https://github.com/KirilMT/collab/commit/ea7dbe671773503121834bf62dfe3ad2cbfaf929))
@@ -121,22 +121,22 @@ and this project adheres to
 
 ### ✨ Features
 
-- **frontend:** Add `eslint.config.js` with mockCMMS-aligned flat-config rules (recommended
+- **frontend:** Add `eslint.config.js` with production-aligned flat-config rules (recommended
   - no-unused-vars warn, no-console warn, no-undef error; targets
     `src/dashboard/**/*.js` and `tests/frontend/playwright/**/*.js`)
-- **frontend:** Add `playwright.config.js` with full mockCMMS-style E2E test
+- **frontend:** Add `playwright.config.js` with full E2E test
   configuration — globalSetup/globalTeardown hooks, webServer auto-start,
   `src/dashboard` static serving, Chromium + Firefox projects, visual regression
   settings, .env feature-flag support
 - **frontend:** Add four Playwright E2E helper modules under
   `tests/frontend/playwright/` (e2e-test-setup.js, e2e-test-teardown.js,
-  pre-test-cleanup.js, test-utils.js) — full mockCMMS pattern port adapted for
+  pre-test-cleanup.js, test-utils.js) — full pattern port adapted for
   collab dashboard and Supabase environment
 
 ### 🔧 Infrastructure
 
 - **npm:** Add `@eslint/js`, `eslint`, `globals`, `@playwright/test` to
-  `package.json` devDependencies (versions aligned with mockCMMS)
+  `package.json` devDependencies (versions aligned with reference tooling stack)
 - **npm:** Add `lint:frontend`, `lint:frontend:fix`, `test:frontend:e2e`,
   `test:frontend:e2e:chromium` scripts
 - **ci:** Branch triggers updated from `master` to `main` across all GitHub

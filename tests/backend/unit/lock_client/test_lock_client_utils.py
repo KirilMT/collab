@@ -382,7 +382,7 @@ def test_get_state_dir_default_creates_dir(monkeypatch):
     monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
     sd = mod._get_state_dir()
     assert os.path.exists(sd)
-    assert "collab_runtime_" in sd or "mockcmms_collab_" in sd
+    assert "collab_runtime_" in sd
 
 
 def test_state_path(monkeypatch, tmp_path):

@@ -1831,9 +1831,7 @@ class LockClient:
 
             # Safeguard: prevent test runs from killing production daemons.
             is_test_watcher = (
-                "pytest-of-" in cmd
-                or "collab_test_" in cmd
-                or "mockcmms_pytest_collab_" in cmd
+                "pytest-of-" in cmd or "collab_test_" in cmd or "collab_pytest_" in cmd
             )
             return is_test_watcher if is_test else not is_test_watcher
 
