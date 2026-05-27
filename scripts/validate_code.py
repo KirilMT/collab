@@ -454,21 +454,14 @@ def run_command(
         Tuple of (success: bool, output: str)
     """
     try:
-        # Prefer python -m for known tools to ensure strict virtual environment
-        # affinity and avoid PATH resolution ambiguities (especially on Windows).
         resolved_command = _python_module_fallback_command(command)
         active_command = resolved_command if resolved_command else command
 
         print(f"Running: {' '.join(active_command)}")
 
-        # On Windows, npm/npx are .cmd files that need cmd.exe to execute.
-        # Instead of shell=True (B602 security risk), prefix with cmd /c.
         if sys.platform == "win32" and active_command[0] in ("npm", "npx"):
             active_command = ["cmd", "/c"] + active_command
 
-        # IRONCLAD MODE: Fresh, minimal env to mirror CI clean state.
-        # Blocks local shell variables from masking configuration gaps.
-        # Auto-detect and prepend local .venv if it exists (robustness for pre-commit)
         current_path = os.environ.get("PATH", "")
         scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
         project_root = Path(__file__).parent.parent
@@ -487,9 +480,6 @@ def run_command(
             "COLLAB_TEST_MODE": "1",
         }
 
-        # Propagate test-isolation state dir so module-level code in
-        # lock_client / live_locks_watcher resolves a sandboxed PID path
-        # *before* conftest.py even runs.
         _state_dir = os.environ.get("COLLAB_STATE_DIR")
         if _state_dir:
             ironclad_env["COLLAB_STATE_DIR"] = _state_dir
@@ -498,7 +488,6 @@ def run_command(
         if coverage_file:
             ironclad_env["COVERAGE_FILE"] = coverage_file
 
-        # Whitelist other system-essential variables, including Windows path roots
         for key in [
             "APPDATA",
             "LOCALAPPDATA",
@@ -516,7 +505,6 @@ def run_command(
             if key in os.environ:
                 ironclad_env[key] = os.environ[key]
 
-        # Allow caller-provided overrides for command-specific execution context.
         if env:
             ironclad_env.update(env)
 

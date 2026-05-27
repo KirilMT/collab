@@ -117,6 +117,26 @@ collab/
 collab --help
 ```
 
+```bash
+# Linux/macOS — development setup (hooks, prettier, extension tooling)
+./scripts/setup-dev.sh
+```
+
+### AI agent terminals and the virtual environment
+
+Automated and IDE-agent shells often run **without** `VIRTUAL_ENV` set, even after setup. Do not assume `python` / `pip` on `PATH` point at this repo’s `.venv`.
+
+Prefer the project interpreter explicitly:
+
+- Windows PowerShell: `.\.venv\Scripts\python.exe` and `.\.venv\Scripts\pip.exe`
+- Linux/macOS: `./.venv/bin/python` and `./.venv/bin/pip`
+
+Or activate first: `.\.venv\Scripts\Activate.ps1` (Windows) / `source .venv/bin/activate` (Unix), then run `python` / `pip`.
+
+`scripts/format_code.py` and `scripts/validate_code.py` resolve `.venv` Python automatically and run dev tools as `python -m <tool>` so they work in agent shells without activation.
+
+In **Cursor** or **VS Code**, use **Python: Select Interpreter** and point at this repo’s `.venv` so integrated terminals and tasks use the same environment as `.\.venv\Scripts\python.exe`.
+
 ---
 
 ## Key Scripts

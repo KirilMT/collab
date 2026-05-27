@@ -53,7 +53,7 @@ One command handles everything — dependencies, `.env` configuration, and IDE i
 **Linux/macOS (Bash):**
 
 ```bash
-./scripts/setup.sh
+./scripts/setup-dev.sh
 ```
 
 **End-User Install (via pip):**
@@ -206,7 +206,7 @@ The extension is primarily distributed via the **Collab Runtime** Python package
 3. Reload VS Code
 
 **CLI Install:**
-If you have the `collab` CLI installed, the extension is often provisioned automatically by `scripts/setup-dev.ps1`.
+Production `scripts/setup.ps1` / `scripts/setup.sh` download the latest release `.vsix` and install it when a supported editor CLI is on `PATH`. **Development setup** (`scripts/setup-dev.ps1` / `scripts/setup-dev.sh`) repeats this with stronger IDE detection and resolves `code` / `cursor` (and siblings) from common install locations on Windows and macOS when they are not on `PATH`, which fixes installs from integrated terminals (for example **Cursor**).
 
 ### Features
 

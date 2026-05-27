@@ -1,5 +1,10 @@
 # setup-dev.ps1 - Development Environment Setup
 # Calls setup.ps1 for production setup, then adds dev-specific tools
+# Usage: .\scripts\setup-dev.ps1 [-Force]
+
+param(
+    [switch]$Force = $false
+)
 
 # Ensure we are in the project root
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -8,9 +13,42 @@ Set-Location $projectRoot
 
 $script:IsWin = ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -match "Windows")
 
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "   Collab Development Setup" -ForegroundColor Cyan
-Write-Host "========================================`n" -ForegroundColor Cyan
+$setupPs1Path = Join-Path $scriptPath 'setup.ps1'
+$setupHelperNames = @(
+    'Enable-SetupWindowsVirtualTerminal',
+    'Set-SetupConsoleUtf8Encoding',
+    'Initialize-SetupConsole',
+    'Get-SetupStatusToken',
+    'Write-SetupEmit',
+    'Write-SetupStepHeader',
+    'Write-SetupDevStepHeader',
+    'Write-SetupBannerLine',
+    'Write-SetupRedirectHint'
+)
+$parseErrors = $null
+$setupAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $setupPs1Path,
+    [ref]$null,
+    [ref]$parseErrors
+)
+if ($parseErrors) {
+    Write-Error "Failed to parse setup.ps1 for console helpers: $($parseErrors -join '; ')"
+    exit 1
+}
+foreach ($statement in $setupAst.EndBlock.Statements) {
+    if ($statement -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+        if ($setupHelperNames -contains $statement.Name) {
+            . ([scriptblock]::Create($statement.Extent.Text))
+        }
+    }
+}
+$script:SetupStepTotal = 10
+Initialize-SetupConsole
+Write-SetupRedirectHint
+
+Write-SetupBannerLine "`n========================================" -Color Cyan
+Write-SetupBannerLine "   Collab Development Setup" -Color Cyan
+Write-SetupBannerLine "========================================`n" -Color Cyan
 
 # Error counter for final summary
 $script:ErrorCount = 0
@@ -18,19 +56,19 @@ $script:ErrorCount = 0
 # ============================================================================
 # STEP 1: RUN PRODUCTION SETUP
 # ============================================================================
-Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "   PRODUCTION SETUP" -ForegroundColor Magenta
-Write-Host "========================================`n" -ForegroundColor Magenta
+Write-SetupBannerLine "========================================" -Color Magenta
+Write-SetupBannerLine "   PRODUCTION SETUP" -Color Magenta
+Write-SetupBannerLine "========================================`n" -Color Magenta
 
-$setupScript = Join-Path $scriptPath "setup.ps1"
+$setupScript = $setupPs1Path
 if (-not (Test-Path $setupScript)) {
     Write-Error "setup.ps1 not found at: $setupScript"
     exit 1
 }
 
-Write-Host "Running production setup (setup.ps1)...`n" -ForegroundColor Yellow
+Write-SetupEmit "Running production setup (setup.ps1)...`n" -Color Yellow
 
-& $setupScript -CalledFromDev
+& $setupScript -CalledFromDev -Force:$Force
 $productionExitCode = $LASTEXITCODE
 
 if ($productionExitCode -ne 0) {
@@ -38,17 +76,17 @@ if ($productionExitCode -ne 0) {
     exit $productionExitCode
 }
 
-Write-Host "`n" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Green
-Write-Host "   Production Setup Complete" -ForegroundColor Green
-Write-Host "========================================`n" -ForegroundColor Green
+Write-SetupEmit "`n" -Color Green
+Write-SetupBannerLine "========================================" -Color Green
+Write-SetupBannerLine "   Production Setup Complete" -Color Green
+Write-SetupBannerLine "========================================`n" -Color Green
 
 # ============================================================================
 # STEP 2: DEVELOPMENT TOOLS SETUP
 # ============================================================================
-Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "   DEVELOPMENT TOOLS SETUP" -ForegroundColor Magenta
-Write-Host "========================================`n" -ForegroundColor Magenta
+Write-SetupBannerLine "========================================" -Color Magenta
+Write-SetupBannerLine "   DEVELOPMENT TOOLS SETUP" -Color Magenta
+Write-SetupBannerLine "========================================`n" -Color Magenta
 
 function Refresh-EnvPath {
     Write-Host "   Refreshing environment variables..." -ForegroundColor Gray
@@ -56,7 +94,7 @@ function Refresh-EnvPath {
 }
 
 # Step 1: Check for Node.js (only dev requirement)
-Write-Host "[Dev Step 1/6] Checking Node.js..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 1 -Message 'Checking Node.js...'
 
 function Check-Node {
     if (Get-Command npm -ErrorAction SilentlyContinue) {
@@ -64,7 +102,7 @@ function Check-Node {
         if ($v -match "(\d+)\.(\d+)") {
             Write-Host "   Found: " -NoNewline -ForegroundColor White
             Write-Host "npm $v" -NoNewline -ForegroundColor White
-            Write-Host " OK" -ForegroundColor Green
+            Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             return $true
         }
     }
@@ -92,11 +130,11 @@ function Check-Node {
                     $newPath = "$location;$currentPath"
                     [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
                     Write-Host "   Added to system PATH " -NoNewline -ForegroundColor White
-                    Write-Host "OK" -ForegroundColor Green
+                    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 }
                 else {
                     Write-Host "   Already in system PATH " -NoNewline -ForegroundColor White
-                    Write-Host "OK" -ForegroundColor Green
+                    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 }
             }
             catch {
@@ -176,7 +214,7 @@ if (-not (Check-Node)) {
 }
 
 # Step 2: Check for GitHub CLI
-Write-Host "`n[Dev Step 2/6] Checking GitHub CLI..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 2 -Message 'Checking GitHub CLI...'
 
 function Check-GitHubCLI {
     if (Get-Command gh -ErrorAction SilentlyContinue) {
@@ -184,7 +222,7 @@ function Check-GitHubCLI {
         if ($v -match "gh version (\S+)") {
             Write-Host "   Found: " -NoNewline -ForegroundColor White
             Write-Host "gh $($Matches[1])" -NoNewline -ForegroundColor White
-            Write-Host " OK" -ForegroundColor Green
+            Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             return $true
         }
     }
@@ -201,11 +239,11 @@ function Check-GitHubCLI {
                 $newPath = "$ghDir;$currentPath"
                 [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
                 Write-Host "   Added to system PATH " -NoNewline -ForegroundColor White
-                Write-Host "OK" -ForegroundColor Green
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             }
             else {
                 Write-Host "   Already in system PATH " -NoNewline -ForegroundColor White
-                Write-Host "OK" -ForegroundColor Green
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             }
         }
         catch {
@@ -262,7 +300,7 @@ if (-not (Check-GitHubCLI)) {
 }
 
 # Step 3: Python Development Tools
-Write-Host "`n[Dev Step 3/6] Installing Python development tools..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 3 -Message 'Installing Python development tools...'
 
 $venvBin = if ($script:IsWin -or (Test-Path (Join-Path $projectRoot ".venv\Scripts"))) { "Scripts" } else { "bin" }
 $pythonExe = if ($script:IsWin) { "python.exe" } else { "python" }
@@ -284,7 +322,7 @@ if (Test-Path "requirements-dev.txt") {
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "   Python dev dependencies are present and up-to-date " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host ""
@@ -299,7 +337,7 @@ else {
 }
 
 # Step 4: JavaScript Development Tools
-Write-Host "`n[Dev Step 4/6] Setting up JavaScript development tools..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 4 -Message 'Setting up JavaScript development tools...'
 
 if (-not (Test-Path "package.json")) {
     Write-Host "   Initializing " -NoNewline -ForegroundColor White
@@ -307,7 +345,7 @@ if (-not (Test-Path "package.json")) {
     Write-Host "..." -NoNewline -ForegroundColor White
     npm init -y 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host " OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host " FAILED" -ForegroundColor Red
@@ -316,7 +354,7 @@ if (-not (Test-Path "package.json")) {
 }
 else {
     Write-Host "   package.json already exists " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
 Write-Host "   Installing " -NoNewline -ForegroundColor White
@@ -331,7 +369,7 @@ $env:npm_config_loglevel = $null
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "   Node formatter packages installed " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 else {
     Write-Host "   Node package installation " -NoNewline -ForegroundColor White
@@ -340,7 +378,7 @@ else {
 }
 
 # Step 5: Git Template + Pre-commit Hooks
-Write-Host "`n[Dev Step 5/6] Setting up Conventional Commit template and hooks..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 5 -Message 'Setting up Conventional Commit template and hooks...'
 
 $templateFile = Join-Path $projectRoot ".gitmessage"
 if (Test-Path $templateFile) {
@@ -367,7 +405,7 @@ if ($hasPreCommit) {
     Write-Host "   Using: " -NoNewline -ForegroundColor White
     $preCommitVersion = & $preCommitExe --version 2>&1
     Write-Host "$preCommitVersion " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 
     Write-Host "   Installing repository hooks (framework mode)..." -ForegroundColor Yellow
     $hookTypes = @("pre-commit", "pre-push", "commit-msg")
@@ -378,7 +416,7 @@ if ($hasPreCommit) {
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "   Framework hooks installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   Pre-commit hook install " -NoNewline -ForegroundColor White
@@ -393,7 +431,7 @@ else {
 }
 
 # Step 6: Supabase Setup (required for shared locking)
-Write-Host "`n[Dev Step 6/6] Configure Supabase locking settings..." -ForegroundColor Yellow
+Write-SetupDevStepHeader -Step 6 -Message 'Configure Supabase locking settings...'
 
 $envFile = Join-Path $projectRoot ".env"
 if (-not (Test-Path $envFile)) {
@@ -420,7 +458,7 @@ if (Test-Path $envFile) {
 
     if ($hasUrl -and $hasAnon) {
         Write-Host "   Supabase key entries present in .env " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   Missing required Supabase entries in .env " -NoNewline -ForegroundColor White
@@ -430,88 +468,454 @@ if (Test-Path $envFile) {
 }
 
 # IDE Auto-Detection & Configuration
+# VS Code / Cursor env + process tree, GitHub API User-Agent,
+# single extension install target (never Microsoft ``code`` into Cursor when Cursor host is
+# detected but only the wrong CLI is on PATH).
+
+function Test-SetupDevAncestorProcessMatch {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$NameWildcards
+    )
+    try {
+        $current = Get-CimInstance -ClassName Win32_Process `
+            -Filter "ProcessId=$PID" `
+            -ErrorAction Stop
+        $guard = 0
+        while ($null -ne $current -and $guard -lt 20) {
+            $procName = $current.Name
+            foreach ($pattern in $NameWildcards) {
+                if ($procName -like $pattern) {
+                    return $true
+                }
+            }
+            $parentPid = [int]$current.ParentProcessId
+            if ($parentPid -le 0) {
+                break
+            }
+            $current = Get-CimInstance -ClassName Win32_Process `
+                -Filter "ProcessId=$parentPid" `
+                -ErrorAction SilentlyContinue
+            $guard++
+        }
+    }
+    catch {
+        return $false
+    }
+    return $false
+}
+
+function Test-SetupDevCursorHost {
+    if ($null -ne $env:CURSOR_TRACE_ID -and $env:CURSOR_TRACE_ID -ne '') {
+        return $true
+    }
+    if ($null -ne $env:CURSOR_AGENT -and $env:CURSOR_AGENT -ne '') {
+        return $true
+    }
+    return (Test-SetupDevAncestorProcessMatch -NameWildcards @('Cursor*'))
+}
+
+function Test-SetupDevCliPathIsUnderCursorInstall {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CliPath
+    )
+    if ([string]::IsNullOrWhiteSpace($CliPath)) {
+        return $false
+    }
+    return $CliPath -match '(?i)[\\/]Programs[\\/]cursor[\\/]'
+}
+
+function Get-SetupDevCursorInstallRootFromProcess {
+    try {
+        $current = Get-CimInstance -ClassName Win32_Process `
+            -Filter "ProcessId=$PID" `
+            -ErrorAction Stop
+        $guard = 0
+        while ($null -ne $current -and $guard -lt 25) {
+            if ($current.Name -like 'Cursor*') {
+                $exePath = $current.ExecutablePath
+                if (-not [string]::IsNullOrWhiteSpace($exePath)) {
+                    return (Split-Path -Parent $exePath)
+                }
+            }
+            $parentPid = [int]$current.ParentProcessId
+            if ($parentPid -le 0) {
+                break
+            }
+            $current = Get-CimInstance -ClassName Win32_Process `
+                -Filter "ProcessId=$parentPid" `
+                -ErrorAction SilentlyContinue
+            $guard++
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+function Resolve-SetupDevCursorCliPath {
+    $fromPath = Get-Command cursor -ErrorAction SilentlyContinue
+    if ($fromPath) {
+        return $fromPath.Source
+    }
+    $relCandidates = @(
+        'resources\app\bin\cursor.cmd',
+        'resources\app\bin\cursor.exe',
+        'bin\cursor.cmd'
+    )
+    foreach ($rootName in @('cursor', 'Cursor')) {
+        $root = Join-Path $env:LOCALAPPDATA "Programs\$rootName"
+        foreach ($rel in $relCandidates) {
+            $p = Join-Path $root $rel
+            if (Test-Path -LiteralPath $p) {
+                return $p
+            }
+        }
+    }
+    $procRoot = Get-SetupDevCursorInstallRootFromProcess
+    if ($null -ne $procRoot) {
+        foreach ($rel in $relCandidates) {
+            $p = Join-Path $procRoot $rel
+            if (Test-Path -LiteralPath $p) {
+                return $p
+            }
+        }
+    }
+    return $null
+}
+
+function Resolve-SetupDevCursorBundleCodeShimPath {
+    foreach ($rootName in @('cursor', 'Cursor')) {
+        $shim = Join-Path $env:LOCALAPPDATA "Programs\$rootName\resources\app\bin\code.cmd"
+        if (Test-Path -LiteralPath $shim) {
+            return $shim
+        }
+    }
+    $fromPath = Get-Command code -ErrorAction SilentlyContinue
+    if ($fromPath -and (Test-SetupDevCliPathIsUnderCursorInstall -CliPath $fromPath.Source)) {
+        return $fromPath.Source
+    }
+    return $null
+}
+
+function Resolve-SetupDevMicrosoftVsCodeCliPath {
+    $official = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\bin\code.cmd'
+    if (Test-Path -LiteralPath $official) {
+        return $official
+    }
+    return $null
+}
+
+function Resolve-SetupDevVsCodeInstallCliPath {
+    $fromPath = Get-Command code -ErrorAction SilentlyContinue
+    if ($fromPath) {
+        if (-not (Test-SetupDevCliPathIsUnderCursorInstall -CliPath $fromPath.Source)) {
+            return $fromPath.Source
+        }
+    }
+    return (Resolve-SetupDevMicrosoftVsCodeCliPath)
+}
+
+function Get-SetupDevEditorInstallCli {
+    $inCursor = Test-SetupDevCursorHost
+    $cursorCli = Resolve-SetupDevCursorCliPath
+    $cursorCodeShim = Resolve-SetupDevCursorBundleCodeShimPath
+    $vsCodeCli = Resolve-SetupDevVsCodeInstallCliPath
+
+    if ($inCursor) {
+        if ($null -ne $cursorCli) {
+            return [PSCustomObject][ordered]@{
+                Exe          = $cursorCli
+                DisplayLabel = 'Cursor'
+                SkipInstall  = $false
+                SkipReason   = $null
+            }
+        }
+        if ($null -ne $cursorCodeShim) {
+            return [PSCustomObject][ordered]@{
+                Exe          = $cursorCodeShim
+                DisplayLabel = 'Cursor (code shim)'
+                SkipInstall  = $false
+                SkipReason   = $null
+            }
+        }
+        if ($null -ne $vsCodeCli) {
+            return [PSCustomObject][ordered]@{
+                Exe          = $null
+                DisplayLabel = $null
+                SkipInstall  = $true
+                SkipReason   = 'Cursor host detected but Cursor install path could not be found; refusing Microsoft VS Code code.cmd so the extension is not installed into the wrong app.'
+            }
+        }
+        return [PSCustomObject][ordered]@{
+            Exe          = $null
+            DisplayLabel = $null
+            SkipInstall  = $true
+            SkipReason   = 'Could not locate Cursor or VS Code CLI for extension install.'
+        }
+    }
+
+    if ($null -ne $vsCodeCli) {
+        return [PSCustomObject][ordered]@{
+            Exe          = $vsCodeCli
+            DisplayLabel = 'VS Code'
+            SkipInstall  = $false
+            SkipReason   = $null
+        }
+    }
+    if ($null -ne $cursorCli) {
+        return [PSCustomObject][ordered]@{
+            Exe          = $cursorCli
+            DisplayLabel = 'Cursor'
+            SkipInstall  = $false
+            SkipReason   = $null
+        }
+    }
+    $anyCode = Get-Command code -ErrorAction SilentlyContinue
+    if ($anyCode) {
+        return [PSCustomObject][ordered]@{
+            Exe          = $anyCode.Source
+            DisplayLabel = 'code (PATH)'
+            SkipInstall  = $false
+            SkipReason   = $null
+        }
+    }
+    return [PSCustomObject][ordered]@{
+        Exe          = $null
+        DisplayLabel = $null
+        SkipInstall  = $true
+        SkipReason   = 'Neither Cursor nor VS Code CLI could be resolved; skipping collab extension auto-install.'
+    }
+}
+
+function Get-SetupDevProcessAncestorExeLeafs {
+    if (-not $script:IsWin) {
+        return @()
+    }
+
+    $leaves = [System.Collections.Generic.List[string]]::new()
+    $currentPid = $PID
+    $guard = 0
+    while ($guard++ -lt 30) {
+        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
+        if (-not $cim) {
+            break
+        }
+
+        $leaf = [System.IO.Path]::GetFileNameWithoutExtension([string]$cim.Name)
+        if ([string]::IsNullOrWhiteSpace($leaf)) {
+            break
+        }
+
+        [void]$leaves.Add($leaf)
+        $ppid = [int]$cim.ParentProcessId
+        if ($ppid -le 0 -or $ppid -eq $currentPid) {
+            break
+        }
+
+        $currentPid = $ppid
+    }
+
+    return , $leaves.ToArray()
+}
+
+function Get-SetupDevDetectedIdeKind {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    foreach ($envKey in @(
+            'VSCODE_PID', 'VSCODE_CWD', 'VSCODE_IPC_HOOK', 'VSCODE_IPC_HOOK_CLI',
+            'VSCODE_CRASH_REPORTER_PROCESS_TYPE'
+        )) {
+        $val = [Environment]::GetEnvironmentVariable($envKey)
+        if (-not [string]::IsNullOrWhiteSpace($val)) {
+            return 'vscode_family'
+        }
+    }
+
+    if (Test-SetupDevAncestorProcessMatch -NameWildcards @('Cursor*', 'Code.exe', 'code.exe')) {
+        return 'vscode_family'
+    }
+
+    $ancestorLeaves = Get-SetupDevProcessAncestorExeLeafs
+
+    $vscodeProcs = @('Cursor', 'Code', 'Code - Insiders', 'Antigravity', 'VSCodium', 'codium')
+    foreach ($v in $vscodeProcs) {
+        if ($ancestorLeaves -contains $v) {
+            return 'vscode_family'
+        }
+    }
+
+    $jetbrainsProcs = @(
+        'idea64', 'PyCharm64', 'pycharm64', 'Rider64', 'rider64', 'WebStorm64', 'PhpStorm64',
+        'CLion64', 'GoLand64', 'RubyMine64', 'devenv'
+    )
+
+    foreach ($j in $jetbrainsProcs) {
+        if ($ancestorLeaves -contains $j) {
+            return 'jetbrains'
+        }
+    }
+
+    if ($env:TERMINAL_EMULATOR -like '*JetBrains*') {
+        return 'jetbrains'
+    }
+
+    if ($env:TERM_PROGRAM -in @('vscode', 'Antigravity', 'cursor', 'Cursor')) {
+        return 'vscode_family'
+    }
+
+    if ($env:CURSOR_TRACE_ID -or $env:CURSOR_AGENT) {
+        return 'vscode_family'
+    }
+
+    if ((Test-Path (Join-Path $ProjectRoot '.vscode')) -or (Test-Path (Join-Path $ProjectRoot '.cursor'))) {
+        return 'vscode_family'
+    }
+
+    if (Test-Path (Join-Path $ProjectRoot '.idea')) {
+        return 'jetbrains'
+    }
+
+    return 'unknown'
+}
+
+function Invoke-SetupDevCollabLocksVsixInstall {
+    [CmdletBinding()]
+    param()
+
+    $ghHeaders = @{ 'User-Agent' = 'collab-setup-dev' }
+    $editorCli = Get-SetupDevEditorInstallCli
+    if ($editorCli.SkipInstall) {
+        Write-Host "     - $($editorCli.SkipReason)" -ForegroundColor Yellow
+        Write-Host '     - Manual: download .vsix from https://github.com/KirilMT/collab/releases/latest' -ForegroundColor Gray
+        Write-Host '       then: cursor --install-extension <path-to.vsix>   (Cursor)' -ForegroundColor Gray
+        Write-Host '       or:  code --install-extension <path-to.vsix>     (VS Code)' -ForegroundColor Gray
+        return
+    }
+
+    Write-Host "     - Collab extension installer: $($editorCli.DisplayLabel)" -ForegroundColor Gray
+    Write-Host "       $($editorCli.Exe)" -ForegroundColor DarkGray
+    Write-Host '     - Fetching latest Collab Locks .vsix from GitHub Releases...' -ForegroundColor Gray
+
+    $tempVsix = Join-Path ([System.IO.Path]::GetTempPath()) 'collab-locks-latest.vsix'
+    try {
+        $releaseUrl = 'https://api.github.com/repos/KirilMT/collab/releases/latest'
+        $releaseInfo = Invoke-RestMethod -Uri $releaseUrl -Headers $ghHeaders -ErrorAction Stop
+        $vsixAsset = $releaseInfo.assets | Where-Object { $_.name -match '\.vsix$' } | Select-Object -First 1
+        if (-not $vsixAsset) {
+            Write-Host '     - No .vsix asset on latest GitHub release (non-fatal)' -ForegroundColor Yellow
+            return
+        }
+
+        Invoke-WebRequest -Uri $vsixAsset.browser_download_url -OutFile $tempVsix -Headers $ghHeaders -ErrorAction Stop
+        $installExe = $editorCli.Exe
+        $installOutput = & $installExe --install-extension $tempVsix --force 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "     - $installExe --install-extension failed (non-fatal):" -ForegroundColor Yellow
+            Write-Host "       $installOutput" -ForegroundColor Gray
+        }
+        else {
+            Write-Host '     - Installed extension ' -NoNewline -ForegroundColor White
+            Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+            Write-Host "       ($($vsixAsset.name) -> $($editorCli.DisplayLabel))" -ForegroundColor Gray
+        }
+    }
+    catch {
+        Write-Host "     - VSIX download/install failed (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    finally {
+        Remove-Item -LiteralPath $tempVsix -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "`n   Detecting IDE environment..." -ForegroundColor Yellow
 
-$detectedIDE = "unknown"
-if ($env:TERM_PROGRAM -eq "vscode" -or $env:TERM_PROGRAM -eq "Antigravity" -or $env:TERM_PROGRAM -eq "cursor") {
-    $detectedIDE = "vscode"
-}
-elseif ($env:TERMINAL_EMULATOR -like "*JetBrains*") {
-    $detectedIDE = "jetbrains"
-}
-elseif (Test-Path (Join-Path $projectRoot ".vscode")) {
-    $detectedIDE = "vscode"
-}
-elseif (Test-Path (Join-Path $projectRoot ".idea")) {
-    $detectedIDE = "jetbrains"
-}
+$detectedIDE = Get-SetupDevDetectedIdeKind -ProjectRoot $projectRoot
+Write-Host "     - IDE kind: $detectedIDE" -ForegroundColor Gray
 
 switch ($detectedIDE) {
-    "vscode" {
-        Write-Host "     - VS Code detected" -ForegroundColor Gray
-        $vscodeExtDir = Join-Path $projectRoot "vscode-extension\collab-locks"
-        $packageJson = Join-Path $vscodeExtDir "package.json"
+    'vscode_family' {
+        $ancestorLeaves = Get-SetupDevProcessAncestorExeLeafs
+        if (($ancestorLeaves -contains 'Cursor') -or (Test-SetupDevCursorHost)) {
+            Write-Host '     - Cursor / VS Code-compatible IDE detected' -ForegroundColor Gray
+        }
+        else {
+            Write-Host '     - VS Code-compatible IDE detected' -ForegroundColor Gray
+        }
+
+        Invoke-SetupDevCollabLocksVsixInstall
+
+        $vscodeExtDir = Join-Path $projectRoot 'vscode-extension\collab-locks'
+        $packageJson = Join-Path $vscodeExtDir 'package.json'
         if (Test-Path $packageJson) {
             try {
                 Push-Location $vscodeExtDir
                 npm install --silent 2>$null
                 Pop-Location
-                Write-Host "     - VS Code extension dependencies installed " -NoNewline -ForegroundColor White
-                Write-Host "OK" -ForegroundColor Green
+                Write-Host '     - VS Code extension workspace deps (npm) ' -NoNewline -ForegroundColor White
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             }
             catch {
                 Pop-Location
-                Write-Host "     - VS Code extension npm install failed (non-fatal)" -ForegroundColor Yellow
+                Write-Host '     - VS Code extension npm install failed (non-fatal)' -ForegroundColor Yellow
             }
         }
     }
-    "jetbrains" {
-        Write-Host "     - PyCharm/IntelliJ detected" -ForegroundColor Gray
-        $ideaRunConfigDir = Join-Path $projectRoot ".idea\runConfigurations"
-        $xmlSrc = Join-Path $projectRoot "pycharm\Collab_Lock_Watcher.xml"
+    'jetbrains' {
+        Write-Host '     - JetBrains IDE detected' -ForegroundColor Gray
+        $ideaRunConfigDir = Join-Path $projectRoot '.idea\runConfigurations'
+        $xmlSrc = Join-Path $projectRoot 'pycharm\Collab_Lock_Watcher.xml'
         if (Test-Path $xmlSrc) {
             try {
                 New-Item -ItemType Directory -Force -Path $ideaRunConfigDir -ErrorAction SilentlyContinue | Out-Null
-                Copy-Item -Path $xmlSrc -Destination (Join-Path $ideaRunConfigDir "Collab_Lock_Watcher.xml") -Force
-                Write-Host "     - PyCharm run configuration installed " -NoNewline -ForegroundColor White
-                Write-Host "OK" -ForegroundColor Green
-                Write-Host "     - Open Run > Collab Lock Watcher to start the watcher in PyCharm." -ForegroundColor Gray
+                Copy-Item -Path $xmlSrc -Destination (Join-Path $ideaRunConfigDir 'Collab_Lock_Watcher.xml') -Force
+                Write-Host '     - PyCharm run configuration installed ' -NoNewline -ForegroundColor White
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+                Write-Host '     - Open Run > Collab Lock Watcher to start the watcher in PyCharm.' -ForegroundColor Gray
             }
             catch {
-                Write-Host "     - PyCharm run config install failed (non-fatal)" -ForegroundColor Yellow
+                Write-Host '     - PyCharm run config install failed (non-fatal)' -ForegroundColor Yellow
             }
         }
     }
     default {
-        Write-Host "     - No IDE detected" -ForegroundColor Gray
+        Write-Host '     - No specific IDE detected from env / process / workspace hints' -ForegroundColor Gray
+        Write-Host '     - Attempting Collab Locks VSIX install with resolved editor CLI...' -ForegroundColor Gray
+        Invoke-SetupDevCollabLocksVsixInstall
     }
 }
 
 # Final Summary
-Write-Host "`n========================================" -ForegroundColor Cyan
+Write-SetupBannerLine "`n========================================" -Color Cyan
 if ($script:ErrorCount -eq 0) {
-    Write-Host "   Development Setup Complete!" -ForegroundColor Green
-    Write-Host "   (Production + Dev Tools + Daemon Active)" -ForegroundColor Gray
+    Write-SetupBannerLine "   Development Setup Complete!" -Color Green
+    Write-SetupEmit "   (Production + Dev Tools + Daemon Active)" -Color Gray
 }
 else {
-    Write-Host "   Setup completed with $($script:ErrorCount) warning(s)" -ForegroundColor Yellow
+    Write-SetupEmit "   Setup completed with $($script:ErrorCount) warning(s)" -Color Yellow
 }
-Write-Host "========================================`n" -ForegroundColor Cyan
+Write-SetupBannerLine "========================================`n" -Color Cyan
 
 Write-Host ""
-Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "                        NEXT STEPS                              " -ForegroundColor Yellow
-Write-Host "================================================================" -ForegroundColor Cyan
+Write-SetupBannerLine "================================================================" -Color Cyan
+Write-SetupEmit "                        NEXT STEPS                              " -Color Yellow
+Write-SetupBannerLine "================================================================" -Color Cyan
 Write-Host ""
 switch ($detectedIDE) {
-    "vscode" {
-        Write-Host "  1. Collab extension installed (Core Step 6)." -ForegroundColor White
+    'vscode_family' {
+        Write-Host "  1. Collab Locks VSIX and workspace extension deps were applied when possible." -ForegroundColor White
         Write-Host "     Press " -NoNewline -ForegroundColor Gray
         Write-Host "F1 > 'Developer: Reload Window'" -NoNewline -ForegroundColor Magenta
         Write-Host " if locks don't appear." -ForegroundColor Gray
     }
     default {
-        Write-Host "  1. Collaborative daemon should be active (Core Step 9)." -ForegroundColor White
+        Write-Host "  1. Collaborative daemon should be active (Core Step 10)." -ForegroundColor White
         Write-Host "     Use " -NoNewline -ForegroundColor Gray
         Write-Host "'collab active'" -NoNewline -ForegroundColor Magenta
         Write-Host " to verify." -ForegroundColor Gray
@@ -520,10 +924,11 @@ switch ($detectedIDE) {
 Write-Host ""
 Write-Host "  2. Activate the virtual environment (if not already active):" -ForegroundColor White
 Write-Host "     .\.venv\Scripts\Activate.ps1" -ForegroundColor Magenta
+Write-Host "     Agent shells often skip activation; use .\.venv\Scripts\python.exe when PATH is wrong." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  3. Run quality checks:" -ForegroundColor White
 Write-Host "     python scripts\format_code.py" -ForegroundColor Magenta
 Write-Host "     python scripts\validate_code.py --quick" -ForegroundColor Magenta
 Write-Host ""
-Write-Host "================================================================" -ForegroundColor Cyan
+Write-SetupBannerLine "================================================================" -Color Cyan
 Write-Host ""

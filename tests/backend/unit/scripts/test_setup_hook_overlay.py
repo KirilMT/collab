@@ -68,22 +68,20 @@ def test_setup_sh_only_overlays_in_success_branch():
 def test_setup_dev_ps1_installs_vscode_extension_dependencies_from_root_path():
     text = _script_text("scripts/setup-dev.ps1")
 
-    assert (
-        '$vscodeExtDir = Join-Path $projectRoot "vscode-extension\\collab-locks"'
-        in text
-    )
+    needle = r"$vscodeExtDir = Join-Path $projectRoot 'vscode-extension\collab-locks'"
+    assert needle in text
     assert "npm install --silent 2>$null" in text
-    assert "VS Code extension dependencies installed " in text
+    assert "VS Code extension workspace deps (npm) " in text
 
 
 def test_setup_dev_ps1_pycharm_installs_run_config():
     text = _script_text("scripts/setup-dev.ps1")
 
-    assert '"jetbrains"' in text
+    assert "return 'jetbrains'" in text
     assert (
-        '$ideaRunConfigDir = Join-Path $projectRoot ".idea\\runConfigurations"' in text
+        r"$ideaRunConfigDir = Join-Path $projectRoot '.idea\runConfigurations'" in text
     )
-    assert '$xmlSrc = Join-Path $projectRoot "pycharm\\Collab_Lock_Watcher.xml"' in text
+    assert r"$xmlSrc = Join-Path $projectRoot 'pycharm\Collab_Lock_Watcher.xml'" in text
     assert "Copy-Item -Path $xmlSrc" in text
     assert "PyCharm run configuration installed " in text
 
@@ -93,3 +91,37 @@ def test_install_hooks_sh_includes_commit_msg():
 
     assert "commit-msg" in text
     assert "pre-commit post-commit pre-push commit-msg" in text
+
+
+def test_setup_ps1_skips_collab_reinstall_when_healthy():
+    text = _script_text("scripts/setup.ps1")
+
+    assert "function Test-SetupCollabInstallHealthy" in text
+    assert "already installed and healthy" in text
+    assert "(use -Force to reinstall)" in text
+    assert "[switch]$Force = $false" in text
+
+
+def test_setup_sh_skips_collab_reinstall_when_healthy():
+    text = _script_text("scripts/setup.sh")
+
+    assert "setup_collab_install_healthy" in text
+    assert "already installed and healthy" in text
+    assert "--force" in text
+    assert "SKIP_COLLAB_REINSTALL" in text
+
+
+def test_setup_dev_ps1_forwards_force_to_production_setup():
+    text = _script_text("scripts/setup-dev.ps1")
+
+    assert "[switch]$Force = $false" in text
+    assert "& $setupScript -CalledFromDev -Force:$Force" in text
+
+
+def test_setup_dev_sh_forwards_force_to_production_setup():
+    text = _script_text("scripts/setup-dev.sh")
+
+    assert "FORCE=false" in text
+    assert "SETUP_ARGS=(--called-from-dev)" in text
+    assert "SETUP_ARGS+=(--force)" in text
+    assert './scripts/setup.sh "${SETUP_ARGS[@]}"' in text
