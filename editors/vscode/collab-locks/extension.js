@@ -1136,14 +1136,15 @@ function activate(context) {
     vscode.window
       .showInformationMessage(
         "Collab Locks: Supabase credentials not found in .env. " +
-          "See vscode-extension/collab-locks/README.md.",
+          "See editors/vscode/collab-locks/README.md.",
         "Open Setup Guide",
       )
       .then((selection) => {
         if (selection === "Open Setup Guide") {
           const readmePath = path.join(
             workspaceRoot,
-            "vscode-extension",
+            "editors",
+            "vscode",
             "collab-locks",
             "README.md",
           );
@@ -1163,7 +1164,7 @@ function activate(context) {
   } catch (e) {
     statusBarItem.text = "$(warning) Locks: SDK Error";
     statusBarItem.tooltip =
-      "Failed to initialize Supabase client. Run npm install in vscode-extension/collab-locks/";
+      "Failed to initialize Supabase client. Run npm install in editors/vscode/collab-locks/";
     if (outputChannel)
       outputChannel.appendLine(`[collab] SDK init failed: ${e.message}`);
     return;

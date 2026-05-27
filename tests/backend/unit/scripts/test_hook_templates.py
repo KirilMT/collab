@@ -49,19 +49,18 @@ def hook_repo(tmp_path: Path) -> Path:
         capture_output=True,
     )
 
-    (repo / "hooks").mkdir(parents=True)
     (repo / ".venv" / "bin").mkdir(parents=True)
-    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "git-hooks").mkdir(parents=True)
     (repo / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
     (repo / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
 
     for hook_name in ("pre-commit", "post-commit", "pre-push", "commit-msg"):
-        source = ROOT / "hooks" / hook_name
-        target = repo / "hooks" / hook_name
+        source = ROOT / "scripts" / "git-hooks" / hook_name
+        target = repo / "scripts" / "git-hooks" / hook_name
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
-    install_source = ROOT / "install_hooks.sh"
-    install_target = repo / "install_hooks.sh"
+    install_source = ROOT / "scripts" / "install_hooks.sh"
+    install_target = repo / "scripts" / "install_hooks.sh"
     install_target.write_text(
         install_source.read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -170,12 +169,14 @@ def _normalized_output(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def test_install_hooks_copies_templates_into_git_hooks(hook_repo: Path, git_sh: str):
-    result = _run_sh(hook_repo / "install_hooks.sh", git_sh, hook_repo)
+    result = _run_sh(hook_repo / "scripts" / "install_hooks.sh", git_sh, hook_repo)
 
     assert result.returncode == 0
-    assert "Installed git hooks from hooks/" in result.stdout
+    assert "Installed git hooks from scripts/git-hooks/" in result.stdout
     for hook_name in ("pre-commit", "post-commit", "pre-push", "commit-msg"):
-        expected = (hook_repo / "hooks" / hook_name).read_text(encoding="utf-8")
+        expected = (hook_repo / "scripts" / "git-hooks" / hook_name).read_text(
+            encoding="utf-8"
+        )
         actual = (hook_repo / ".git" / "hooks" / hook_name).read_text(encoding="utf-8")
         assert actual == expected
 
@@ -189,7 +190,7 @@ def test_pre_commit_hook_prints_watcher_message_then_runs_framework(
     subprocess.run(["git", "add", "tracked.txt"], cwd=hook_repo, check=True)
 
     result = _run_sh(
-        hook_repo / "hooks" / "pre-commit",
+        hook_repo / "scripts" / "git-hooks" / "pre-commit",
         git_sh,
         hook_repo,
         env={"SKIP": "validate-code"},
@@ -210,7 +211,7 @@ def test_pre_commit_hook_blocks_on_conflict(hook_repo: Path, git_sh: str):
     subprocess.run(["git", "add", "conflicted.txt"], cwd=hook_repo, check=True)
 
     result = _run_sh(
-        hook_repo / "hooks" / "pre-commit",
+        hook_repo / "scripts" / "git-hooks" / "pre-commit",
         git_sh,
         hook_repo,
         env={"FAKE_ACQUIRE_MODE": "conflict"},
@@ -229,7 +230,7 @@ def test_post_commit_hook_prints_message_and_chains_framework(
     git_sh: str,
 ):
     result = _run_sh(
-        hook_repo / "hooks" / "post-commit",
+        hook_repo / "scripts" / "git-hooks" / "post-commit",
         git_sh,
         hook_repo,
     )
@@ -245,7 +246,7 @@ def test_post_commit_hook_prints_message_and_chains_framework(
 
 def test_pre_push_hook_keeps_locks_when_validation_fails(hook_repo: Path, git_sh: str):
     result = _run_sh(
-        hook_repo / "hooks" / "pre-push",
+        hook_repo / "scripts" / "git-hooks" / "pre-push",
         git_sh,
         hook_repo,
         env={"FAKE_PRE_PUSH_FAIL": "1"},
@@ -263,7 +264,7 @@ def test_pre_push_hook_keeps_locks_when_validation_fails(hook_repo: Path, git_sh
 
 def test_pre_push_hook_releases_locks_after_success(hook_repo: Path, git_sh: str):
     result = _run_sh(
-        hook_repo / "hooks" / "pre-push",
+        hook_repo / "scripts" / "git-hooks" / "pre-push",
         git_sh,
         hook_repo,
         env={"FAKE_RELEASE_COUNT": "4"},
@@ -305,7 +306,7 @@ def test_commit_msg_hook_passes_valid_conventional_commit(hook_repo: Path, git_s
     msg_file.write_text("feat(core): add new feature\n", encoding="utf-8")
 
     result = _run_sh_with_arg(
-        hook_repo / "hooks" / "commit-msg",
+        hook_repo / "scripts" / "git-hooks" / "commit-msg",
         git_sh,
         hook_repo,
         arg=str(msg_file),
@@ -319,7 +320,7 @@ def test_commit_msg_hook_blocks_invalid_message(hook_repo: Path, git_sh: str):
     msg_file.write_text("added some stuff\n", encoding="utf-8")
 
     result = _run_sh_with_arg(
-        hook_repo / "hooks" / "commit-msg",
+        hook_repo / "scripts" / "git-hooks" / "commit-msg",
         git_sh,
         hook_repo,
         arg=str(msg_file),
@@ -334,7 +335,7 @@ def test_commit_msg_hook_allows_merge_commit(hook_repo: Path, git_sh: str):
     msg_file.write_text("Merge branch 'main' into feature\n", encoding="utf-8")
 
     result = _run_sh_with_arg(
-        hook_repo / "hooks" / "commit-msg",
+        hook_repo / "scripts" / "git-hooks" / "commit-msg",
         git_sh,
         hook_repo,
         arg=str(msg_file),
@@ -348,7 +349,7 @@ def test_commit_msg_hook_allows_fixup_commit(hook_repo: Path, git_sh: str):
     msg_file.write_text("fixup! feat(core): add new feature\n", encoding="utf-8")
 
     result = _run_sh_with_arg(
-        hook_repo / "hooks" / "commit-msg",
+        hook_repo / "scripts" / "git-hooks" / "commit-msg",
         git_sh,
         hook_repo,
         arg=str(msg_file),

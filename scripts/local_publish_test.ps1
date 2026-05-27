@@ -220,13 +220,13 @@ if ($PSBoundParameters.ContainsKey('DryRun') -and $DryRun) {
 # ============================================================================
 Write-Host "`n[Step 6/6] Packaging VS Code Extension..." -ForegroundColor Yellow
 
-$vscodeExtDir = Join-Path (Resolve-Path ".") "vscode-extension\collab-locks"
+$vscodeExtDir = Join-Path (Resolve-Path ".") "editors\vscode\collab-locks"
 if (Test-Path $vscodeExtDir) {
     if (Get-Command npm -ErrorAction SilentlyContinue) {
         Push-Location $vscodeExtDir
         try {
             Write-Host "   Copying LICENSE to extension directory " -NoNewline
-            Copy-Item "..\..\LICENSE" "LICENSE" -ErrorAction SilentlyContinue
+            Copy-Item "..\..\..\LICENSE" "LICENSE" -ErrorAction SilentlyContinue
             Write-Host "OK" -ForegroundColor Green
 
             Write-Host "   Installing NPM dependencies " -NoNewline
@@ -284,7 +284,7 @@ if ($script:ErrorCount -eq 0) {
     Write-Host "     https://test.pypi.org/project/collab-runtime/" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  2. Test VS Code extension locally:" -ForegroundColor White
-    Write-Host "     code --install-extension vscode-extension\collab-locks\*.vsix" -ForegroundColor Magenta
+    Write-Host "     code --install-extension editors\vscode\collab-locks\*.vsix" -ForegroundColor Magenta
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""

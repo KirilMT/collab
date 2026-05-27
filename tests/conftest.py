@@ -48,11 +48,7 @@ def _is_test_watcher_cmdline(cmdline: str) -> bool:
     if "--pid-file" not in text:
         return False
     # Strictly match temp test namespaces; never touch production .collab/.daemon.pid.
-    return (
-        "pytest-of-" in text
-        or "collab_test_" in text
-        or "mockcmms_pytest_collab_" in text
-    )
+    return "pytest-of-" in text or "collab_test_" in text or "collab_pytest_" in text
 
 
 def _terminate_orphan_test_watchers() -> None:

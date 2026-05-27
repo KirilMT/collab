@@ -81,3 +81,20 @@ The VS Code extension is designed as a **thin client**. It does not contain any 
 2.  Spawns the `collab` CLI for all operations.
 3.  Monitors the CLI's output and logs for UI updates.
 4.  Provides a bridge between the IDE and the background daemon.
+
+Source lives under `editors/vscode/collab-locks/`. PyCharm run-configuration templates live under `editors/pycharm/`.
+
+---
+
+## Repository Layout (collab package)
+
+| Path                           | Purpose                                                    |
+| ------------------------------ | ---------------------------------------------------------- |
+| `src/`                         | Runtime implementation (`lock_client`, watcher, dashboard) |
+| `collab/`                      | PyPI import shim only                                      |
+| `scripts/git-hooks/`           | Tracked git hook templates                                 |
+| `scripts/install_hooks.sh`     | Copies templates into `.git/hooks`                         |
+| `supabase/schema.sql`          | Supabase schema for consumer projects                      |
+| `docs/pypi/README.md`          | PyPI package readme                                        |
+| `editors/vscode/collab-locks/` | VS Code / Cursor extension                                 |
+| `editors/pycharm/`             | IDE run-configuration template                             |

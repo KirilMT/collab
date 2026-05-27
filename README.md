@@ -17,14 +17,14 @@ Prevents merge conflicts by automatically locking files when a developer starts 
 
 ### 1. Create the Database Schema
 
-Open your Supabase project's **SQL Editor** and run the contents of `schema.sql`:
+Open your Supabase project's **SQL Editor** and run the contents of `supabase/schema.sql`:
 
 **Steps:**
 
 1. Open your Supabase project dashboard
 2. Navigate to **SQL Editor** (left sidebar)
 3. Click **New Query**
-4. Copy-paste the full contents of [schema.sql](schema.sql) from this repository
+4. Copy-paste the full contents of [supabase/schema.sql](supabase/schema.sql) from this repository
 5. Click **Run**
 
 This creates:
@@ -53,7 +53,7 @@ One command handles everything — dependencies, `.env` configuration, and IDE i
 **Linux/macOS (Bash):**
 
 ```bash
-./scripts/setup.sh
+./scripts/setup-dev.sh
 ```
 
 **End-User Install (via pip):**
@@ -202,11 +202,11 @@ The extension is primarily distributed via the **Collab Runtime** Python package
 **Manual Install (from source):**
 
 1. Press `F1` -> `Developer: Install Extension from Location...`
-2. Select `vscode-extension/collab-locks/`
+2. Select `editors/vscode/collab-locks/`
 3. Reload VS Code
 
 **CLI Install:**
-If you have the `collab` CLI installed, the extension is often provisioned automatically by `scripts/setup-dev.ps1`.
+Production `scripts/setup.ps1` / `scripts/setup.sh` download the latest release `.vsix` and install it when a supported editor CLI is on `PATH`. **Development setup** (`scripts/setup-dev.ps1` / `scripts/setup-dev.sh`) repeats this with stronger IDE detection and resolves `code` / `cursor` (and siblings) from common install locations on Windows and macOS when they are not on `PATH`, which fixes installs from integrated terminals (for example **Cursor**).
 
 ### Features
 
@@ -279,7 +279,7 @@ if (Test-Path $pidPath) {
 
 ## Database Schema
 
-The full schema is in `schema.sql` and includes:
+The full schema is in `supabase/schema.sql` and includes:
 
 - `file_locks` for active locks.
 - `file_locks_history` for audit/history.
@@ -321,12 +321,20 @@ collab/
 │       ├── jest/               # Frontend unit placeholder
 │       └── playwright/         # Frontend e2e placeholder
 ├── scripts/
-│   ├── setup-dev.ps1           # Windows setup
+│   ├── setup-dev.ps1           # Windows dev setup
 │   ├── setup.sh                # Linux/macOS setup
+│   ├── git-hooks/              # Collab git hook templates
+│   ├── install_hooks.sh        # Installs templates into .git/hooks
 │   ├── format_code.py          # Code formatter
 │   ├── validate_code.py        # CI validator
 │   └── cleanup.py              # Cache cleanup
-├── schema.sql                  # Supabase database schema
+├── supabase/
+│   └── schema.sql              # Supabase database schema
+├── editors/
+│   ├── vscode/collab-locks/    # VS Code / Cursor extension
+│   └── pycharm/                # PyCharm run configuration template
+├── docs/
+│   └── pypi/README.md          # PyPI package readme
 ├── pyproject.toml              # Package configuration
 └── README.md                   # This file
 ```

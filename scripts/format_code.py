@@ -16,6 +16,10 @@ ARCHITECTURE:
     format_code.py  = the ONLY tool that MODIFIES files (formatter).
     pre-commit hooks = CHECK-ONLY gate (--check mode, never modify files).
 
+Tool invocation (agent-safe, no venv activation required):
+    Python CLIs -> ``<repo>/.venv/.../python -m <module>``
+    Node CLIs    -> ``cmd /c npx|npm ...`` on Windows
+
 Usage:
     python scripts/format_code.py              # Format everything
     python scripts/format_code.py --backend    # Python only
@@ -44,6 +48,96 @@ CYAN = "\033[96m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 MAGENTA = "\033[95m"
+
+# Bare executable on PATH -> ``python -m`` import target (same set as validate_code.py).
+_PYTHON_TOOL_MODULES: dict[str, str] = {
+    "isort": "isort",
+    "black": "black",
+    "docformatter": "docformatter",
+    "ruff": "ruff",
+    "flake8": "flake8",
+    "mypy": "mypy",
+    "bandit": "bandit",
+    "pytest": "pytest",
+    "coverage": "coverage",
+    "yamllint": "yamllint",
+    "djlint": "djlint",
+    "diff-cover": "diff_cover.diff_cover_tool",
+}
+
+_WINDOWS_NODE_CLI_NAMES: frozenset[str] = frozenset({"npm", "npx", "node"})
+
+
+def _get_venv_python_executable(root_dir: Path) -> str:
+    scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
+    python_name = "python.exe" if sys.platform == "win32" else "python"
+    venv_python = root_dir / ".venv" / scripts_dir / python_name
+    if venv_python.exists():
+        return str(venv_python)
+    return sys.executable
+
+
+def _venv_scripts_on_path(path_value: str, root_dir: Path) -> str:
+    scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
+    venv_scripts = root_dir / ".venv" / scripts_dir
+    if venv_scripts.exists():
+        return f"{venv_scripts}{os.pathsep}{path_value}"
+    return path_value
+
+
+def _is_python_module_command(command: list[str]) -> bool:
+    return len(command) >= 3 and command[1] == "-m"
+
+
+def _resolve_python_module_command(
+    command: list[str], python_executable: str
+) -> list[str]:
+    if not command or _is_python_module_command(command):
+        return command
+
+    executable = command[0]
+    if os.path.isabs(executable) or "/" in executable or "\\" in executable:
+        return command
+
+    module = _PYTHON_TOOL_MODULES.get(executable.lower())
+    if not module:
+        return command
+
+    return [python_executable, "-m", module] + command[1:]
+
+
+def _wrap_windows_node_command(command: list[str]) -> list[str]:
+    if sys.platform != "win32" or not command:
+        return command
+
+    if (
+        command[0] == "cmd"
+        and len(command) > 2
+        and command[1] == "/c"
+        and command[2] in _WINDOWS_NODE_CLI_NAMES
+    ):
+        return command
+
+    if command[0] in _WINDOWS_NODE_CLI_NAMES:
+        return ["cmd", "/c"] + command
+
+    return command
+
+
+def _resolve_dev_tool_command(command: list[str], root_dir: Path) -> list[str]:
+    if not command:
+        return command
+
+    python_exe = _get_venv_python_executable(root_dir)
+    resolved = _resolve_python_module_command(list(command), python_exe)
+    return _wrap_windows_node_command(resolved)
+
+
+def _build_subprocess_env(root_dir: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = _venv_scripts_on_path(env.get("PATH", ""), root_dir)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 class CodeFormatter:
@@ -94,29 +188,19 @@ class CodeFormatter:
         return [f for f in self.files if f.lower().endswith(extensions)]
 
     def _prepare_env(self) -> dict:
-        env = os.environ.copy()
-        scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
-        venv_scripts = self.root_dir / ".venv" / scripts_dir
-        if venv_scripts.exists():
-            env["PATH"] = f"{venv_scripts}{os.pathsep}{env.get('PATH', '')}"
-        env["PYTHONIOENCODING"] = "utf-8"
-        return env
+        return _build_subprocess_env(self.root_dir)
 
     def _get_python_executable(self) -> str:
-        """Prefer repository .venv Python for module-based tool execution."""
-        scripts_dir = "Scripts" if sys.platform == "win32" else "bin"
-        python_name = "python.exe" if sys.platform == "win32" else "python"
-        venv_python = self.root_dir / ".venv" / scripts_dir / python_name
-        if venv_python.exists():
-            return str(venv_python)
-        return sys.executable
+        return _get_venv_python_executable(self.root_dir)
+
+    def _resolve_cmd(self, cmd: list[str]) -> list[str]:
+        return _resolve_dev_tool_command(cmd, self.root_dir)
 
     def _exec(
         self, cmd: list[str], suppress_output: bool = False
     ) -> tuple[bool, Optional[subprocess.CompletedProcess]]:
         try:
-            if sys.platform == "win32" and cmd[0] in ("npm", "npx"):
-                cmd = ["cmd", "/c"] + cmd
+            cmd = self._resolve_cmd(cmd)
             result = subprocess.run(
                 cmd,
                 cwd=self.root_dir,
@@ -165,6 +249,7 @@ class CodeFormatter:
         if self.check_only:
             cmd = check_cmd or fix_cmd
             assert cmd is not None, "At least one of fix_cmd or check_cmd required"
+            cmd = self._resolve_cmd(cmd)
             print(f"   {MAGENTA}Command: {' '.join(cmd)}{RESET}")
             success, _ = self._exec(cmd)
             if success:
@@ -176,6 +261,7 @@ class CodeFormatter:
 
         primary_cmd = fix_cmd if fix_cmd is not None else check_cmd
         assert primary_cmd is not None, "At least one of fix_cmd or check_cmd required"
+        primary_cmd = self._resolve_cmd(primary_cmd)
         print(f"   {MAGENTA}Command: {' '.join(primary_cmd)}{RESET}")
         success, _ = self._exec(primary_cmd)
 
@@ -186,7 +272,8 @@ class CodeFormatter:
         print(f"   {RED}❌ {description} - ISSUES FOUND{RESET}")
 
         if check_cmd:
-            print(f"\n   {MAGENTA}Command: {' '.join(check_cmd)}{RESET}")
+            resolved_check = self._resolve_cmd(check_cmd)
+            print(f"\n   {MAGENTA}Command: {' '.join(resolved_check)}{RESET}")
             check_ok, _ = self._exec(check_cmd, suppress_output=True)
             if check_ok:
                 print(
@@ -341,21 +428,23 @@ class CodeFormatter:
         return all_passed
 
     def _check_prettier(self) -> bool:
-        npm_cmd = ["cmd", "/c", "npm"] if sys.platform == "win32" else ["npm"]
+        npm_cmd = self._resolve_cmd(["npm", "list", "prettier"])
         result = subprocess.run(
-            npm_cmd + ["list", "prettier"],
+            npm_cmd,
             cwd=self.root_dir,
             capture_output=True,
             check=False,
+            env=self._prepare_env(),
         )
         if result.returncode != 0:
             return False
 
         plugin_result = subprocess.run(
-            npm_cmd + ["list", "prettier-plugin-yaml"],
+            self._resolve_cmd(["npm", "list", "prettier-plugin-yaml"]),
             cwd=self.root_dir,
             capture_output=True,
             check=False,
+            env=self._prepare_env(),
         )
         if plugin_result.returncode != 0:
             print(
@@ -471,8 +560,7 @@ class CodeFormatter:
         if not targets:
             return True
 
-        python = self._get_python_executable()
-        djlint_check, _ = self._exec([python, "-m", "djlint", "--version"], True)
+        djlint_check, _ = self._exec(["djlint", "--version"], True)
         if not djlint_check:
             print("\n" + "=" * 80)
             print(f"{BOLD}JINJA2 TEMPLATE FORMATTING{RESET}")
@@ -486,11 +574,11 @@ class CodeFormatter:
 
         description = "Jinja2 templates (djlint)"
         step_header = "[TEMPLATES 1/1] Jinja2 templates (djlint)"
-        fix_cmd = [python, "-m", "djlint"] + targets + ["--reformat", "--quiet"]
-        check_cmd = [python, "-m", "djlint"] + targets + ["--check"]
+        fix_cmd = ["djlint"] + targets + ["--reformat", "--quiet"]
+        check_cmd = ["djlint"] + targets + ["--check"]
 
         print(f"\n{CYAN}{step_header}...{RESET}")
-        print(f"   {MAGENTA}Command: {' '.join(fix_cmd)}{RESET}")
+        print(f"   {MAGENTA}Command: {' '.join(self._resolve_cmd(fix_cmd))}{RESET}")
 
         fix_ok, _ = self._exec(fix_cmd, suppress_output=True)
         if fix_ok:
@@ -502,7 +590,7 @@ class CodeFormatter:
             f"   {CYAN}ℹ️  {description} - changes applied; "
             f"running verification check...{RESET}"
         )
-        print(f"\n   {MAGENTA}Command: {' '.join(check_cmd)}{RESET}")
+        print(f"\n   {MAGENTA}Command: {' '.join(self._resolve_cmd(check_cmd))}{RESET}")
         check_ok, _ = self._exec(check_cmd, suppress_output=True)
 
         if check_ok:

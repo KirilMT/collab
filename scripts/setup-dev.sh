@@ -2,8 +2,25 @@
 
 # setup-dev.sh - Development Environment Setup for Linux/macOS
 # Calls setup.sh for production setup, then adds dev-specific tools
+# Usage: ./scripts/setup-dev.sh [--force|-f]
 
 set -e
+
+FORCE=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force|-f)
+            FORCE=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Usage: $0 [--force|-f]" >&2
+            exit 1
+            ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -25,6 +42,155 @@ echo -e "========================================${NC}\n"
 
 ERROR_COUNT=0
 
+# --- IDE helpers: PATH + default install paths; detection via env, process tree, workspace ---
+
+setup_dev_ps_comm() {
+    ps -p "$1" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true
+}
+
+setup_dev_get_ancestor_base_names() {
+    pid=$$
+    i=0
+    while [ "$i" -lt 30 ]; do
+        comm=$(setup_dev_ps_comm "$pid")
+        if [ -z "$comm" ]; then
+            break
+        fi
+        basename=${comm##*/}
+        printf '%s\n' "$basename"
+        ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
+        if [ -z "$ppid" ] || [ "$ppid" = "0" ] || [ "$ppid" = "$pid" ]; then
+            break
+        fi
+        pid=$ppid
+        i=$((i + 1))
+    done
+}
+
+setup_dev_detect_ide_kind() {
+    ancestors_lc="$(setup_dev_get_ancestor_base_names | tr '[:upper:]' '[:lower:]')"
+    if echo "$ancestors_lc" | grep -qE '^(cursor|code|code - insiders|antigravity|vscodium|codium)$'; then
+        echo "vscode_family"
+        return
+    fi
+    if echo "$ancestors_lc" | grep -qE 'idea64|pycharm|rider64|webstorm|phpstorm|clion|goland|rubymine|devenv'; then
+        echo "jetbrains"
+        return
+    fi
+    case "${TERMINAL_EMULATOR:-}" in
+        *JetBrains*)
+            echo "jetbrains"
+            return
+            ;;
+    esac
+    case "${TERM_PROGRAM:-}" in
+        vscode|Antigravity|cursor|Cursor)
+            echo "vscode_family"
+            return
+            ;;
+    esac
+    if [ -n "${CURSOR_TRACE_ID:-}" ] || [ -n "${CURSOR_AGENT:-}" ]; then
+        echo "vscode_family"
+        return
+    fi
+    if [ -d ".idea" ]; then
+        echo "jetbrains"
+        return
+    fi
+    if [ -d ".vscode" ] || [ -d ".cursor" ]; then
+        echo "vscode_family"
+        return
+    fi
+    echo "unknown"
+}
+
+setup_dev_collect_editor_clis() {
+    seen_sp=" "
+    for name in code code-insiders cursor codium antigravity; do
+        if command -v "$name" >/dev/null 2>&1; then
+            p=$(command -v "$name")
+            case "$seen_sp" in
+                *" $p "*) ;;
+                *)
+                    printf '%s\n' "$p"
+                    seen_sp="$seen_sp$p "
+                    ;;
+            esac
+        fi
+    done
+    case "$(uname -s)" in
+        Darwin)
+            for p in \
+                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
+                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+                "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders" \
+                "/Applications/VSCodium.app/Contents/Resources/app/bin/codium" \
+                "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity"; do
+                if [ -x "$p" ]; then
+                    case "$seen_sp" in
+                        *" $p "*) ;;
+                        *)
+                            printf '%s\n' "$p"
+                            seen_sp="$seen_sp$p "
+                            ;;
+                    esac
+                fi
+            done
+            ;;
+        Linux)
+            for p in /usr/bin/code /usr/bin/cursor /usr/local/bin/code /usr/local/bin/cursor \
+                "${HOME}/.local/bin/code" "${HOME}/.local/bin/cursor"; do
+                if [ -x "$p" ]; then
+                    case "$seen_sp" in
+                        *" $p "*) ;;
+                        *)
+                            printf '%s\n' "$p"
+                            seen_sp="$seen_sp$p "
+                            ;;
+                    esac
+                fi
+            done
+            ;;
+    esac
+}
+
+setup_dev_install_collab_locks_vsix() {
+    cli_list=$(setup_dev_collect_editor_clis)
+    if [ -z "$cli_list" ]; then
+        echo -e "     ${GRAY}- No editor CLI for VSIX install (install Cursor/VS Code or add to PATH)${NC}"
+        return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "     ${YELLOW}- curl not found; skipping VSIX download${NC}"
+        return 0
+    fi
+    TEMP_VSIX="${TMPDIR:-/tmp}/collab-locks-latest.vsix"
+    VSIX_URL=$(curl -sL -H 'User-Agent: collab-setup-dev' \
+        https://api.github.com/repos/KirilMT/collab/releases/latest \
+        | grep "browser_download_url.*vsix" | cut -d '"' -f 4 | head -n 1)
+    if [ -z "$VSIX_URL" ]; then
+        echo -e "     ${YELLOW}- No .vsix on latest release (non-fatal)${NC}"
+        return 0
+    fi
+    if ! curl -sL "$VSIX_URL" -o "$TEMP_VSIX"; then
+        echo -e "     ${YELLOW}- VSIX download failed (non-fatal)${NC}"
+        return 0
+    fi
+    while IFS= read -r cli; do
+        [ -z "$cli" ] && continue
+        echo -e "     ${GRAY}- Installing Collab Locks VSIX via ${WHITE}$cli${GRAY}...${NC}"
+        if "$cli" --install-extension "$TEMP_VSIX" --force >/dev/null 2>&1; then
+            echo -e "       ${GREEN}OK${NC}"
+        else
+            echo -e "       ${YELLOW}WARN${NC}"
+        fi
+    done <<EOF
+$cli_list
+EOF
+    rm -f "$TEMP_VSIX"
+    return 0
+}
+
 # ============================================================================
 # STEP 1: RUN PRODUCTION SETUP
 # ============================================================================
@@ -38,7 +204,11 @@ if [ ! -f "scripts/setup.sh" ]; then
 fi
 
 echo -e "${YELLOW}Running production setup (setup.sh)...${NC}\n"
-./scripts/setup.sh --called-from-dev
+SETUP_ARGS=(--called-from-dev)
+if [ "$FORCE" = true ]; then
+    SETUP_ARGS+=(--force)
+fi
+./scripts/setup.sh "${SETUP_ARGS[@]}"
 
 echo -e "\n${GREEN}========================================"
 echo -e "   Production Setup Complete"
@@ -156,6 +326,44 @@ if [ -f ".env" ]; then
     fi
 fi
 
+DETECTED_IDE=unknown
+echo -e "\n${YELLOW}   Detecting IDE environment...${NC}"
+DETECTED_IDE=$(setup_dev_detect_ide_kind || echo unknown)
+echo -e "     ${GRAY}- IDE kind: ${WHITE}${DETECTED_IDE}${NC}"
+
+if [ "$DETECTED_IDE" = "vscode_family" ]; then
+    ancestors_lc="$(setup_dev_get_ancestor_base_names | tr '[:upper:]' '[:lower:]')"
+    if echo "$ancestors_lc" | grep -qE '^cursor$'; then
+        echo -e "     ${GRAY}- Cursor / VS Code-compatible IDE detected${NC}"
+    else
+        echo -e "     ${GRAY}- VS Code-compatible IDE detected${NC}"
+    fi
+    setup_dev_install_collab_locks_vsix || true
+    if [ -f "editors/vscode/collab-locks/package.json" ]; then
+        if (cd editors/vscode/collab-locks && npm install --silent >/dev/null 2>&1); then
+            echo -e "     ${WHITE}VS Code extension workspace deps (npm)${NC} ${GREEN}OK${NC}"
+        else
+            echo -e "     ${YELLOW}VS Code extension npm install failed (non-fatal)${NC}"
+        fi
+    fi
+elif [ "$DETECTED_IDE" = "jetbrains" ]; then
+    echo -e "     ${GRAY}- JetBrains IDE detected${NC}"
+    if [ -f "editors/pycharm/Collab_Lock_Watcher.xml" ]; then
+        mkdir -p .idea/runConfigurations
+        if cp -f editors/pycharm/Collab_Lock_Watcher.xml .idea/runConfigurations/Collab_Lock_Watcher.xml; then
+            echo -e "     ${WHITE}PyCharm run configuration installed${NC} ${GREEN}OK${NC}"
+            echo -e "     ${GRAY}- Open Run > Collab Lock Watcher in the IDE.${NC}"
+        else
+            echo -e "     ${YELLOW}PyCharm run config install failed (non-fatal)${NC}"
+        fi
+    fi
+else
+    echo -e "     ${GRAY}- No specific IDE detected from env / process / workspace hints${NC}"
+    if setup_dev_collect_editor_clis | grep -q .; then
+        echo -e "     ${GRAY}- Editor CLI(s) found; installing VSIX anyway${NC}"
+        setup_dev_install_collab_locks_vsix || true
+    fi
+fi
 
 echo -e "\n${CYAN}========================================"
 if [ $ERROR_COUNT -eq 0 ]; then
@@ -170,15 +378,22 @@ echo -e "\n${CYAN}==============================================================
 echo -e "                        NEXT STEPS                              "
 echo -e "================================================================${NC}"
 echo ""
-echo -e "${WHITE}  1. Collaborative daemon should be active (Core Step 9).
+if [ "$DETECTED_IDE" = "vscode_family" ]; then
+    echo -e "${WHITE}  1. Collab Locks VSIX and workspace extension deps were applied when possible.${NC}"
+    echo -e "${GRAY}     Press F1 > 'Developer: Reload Window' if locks don't appear.${NC}"
+else
+    echo -e "${WHITE}  1. Collaborative daemon should be active (Core Step 9).
      Use 'collab active' to verify.
-"
+${NC}"
+fi
 echo ""
 echo -e "${WHITE}  2. Activate the virtual environment (if not already active):${NC}"
 if [ -d ".venv/bin" ]; then
     echo -e "     source .venv/bin/activate"
+    echo -e "     ${GRAY}Agent shells often skip activation; prefer ./.venv/bin/python when PATH is wrong.${NC}"
 else
     echo -e "     source .venv/Scripts/activate"
+    echo -e "     ${GRAY}Agent shells often skip activation; prefer .venv/Scripts/python.exe when PATH is wrong.${NC}"
 fi
 echo ""
 echo -e "${WHITE}  3. Run quality checks:${NC}"

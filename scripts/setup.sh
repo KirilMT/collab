@@ -43,6 +43,7 @@ print_success() {
 # Parse command line arguments
 NON_INTERACTIVE=false
 CALLED_FROM_DEV=false
+FORCE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -54,6 +55,10 @@ while [[ $# -gt 0 ]]; do
             CALLED_FROM_DEV=true
             shift
             ;;
+        --force|-f)
+            FORCE=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1" >&2
             exit 1
@@ -61,12 +66,95 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+setup_collab_site_packages() {
+    "$1" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true
+}
+
+setup_collab_has_pip_orphans() {
+    local site_pkgs="$1"
+    local orphan
+    if [ -z "$site_pkgs" ] || [ ! -d "$site_pkgs" ]; then
+        return 1
+    fi
+    for orphan in "$site_pkgs"/~ollab* "$site_pkgs"/~collab*; do
+        if [ -e "$orphan" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+setup_collab_remove_pip_orphans() {
+    local site_pkgs="$1"
+    local orphan
+    if [ -z "$site_pkgs" ] || [ ! -d "$site_pkgs" ]; then
+        return 0
+    fi
+    for orphan in "$site_pkgs"/~ollab* "$site_pkgs"/~collab*; do
+        if [ -e "$orphan" ]; then
+            echo "   Removing broken pip artifact: $(basename "$orphan")..." >&2
+            rm -rf "$orphan" 2>/dev/null || true
+        fi
+    done
+}
+
+setup_collab_install_healthy() {
+    local expect_editable="$1"
+    local collab_bin="$2"
+    local site_pkgs
+    site_pkgs=$(setup_collab_site_packages "$VENV_PYTHON")
+
+    if setup_collab_has_pip_orphans "$site_pkgs"; then
+        return 1
+    fi
+    if ! "$VENV_PYTHON" -c "import src.lock_client" 2>/dev/null; then
+        return 1
+    fi
+    if [ "$expect_editable" = true ]; then
+        if ! PROJECT_ROOT="$PROJECT_ROOT" "$VENV_PYTHON" -c '
+import os
+import src.lock_client as mod
+from pathlib import Path
+
+root = Path(os.environ["PROJECT_ROOT"]).resolve()
+module_path = Path(mod.__file__).resolve()
+if not str(module_path).startswith(str(root)):
+    raise SystemExit(1)
+' 2>/dev/null; then
+            return 1
+        fi
+    fi
+    if ! "$VENV_PYTHON" -m pip show collab-runtime >/dev/null 2>&1; then
+        return 1
+    fi
+    if "$VENV_PYTHON" -m pip show collab >/dev/null 2>&1; then
+        return 1
+    fi
+    if [ ! -x "$collab_bin" ] && [ ! -f "$collab_bin" ]; then
+        return 1
+    fi
+    if ! "$collab_bin" --help >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+setup_collab_stop_daemon_for_reinstall() {
+    local collab_bin="$1"
+    if [ ! -x "$collab_bin" ] && [ ! -f "$collab_bin" ]; then
+        return 0
+    fi
+    echo "   Stopping collab daemon (unlock for package upgrade)..." >&2
+    "$collab_bin" daemon-stop >/dev/null 2>&1 || "$VENV_PYTHON" -m src.lock_client daemon-stop >/dev/null 2>&1 || true
+    sleep 1
+}
+
 # Only show header if not called from dev script
 if [ "$CALLED_FROM_DEV" = false ]; then
     print_banner
 fi
 
-print_step 1 9 "Checking prerequisites..."
+print_step 1 10 "Checking prerequisites..."
 
 # Check Python (prefer python3, fallback to python if version output is valid)
 PYTHON_CMD=""
@@ -111,7 +199,7 @@ GIT_VERSION=$(git --version)
 echo "   Found: $GIT_VERSION" >&2
 print_success "Git OK"
 
-print_step 2 9 "Setting up virtual environment..."
+print_step 2 10 "Setting up virtual environment..."
 
 if [ ! -d ".venv" ]; then
     echo "   Creating ${MAGENTA}.venv${NC}..." >&2
@@ -127,7 +215,7 @@ else
     print_success ".venv exists"
 fi
 
-print_step 3 9 "Installing core dependencies..."
+print_step 3 10 "Installing core dependencies..."
 
 VENV_LAYOUT=""
 if [ -f ".venv/bin/python" ] && [ -f ".venv/bin/pip" ]; then
@@ -168,23 +256,59 @@ else
     ((ERROR_COUNT++))
 fi
 
-print_step 4 9 "Installing collab package..."
-    if [ -f "src/lock_client.py" ]; then
-        PACKAGE_SPEC="-e ."
+print_step 4 10 "Installing collab package..."
+
+EXPECT_EDITABLE=false
+if [ -f "src/lock_client.py" ]; then
+    EXPECT_EDITABLE=true
+    PACKAGE_SPEC="-e ."
+elif [ -n "$COLLAB_VERSION" ]; then
+    PACKAGE_SPEC="collab-runtime==$COLLAB_VERSION"
+else
+    PACKAGE_SPEC="collab-runtime"
+fi
+
+if [ -n "$COLLAB_RUNTIME_SPEC" ]; then
+    PACKAGE_SPEC="$COLLAB_RUNTIME_SPEC"
+fi
+
+if [ "$VENV_LAYOUT" = "posix" ]; then
+    COLLAB_BIN=".venv/bin/collab"
+else
+    COLLAB_BIN=".venv/Scripts/collab.exe"
+fi
+
+SITE_PKGS=$(setup_collab_site_packages "$VENV_PYTHON")
+SKIP_COLLAB_REINSTALL=false
+if [ "$FORCE" = false ] && [ -z "$COLLAB_RUNTIME_SPEC" ] && [ -z "$COLLAB_VERSION" ]; then
+    if setup_collab_install_healthy "$EXPECT_EDITABLE" "$COLLAB_BIN"; then
+        SKIP_COLLAB_REINSTALL=true
+    fi
+fi
+
+if [ "$SKIP_COLLAB_REINSTALL" = true ]; then
+    echo "   collab-runtime already installed and healthy (use --force to reinstall)" >&2
+    print_success "collab-runtime OK (skipped reinstall)"
+else
+    setup_collab_stop_daemon_for_reinstall "$COLLAB_BIN"
+    setup_collab_remove_pip_orphans "$SITE_PKGS"
+
+    "$VENV_PIP" uninstall collab-runtime -y --quiet 2>/dev/null || true
+
+    if [ -n "$COLLAB_RUNTIME_SPEC" ]; then
+        echo "   Installing defined spec: $PACKAGE_SPEC..." >&2
+    elif [ "$EXPECT_EDITABLE" = true ]; then
         echo "   Detected collab source repository. Using editable install..." >&2
     elif [ -n "$COLLAB_VERSION" ]; then
-        PACKAGE_SPEC="collab-runtime==$COLLAB_VERSION"
         echo "   Installing pinned version: $COLLAB_VERSION..." >&2
     else
-        PACKAGE_SPEC="collab-runtime"
         echo "   Installing latest version from registry..." >&2
     fi
 
-    # Ensure any conflicting public 'collab' package is uninstalled
     echo "   Checking for conflicting 'collab' package..." >&2
     "$VENV_PIP" uninstall collab -y --quiet 2>/dev/null || true
 
-    if "$VENV_PIP" install $PACKAGE_SPEC --quiet; then
+    if "$VENV_PIP" install $PACKAGE_SPEC --quiet --no-warn-script-location; then
         print_success "collab installed"
     else
         print_error "collab package installation failed"
@@ -192,7 +316,7 @@ print_step 4 9 "Installing collab package..."
     fi
 fi
 
-print_step 5 9 "Configuring environment..."
+print_step 5 10 "Configuring environment..."
 
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
@@ -208,8 +332,7 @@ else
     print_success ".env exists"
 fi
 
-echo ""
-echo -e "${YELLOW}[Locking Setup] Validating collaborative locking prerequisites...${NC}"
+print_step 6 10 "Validating collaborative locking prerequisites..."
 
 echo "   Checking supabase-py import..." >&2
 if "$VENV_PYTHON" -c "import supabase" 2>/dev/null; then
@@ -249,7 +372,10 @@ if [ -f "$ENV_FILE" ]; then
     else
         echo "   ${YELLOW}Warning: .env exists but Supabase values look missing or placeholders.${NC}" >&2
         echo "   Set SUPABASE_URL and SUPABASE_ANON_KEY to real values." >&2
-        ((ERROR_COUNT++))
+        # setup-dev.sh uses --called-from-dev; allow finishing with .env.example placeholders.
+        if [ "$CALLED_FROM_DEV" = false ]; then
+            ((ERROR_COUNT++))
+        fi
     fi
 fi
 
@@ -265,15 +391,15 @@ if command -v pre-commit >/dev/null 2>&1; then
 
     if [ $HOOK_INSTALL_FAILED -eq 0 ]; then
         print_success "Git hooks installed"
-        if [ -f "$PROJECT_ROOT/install_hooks.sh" ]; then
-            if sh "$PROJECT_ROOT/install_hooks.sh" >/dev/null 2>&1; then
+        if [ -f "$PROJECT_ROOT/scripts/install_hooks.sh" ]; then
+            if sh "$PROJECT_ROOT/scripts/install_hooks.sh" >/dev/null 2>&1; then
                 print_success "Collab hook overlay installed"
             else
                 echo "   ${YELLOW}Warning: collab hook overlay installation failed.${NC}" >&2
                 ((ERROR_COUNT++))
             fi
         else
-            echo "   ${YELLOW}Warning: install_hooks.sh not found.${NC}" >&2
+            echo "   ${YELLOW}Warning: scripts/install_hooks.sh not found.${NC}" >&2
             ((ERROR_COUNT++))
         fi
     else
@@ -284,7 +410,7 @@ else
     echo "   ${YELLOW}Warning: pre-commit not found. Run ./scripts/setup-dev.sh to install repository hooks.${NC}" >&2
 fi
 
-print_step 6 9 "Installing VS Code extension (optional)..."
+print_step 7 10 "Installing VS Code extension (optional)..."
 
 echo "   Fetching extension from GitHub Releases..." >&2
 
@@ -331,7 +457,7 @@ else
     echo "     2. Go to Extensions -> '...' -> 'Install from VSIX'" >&2
 fi
 
-print_step 7 9 "Running smoke tests..."
+print_step 8 10 "Running smoke tests..."
 
 SMOKE_TESTS_PASSED=true
 
@@ -368,7 +494,7 @@ if [ "$SMOKE_TESTS_PASSED" = true ]; then
     print_success "All smoke tests passed"
 fi
 
-print_step 8 9 "Ensuring Collaborative Daemon is running..."
+print_step 9 10 "Ensuring Collaborative Daemon is running..."
 if [ -f "$VENV_PYTHON" ]; then
     COLLAB_BIN="$(dirname "$VENV_PYTHON")/collab"
     if ! "$COLLAB_BIN" daemon-status >/dev/null 2>&1; then
@@ -383,7 +509,7 @@ if [ -f "$VENV_PYTHON" ]; then
     fi
 fi
 
-print_step 9 9 "Final verification..."
+print_step 10 10 "Final verification..."
 "$COLLAB_BIN" daemon-status
 
 if [ "$CALLED_FROM_DEV" = false ]; then

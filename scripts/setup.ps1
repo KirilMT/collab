@@ -5,7 +5,8 @@
 # Accept parameters
 param(
     [switch]$CalledFromDev = $false,
-    [switch]$NonInteractive = $false
+    [switch]$NonInteractive = $false,
+    [switch]$Force = $false
 )
 
 # Ensure we are in the project root
@@ -14,12 +15,214 @@ $projectRoot = Split-Path -Parent $scriptPath
 Set-Location $projectRoot
 
 $script:IsWin = ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -match "Windows")
+$script:SetupStepTotal = 10
+
+function Enable-SetupWindowsVirtualTerminal {
+    if (-not ($script:IsWin)) {
+        return $true
+    }
+
+    try {
+        if (-not ([System.Management.Automation.PSTypeName]'SetupConsoleApi').Type) {
+            Add-Type -Namespace SetupConsoleApi -Name NativeMethods -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@ -ErrorAction Stop
+        }
+        $handle = [SetupConsoleApi.NativeMethods]::GetStdHandle(-11)
+        $mode = [uint32]0
+        if (-not [SetupConsoleApi.NativeMethods]::GetConsoleMode($handle, [ref]$mode)) {
+            return $false
+        }
+        $vt = [uint32]0x0004
+        if (($mode -band $vt) -ne 0) {
+            return $true
+        }
+        return [SetupConsoleApi.NativeMethods]::SetConsoleMode($handle, $mode -bor $vt)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Set-SetupConsoleUtf8Encoding {
+    if ([Console]::IsOutputRedirected) {
+        return $false
+    }
+
+    if ($script:IsWin) {
+        try {
+            $null = & cmd.exe /c 'chcp 65001 >nul'
+        }
+        catch {
+            # Non-fatal; emoji may fall back to ASCII tokens.
+        }
+    }
+
+    try {
+        $utf8 = [System.Text.UTF8Encoding]::new($false)
+        [Console]::OutputEncoding = $utf8
+        [Console]::InputEncoding = $utf8
+        $OutputEncoding = $utf8
+    }
+    catch {
+        return $false
+    }
+
+    try {
+        $codePage = [Console]::OutputEncoding.CodePage
+        return ($codePage -eq 65001)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Initialize-SetupConsole {
+    $script:SetupUseAnsi = $false
+    $script:SetupUseEmoji = $false
+    $script:SetupAnsiCodes = @{
+        White   = '37'
+        Green   = '32'
+        Yellow  = '33'
+        Red     = '31'
+        Cyan    = '36'
+        Magenta = '35'
+        Gray    = '90'
+    }
+
+    if ([Console]::IsOutputRedirected) {
+        return
+    }
+
+    $utf8Ready = Set-SetupConsoleUtf8Encoding
+
+    try {
+        if ($PSStyle.OutputRendering) {
+            $PSStyle.OutputRendering = 'Ansi'
+        }
+    }
+    catch {
+        # Older hosts: rely on explicit ANSI or Write-Host.
+    }
+
+    if ($script:IsWin) {
+        $script:SetupUseAnsi = Enable-SetupWindowsVirtualTerminal
+    }
+    else {
+        $script:SetupUseAnsi = $true
+    }
+
+    $script:SetupUseEmoji = $script:SetupUseAnsi -and $utf8Ready -and -not $env:CI -and -not $env:TF_BUILD
+}
+
+function Get-SetupStatusToken {
+    param(
+        [ValidateSet('OK', 'WARN', 'FAILED', 'SKIP')]
+        [string]$Status
+    )
+
+    if ($script:SetupUseEmoji) {
+        switch ($Status) {
+            'OK' { return ' ✅' }
+            'WARN' { return ' ⚠️' }
+            'FAILED' { return ' ❌' }
+            'SKIP' { return ' ⏭️' }
+        }
+    }
+
+    switch ($Status) {
+        'OK' { return ' OK' }
+        'WARN' { return ' WARN' }
+        'FAILED' { return ' FAILED' }
+        'SKIP' { return ' SKIPPED' }
+    }
+}
+
+function Write-SetupEmit {
+    param(
+        [string]$Text,
+        [string]$Color = 'White',
+        [switch]$NoNewline
+    )
+
+    if ($script:SetupUseAnsi -and $script:SetupAnsiCodes.ContainsKey($Color)) {
+        $esc = [char]27
+        $code = $script:SetupAnsiCodes[$Color]
+        $styled = '{0}[{1}m{2}{0}[0m' -f $esc, $code, $Text
+        if ($NoNewline) {
+            [Console]::Out.Write($styled)
+        }
+        else {
+            [Console]::Out.WriteLine($styled)
+        }
+        return
+    }
+
+    $hostParams = @{ Object = $Text }
+    if ($NoNewline) {
+        $hostParams['NoNewline'] = $true
+    }
+    if ($Color -and $Color -ne 'Default') {
+        $hostParams['ForegroundColor'] = $Color
+    }
+    Write-Host @hostParams
+}
+
+function Write-SetupStepHeader {
+    param(
+        [int]$Step,
+        [string]$Message,
+        [int]$Total = 0
+    )
+
+    if ($Total -le 0) {
+        $Total = $script:SetupStepTotal
+    }
+
+    Write-SetupEmit "`n[Step $Step/$Total] $Message" -Color Yellow
+}
+
+function Write-SetupDevStepHeader {
+    param(
+        [int]$Step,
+        [string]$Message,
+        [int]$Total = 6
+    )
+
+    Write-SetupEmit "`n[Dev Step $Step/$Total] $Message" -Color Yellow
+}
+
+function Write-SetupBannerLine {
+    param([string]$Text, [string]$Color = 'Cyan')
+
+    Write-SetupEmit $Text -Color $Color
+}
+
+function Write-SetupRedirectHint {
+    if (-not [Console]::IsOutputRedirected) {
+        return
+    }
+
+    Write-Host ""
+    Write-Host "   [setup] Output is redirected (Code Runner / CI). Colors and emoji are disabled." -ForegroundColor Yellow
+    Write-Host "   [setup] For full output, run in the integrated terminal:" -ForegroundColor Yellow
+    Write-Host "           .\scripts\setup-dev.ps1" -ForegroundColor White
+    Write-Host ""
+}
+
+Initialize-SetupConsole
+Write-SetupRedirectHint
 
 # Only show header if not called from dev script
 if (-not $CalledFromDev) {
-    Write-Host "`n========================================" -ForegroundColor Cyan
-    Write-Host "   Collab Installation Script" -ForegroundColor Cyan
-    Write-Host "========================================`n" -ForegroundColor Cyan
+    Write-SetupBannerLine "`n========================================" -Color Cyan
+    Write-SetupBannerLine "   Collab Installation Script" -Color Cyan
+    Write-SetupBannerLine "========================================`n" -Color Cyan
 }
 
 # Error counter for final summary
@@ -38,6 +241,109 @@ function Test-SupabaseImport {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Get-SetupCollabSitePackagesDir {
+    param([string]$PythonExe)
+
+    $venvScriptsDir = Split-Path -Parent (Resolve-Path $PythonExe).Path
+    $venvRootDir = Split-Path -Parent $venvScriptsDir
+    return Join-Path $venvRootDir 'Lib\site-packages'
+}
+
+function Test-SetupCollabPipOrphans {
+    param([string]$SitePackagesDir)
+
+    if (-not (Test-Path $SitePackagesDir)) {
+        return $false
+    }
+
+    return [bool](
+        Get-ChildItem -LiteralPath $SitePackagesDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '~ollab*' -or $_.Name -like '~collab*' }
+    )
+}
+
+function Remove-SetupCollabPipOrphans {
+    param([string]$SitePackagesDir)
+
+    if (-not (Test-Path $SitePackagesDir)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $SitePackagesDir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '~ollab*' -or $_.Name -like '~collab*' } |
+        ForEach-Object {
+            Write-Host "   Removing broken pip artifact: $($_.Name)..." -ForegroundColor Yellow
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+}
+
+function Test-SetupCollabInstallHealthy {
+    param(
+        [string]$PythonExe,
+        [string]$CollabExe,
+        [string]$ProjectRoot,
+        [bool]$ExpectEditable
+    )
+
+    $sitePackagesDir = Get-SetupCollabSitePackagesDir -PythonExe $PythonExe
+    if (Test-SetupCollabPipOrphans -SitePackagesDir $sitePackagesDir) {
+        return $false
+    }
+
+    & $PythonExe -c "import src.lock_client" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+
+    if ($ExpectEditable) {
+        $moduleFile = (& $PythonExe -c "import src.lock_client as m; print(m.__file__)" 2>$null)
+        if (-not $moduleFile) {
+            return $false
+        }
+        $rootNorm = (Resolve-Path $ProjectRoot).Path.TrimEnd('\')
+        if ($moduleFile -notlike "$rootNorm*") {
+            return $false
+        }
+    }
+
+    & $PythonExe -m pip show collab-runtime 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+
+    # Unrelated PyPI package named "collab" breaks the console script.
+    & $PythonExe -m pip show collab 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        return $false
+    }
+
+    if (-not (Test-Path $CollabExe)) {
+        return $false
+    }
+
+    & $CollabExe --help 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Stop-SetupCollabDaemonForReinstall {
+    param(
+        [string]$CollabExe,
+        [string]$PythonExe,
+        [string]$ProjectRoot
+    )
+
+    if (-not (Test-Path $CollabExe)) {
+        return
+    }
+
+    Write-Host "   Stopping collab daemon (unlock collab.exe for package upgrade)..." -ForegroundColor Gray
+    & $CollabExe daemon-stop 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0 -and (Test-Path (Join-Path $ProjectRoot 'src\lock_client.py'))) {
+        & $PythonExe -m src.lock_client daemon-stop 2>&1 | Out-Null
+    }
+    Start-Sleep -Milliseconds 800
+}
+
 # Function to refresh environment variables without restart
 function Refresh-EnvPath {
     Write-Host "   Refreshing environment variables..." -ForegroundColor Gray
@@ -45,7 +351,7 @@ function Refresh-EnvPath {
 }
 
 # Step 1: Check Prerequisites
-Write-Host "[Step 1/9] Checking prerequisites..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 1 -Message 'Checking prerequisites...'
 
 # Step 1.1: Check for Python
 function Check-Python {
@@ -57,7 +363,7 @@ function Check-Python {
             if ($major -ge 3 -and $minor -ge 12) {
                 Write-Host "   Found: " -NoNewline -ForegroundColor White
                 Write-Host "$v" -NoNewline -ForegroundColor White
-                Write-Host " OK" -ForegroundColor Green
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 return $true
             }
             else {
@@ -88,11 +394,11 @@ function Check-Python {
                     $newPath = "$pythonDir;$pythonDir\Scripts;$currentPath"
                     [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
                     Write-Host "   Added to system PATH " -NoNewline -ForegroundColor White
-                    Write-Host "OK" -ForegroundColor Green
+                    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 }
                 else {
                     Write-Host "   Already in system PATH " -NoNewline -ForegroundColor White
-                    Write-Host "OK" -ForegroundColor Green
+                    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 }
             }
             catch {
@@ -169,7 +475,7 @@ function Check-Git {
         $v = git --version
         Write-Host "   Found: " -NoNewline -ForegroundColor White
         Write-Host "$v" -NoNewline -ForegroundColor White
-        Write-Host " OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
         return $true
     }
     return $false
@@ -218,28 +524,28 @@ if (-not (Check-Git)) {
 }
 
 # Step 2: Create Virtual Environment
-Write-Host "`n[Step 2/9] Setting up virtual environment..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 2 -Message 'Setting up virtual environment...'
 if (-not (Test-Path ".venv")) {
     Write-Host "   Creating " -NoNewline -ForegroundColor White
     Write-Host ".venv" -NoNewline -ForegroundColor Magenta
     Write-Host "..." -NoNewline -ForegroundColor White
     python -m venv .venv
     if ($LASTEXITCODE -eq 0) {
-        Write-Host " OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
-        Write-Host " FAILED" -ForegroundColor Red
+        Write-SetupEmit (Get-SetupStatusToken 'FAILED') -Color Red
         Write-Error "Failed to create virtual environment."
         exit 1
     }
 }
 else {
     Write-Host "   Virtual environment already exists " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
 # Step 3: Install Dependencies
-Write-Host "`n[Step 3/9] Installing core dependencies..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 3 -Message 'Installing core dependencies...'
 
 $pipPath = ".\.venv\Scripts\pip.exe"
 $pythonPath = ".\.venv\Scripts\python.exe"
@@ -287,10 +593,10 @@ if (Test-Path "requirements.txt") {
     $pipInstall = & $pipPath install -r requirements.txt --quiet --no-warn-script-location 2>&1
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host " OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
-        Write-Host " FAILED" -ForegroundColor Red
+        Write-SetupEmit (Get-SetupStatusToken 'FAILED') -Color Red
         Write-Host "`n   Error details:" -ForegroundColor Yellow
         $pipInstall | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
         exit 1
@@ -302,54 +608,95 @@ else {
 }
 
 # Step 4: Install Collab Package
-Write-Host "`n[Step 4/9] Installing collab package..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 4 -Message 'Installing collab package...'
 
-# Ensure any conflicting public 'collab' package is uninstalled
-Write-Host "   Checking for conflicting 'collab' package..." -ForegroundColor Gray
-& $pythonPath -m pip uninstall collab -y --quiet 2>&1 | Out-Null
+$pythonResolved = (Resolve-Path $pythonPath).Path
+$venvScriptsDir = Split-Path -Parent $pythonResolved
+$sitePackagesDir = Get-SetupCollabSitePackagesDir -PythonExe $pythonResolved
+$collabExeCandidate = Join-Path $venvScriptsDir 'collab.exe'
+$expectEditable = Test-Path (Join-Path $projectRoot 'src\lock_client.py')
 
 $collabSpec = $env:COLLAB_RUNTIME_SPEC
 if (-not $collabSpec) {
-    if (Test-Path "src\lock_client.py") {
-        $collabSpec = "-e ."
-        Write-Host "   Detected collab source repository. Using editable install..." -ForegroundColor Gray
+    if ($expectEditable) {
+        $collabSpec = '-e .'
     } else {
-        $collabSpec = "collab-runtime"
-        Write-Host "   Installing latest collab-runtime from registry..." -ForegroundColor Gray
+        $collabSpec = 'collab-runtime'
     }
-} else {
-    Write-Host "   Installing defined spec: $collabSpec..." -ForegroundColor Gray
 }
 
-Write-Host "   Installing " -NoNewline -ForegroundColor White
-Write-Host "$collabSpec" -NoNewline -ForegroundColor Magenta
-Write-Host "..." -NoNewline -ForegroundColor White
-
-& $pipPath install $collabSpec --quiet --no-warn-script-location 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    # Check if installed
-    $collabCheckOutput = (& $pythonPath -m pip show collab-runtime 2>&1)
-    if ($LASTEXITCODE -eq 0) {
-        $versionLine = $collabCheckOutput | Where-Object { $_ -match "^Version:" }
-        if ($versionLine) {
-            $installedVersion = $versionLine -replace "^Version:\s*", ""
-            Write-Host "   collab-runtime $installedVersion installed " -NoNewline -ForegroundColor White
-            Write-Host "OK" -ForegroundColor Green
-        }
-    } else {
-        Write-Host "   collab package installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+$skipCollabReinstall = $false
+if (-not $Force -and -not $env:COLLAB_RUNTIME_SPEC) {
+    if (Test-SetupCollabInstallHealthy -PythonExe $pythonResolved -CollabExe $collabExeCandidate -ProjectRoot $projectRoot -ExpectEditable $expectEditable) {
+        $skipCollabReinstall = $true
     }
+}
+
+if ($skipCollabReinstall) {
+    $collabCheckOutput = (& $pythonPath -m pip show collab-runtime 2>&1)
+    $installedVersion = ''
+    if ($LASTEXITCODE -eq 0) {
+        $versionLine = $collabCheckOutput | Where-Object { $_ -match '^Version:' }
+        if ($versionLine) {
+            $installedVersion = ($versionLine -replace '^Version:\s*', '').Trim()
+        }
+    }
+    if ($installedVersion) {
+        Write-Host "   collab-runtime $installedVersion already installed and healthy " -NoNewline -ForegroundColor White
+    } else {
+        Write-Host "   collab-runtime already installed and healthy " -NoNewline -ForegroundColor White
+    }
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+    Write-Host "   (use -Force to reinstall)" -ForegroundColor Gray
 }
 else {
-    Write-Host "   collab package installation " -NoNewline -ForegroundColor White
-    Write-Host "FAILED" -ForegroundColor Red
-    Write-Warning "Check the output above for errors."
-    $script:ErrorCount++
+    # Interrupted pip installs can leave rename orphans (e.g. ~ollab_runtime-*.dist-info).
+    # Stop the daemon first so Windows releases collab.exe during reinstall.
+    Stop-SetupCollabDaemonForReinstall -CollabExe $collabExeCandidate -PythonExe $pythonResolved -ProjectRoot $projectRoot
+    Remove-SetupCollabPipOrphans -SitePackagesDir $sitePackagesDir
+
+    & $pythonPath -m pip uninstall collab-runtime -y --quiet 2>&1 | Out-Null
+
+    Write-Host "   Checking for conflicting 'collab' package..." -ForegroundColor Gray
+    & $pythonPath -m pip uninstall collab -y --quiet 2>&1 | Out-Null
+
+    if ($env:COLLAB_RUNTIME_SPEC) {
+        Write-Host "   Installing defined spec: $collabSpec..." -ForegroundColor Gray
+    } elseif ($expectEditable) {
+        Write-Host "   Detected collab source repository. Using editable install..." -ForegroundColor Gray
+    } else {
+        Write-Host "   Installing latest collab-runtime from registry..." -ForegroundColor Gray
+    }
+
+    Write-Host "   Installing " -NoNewline -ForegroundColor White
+    Write-Host "$collabSpec" -NoNewline -ForegroundColor Magenta
+    Write-Host "..." -NoNewline -ForegroundColor White
+
+    & $pipPath install $collabSpec --quiet --no-warn-script-location 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $collabCheckOutput = (& $pythonPath -m pip show collab-runtime 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            $versionLine = $collabCheckOutput | Where-Object { $_ -match '^Version:' }
+            if ($versionLine) {
+                $installedVersion = $versionLine -replace '^Version:\s*', ''
+                Write-Host "   collab-runtime $installedVersion installed " -NoNewline -ForegroundColor White
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+            }
+        } else {
+            Write-Host "   collab package installed " -NoNewline -ForegroundColor White
+            Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+        }
+    }
+    else {
+        Write-Host "   collab package installation " -NoNewline -ForegroundColor White
+        Write-SetupEmit (Get-SetupStatusToken 'FAILED') -Color Red
+        Write-Warning "Check the output above for errors."
+        $script:ErrorCount++
+    }
 }
 
 # Step 5: Environment Configuration
-Write-Host "`n[Step 5/9] Configuring environment..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 5 -Message 'Configuring environment...'
 if (-not (Test-Path ".env")) {
     if (Test-Path ".env.example") {
         Copy-Item ".env.example" ".env"
@@ -358,7 +705,7 @@ if (-not (Test-Path ".env")) {
         Write-Host " from " -NoNewline -ForegroundColor White
         Write-Host ".env.example" -NoNewline -ForegroundColor Magenta
         Write-Host " " -NoNewline
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Warning "   .env.example not found. You will need to create .env manually."
@@ -369,28 +716,28 @@ else {
     Write-Host "   " -NoNewline
     Write-Host ".env" -NoNewline -ForegroundColor Magenta
     Write-Host " already exists " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
-# Locking Setup Checks (mockCMMS parity)
-Write-Host "`n[Locking Setup] Validating collaborative locking prerequisites..." -ForegroundColor Yellow
+# Step 6: Collaborative locking prerequisites
+Write-SetupStepHeader -Step 6 -Message 'Validating collaborative locking prerequisites...'
 
 if (Test-SupabaseImport -PythonExe $pythonPath) {
     Write-Host "   supabase-py import check " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 else {
     Write-Host "   supabase-py import check " -NoNewline -ForegroundColor White
-    Write-Host "WARN" -ForegroundColor Yellow
+    Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
     Write-Host "   Installing supabase and python-dotenv into .venv..." -ForegroundColor Gray
     & $pythonPath -m pip install supabase python-dotenv --quiet
     if ($LASTEXITCODE -eq 0 -and (Test-SupabaseImport -PythonExe $pythonPath)) {
         Write-Host "   supabase-py installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   supabase-py installation " -NoNewline -ForegroundColor White
-        Write-Host "FAILED" -ForegroundColor Red
+        Write-SetupEmit (Get-SetupStatusToken 'FAILED') -Color Red
         $script:ErrorCount++
     }
 }
@@ -403,13 +750,17 @@ if (Test-Path $envPath) {
 
     if ($hasUrl -and $hasAnon) {
         Write-Host "   Supabase credentials in .env " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   Supabase credentials in .env " -NoNewline -ForegroundColor White
-        Write-Host "WARN" -ForegroundColor Yellow
+        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         Write-Host "   Set SUPABASE_URL and SUPABASE_ANON_KEY to real values." -ForegroundColor Gray
-        $script:ErrorCount++
+        # setup-dev.ps1 calls production setup with -CalledFromDev: a fresh .env from
+        # .env.example still carries placeholders here — warn only so dev setup can finish.
+        if (-not $CalledFromDev) {
+            $script:ErrorCount++
+        }
     }
 }
 
@@ -428,9 +779,9 @@ if (Test-Path $preCommitExe) {
 
     if (-not $hookInstallFailed) {
         Write-Host "   Git hooks installed " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 
-        $sourceHooksDir = Join-Path $projectRoot "hooks"
+        $sourceHooksDir = Join-Path $projectRoot "scripts\git-hooks"
         $targetHooksDir = Join-Path $projectRoot ".git\hooks"
         $hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg")
         $overlayFailed = $false
@@ -448,34 +799,34 @@ if (Test-Path $preCommitExe) {
 
             if (-not $overlayFailed) {
                 Write-Host "   Collab hook overlay installed " -NoNewline -ForegroundColor White
-                Write-Host "OK" -ForegroundColor Green
+                Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
             }
             else {
                 Write-Host "   Collab hook overlay " -NoNewline -ForegroundColor White
-                Write-Host "WARN" -ForegroundColor Yellow
+                Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
                 $script:ErrorCount++
             }
         }
         else {
-            Write-Host "   Collab hook templates missing (hooks/) " -NoNewline -ForegroundColor White
-            Write-Host "WARN" -ForegroundColor Yellow
+            Write-Host "   Collab hook templates missing (scripts/git-hooks/) " -NoNewline -ForegroundColor White
+            Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
             $script:ErrorCount++
         }
     }
     else {
         Write-Host "   Git hook installation " -NoNewline -ForegroundColor White
-        Write-Host "WARN" -ForegroundColor Yellow
+        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         $script:ErrorCount++
     }
 }
 else {
     Write-Host "   pre-commit not available in .venv " -NoNewline -ForegroundColor White
-    Write-Host "SKIPPED" -ForegroundColor Yellow
+    Write-SetupEmit (Get-SetupStatusToken 'SKIP') -Color Yellow
     Write-Host "   Run scripts/setup-dev.ps1 to install and register repository hooks." -ForegroundColor Gray
 }
 
 # Step 6: VS Code Extension Installation (Optional)
-Write-Host "`n[Step 6/9] Installing VS Code extension (optional)..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 7 -Message 'Installing VS Code extension (optional)...'
 
 Write-Host "   Fetching extension from GitHub Releases..." -ForegroundColor Gray
 
@@ -506,21 +857,21 @@ if ($cliFound) {
                     & $ide --install-extension $tempVsix --force 2>&1 | Out-Null
 
                     if ($LASTEXITCODE -eq 0) {
-                        Write-Host "OK" -ForegroundColor Green
+                        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                     } else {
-                        Write-Host "WARN" -ForegroundColor Yellow
+                        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
                     }
                 }
             }
             Remove-Item $tempVsix -ErrorAction SilentlyContinue
         } else {
             Write-Host "   No .vsix asset found on latest GitHub release " -NoNewline -ForegroundColor White
-            Write-Host "WARN" -ForegroundColor Yellow
+            Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         }
     }
     catch {
         Write-Host "   VS Code extension installation failed " -NoNewline -ForegroundColor White
-        Write-Host "WARN" -ForegroundColor Yellow
+        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
     }
 }
 else {
@@ -530,7 +881,7 @@ else {
 }
 
 # Step 7: Smoke Tests (Health Checks)
-Write-Host "`n[Step 7/9] Running smoke tests..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 8 -Message 'Running smoke tests...'
 
 $smokeTestsPassed = $true
 
@@ -544,17 +895,17 @@ if (Test-Path $collabCmd) {
     & $collabCmd --help 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "   collab command available " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   collab command available " -NoNewline -ForegroundColor White
-        Write-Host "WARN" -ForegroundColor Yellow
+        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         $smokeTestsPassed = $false
     }
 }
 else {
     Write-Host "   collab command not found " -NoNewline -ForegroundColor White
-    Write-Host "WARN" -ForegroundColor Yellow
+    Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
     $smokeTestsPassed = $false
 }
 
@@ -564,22 +915,22 @@ if (Test-Path ".env") {
     $envContent = Get-Content ".env" -Raw
     if ($envContent -match "SUPABASE_URL.*=" -and $envContent -match "SUPABASE_ANON_KEY.*=") {
         Write-Host "   Supabase configuration present " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
         Write-Host "   Supabase credentials not set " -NoNewline -ForegroundColor White
-        Write-Host "WARN" -ForegroundColor Yellow
+        Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         $smokeTestsPassed = $false
     }
 }
 
 if ($smokeTestsPassed) {
     Write-Host "   All smoke tests passed " -NoNewline -ForegroundColor White
-    Write-Host "OK" -ForegroundColor Green
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
 # Step 8: Ensuring Collaborative Daemon is running
-Write-Host "`n[Step 8/9] Ensuring Collaborative Daemon is running..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 9 -Message 'Ensuring Collaborative Daemon is running...'
 
 if (Test-Path $pythonPath) {
     $collabExe = Join-Path (Split-Path $pythonPath) "collab.exe"
@@ -589,19 +940,19 @@ if (Test-Path $pythonPath) {
         & $collabExe daemon-start
         if ($LASTEXITCODE -eq 0) {
             Write-Host "   Daemon started successfully " -NoNewline -ForegroundColor White
-            Write-Host "OK" -ForegroundColor Green
+            Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
         } else {
             Write-Host "   Failed to start daemon " -NoNewline -ForegroundColor White
-            Write-Host "WARN" -ForegroundColor Yellow
+            Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         }
     } else {
         Write-Host "   Daemon is already running " -NoNewline -ForegroundColor White
-        Write-Host "OK" -ForegroundColor Green
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
 }
 
 # Step 9: Final Verification
-Write-Host "`n[Step 9/9] Final verification..." -ForegroundColor Yellow
+Write-SetupStepHeader -Step 10 -Message 'Final verification...'
 & $collabExe daemon-status
 
 # Final Summary - Only show if not called from dev script

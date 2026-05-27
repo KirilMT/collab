@@ -74,26 +74,19 @@ Collab Runtime is a standalone collaborative file-locking package that provides 
 
 ```text
 collab/
-├── src/
-│   ├── main.py
-│   ├── lock_client.py
-│   ├── live_locks_watcher.py
-│   ├── logging_config.py
-│   └── dashboard/
-│       └── index.html
-├── tests/
-│   ├── backend/
-│   │   ├── unit/
-│   │   ├── functional/
-│   │   ├── integration/
-│   │   ├── security/
-│   │   ├── performance/
-│   │   └── reliability/
-│   └── frontend/
-│       ├── jest/
-│       └── playwright/
+├── src/                        # Python runtime implementation
+├── collab/                     # PyPI import shim (package name must stay collab)
 ├── scripts/
-├── docs/
+│   ├── git-hooks/              # Collab hook templates (installed into .git/hooks)
+│   ├── install_hooks.sh
+│   ├── setup.ps1 / setup.sh
+│   └── setup-dev.ps1 / setup-dev.sh
+├── supabase/schema.sql         # Database schema for consumer Supabase projects
+├── editors/
+│   ├── vscode/collab-locks/    # VS Code / Cursor extension
+│   └── pycharm/                # PyCharm run configuration template
+├── docs/pypi/README.md         # PyPI readme (pyproject.toml readme)
+├── tests/
 ├── .agents/
 ├── .github/
 ├── run.py
@@ -116,6 +109,26 @@ collab/
 # Runtime command surface
 collab --help
 ```
+
+```bash
+# Linux/macOS — development setup (hooks, prettier, extension tooling)
+./scripts/setup-dev.sh
+```
+
+### AI agent terminals and the virtual environment
+
+Automated and IDE-agent shells often run **without** `VIRTUAL_ENV` set, even after setup. Do not assume `python` / `pip` on `PATH` point at this repo’s `.venv`.
+
+Prefer the project interpreter explicitly:
+
+- Windows PowerShell: `.\.venv\Scripts\python.exe` and `.\.venv\Scripts\pip.exe`
+- Linux/macOS: `./.venv/bin/python` and `./.venv/bin/pip`
+
+Or activate first: `.\.venv\Scripts\Activate.ps1` (Windows) / `source .venv/bin/activate` (Unix), then run `python` / `pip`.
+
+`scripts/format_code.py` and `scripts/validate_code.py` resolve `.venv` Python automatically and run dev tools as `python -m <tool>` so they work in agent shells without activation.
+
+In **Cursor** or **VS Code**, use **Python: Select Interpreter** and point at this repo’s `.venv` so integrated terminals and tasks use the same environment as `.\.venv\Scripts\python.exe`.
 
 ---
 

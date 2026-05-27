@@ -262,6 +262,27 @@ def test_get_targets_and_python_executable_paths(monkeypatch, tmp_path):
     assert formatter._get_python_executable() == format_code.sys.executable
 
 
+def test_exec_resolves_known_tools_via_python_module(monkeypatch):
+    formatter = format_code.CodeFormatter()
+    fake_python = r"C:\fake\.venv\Scripts\python.exe"
+    monkeypatch.setattr(
+        format_code, "_get_venv_python_executable", lambda _root: fake_python
+    )
+
+    captured: list[list[str]] = []
+
+    def _run(cmd, **_kwargs):
+        captured.append(cmd)
+        return _mock_completed(0, "", "")
+
+    monkeypatch.setattr(format_code.subprocess, "run", _run)
+    formatter._exec(["isort", "src"])
+    assert captured
+    assert captured[0][0] == fake_python
+    assert captured[0][1:3] == ["-m", "isort"]
+    assert captured[0][3:] == ["src"]
+
+
 def test_exec_stderr_and_git_lsfiles_failure(monkeypatch, capsys):
     formatter = format_code.CodeFormatter()
 
