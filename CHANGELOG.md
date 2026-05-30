@@ -11,11 +11,10 @@ and this project adheres to
 
 ## [0.3.0](https://github.com/KirilMT/collab/compare/v0.2.9...v0.3.0) (2026-05-30)
 
-
 ### Features
 
-* **phase5:** subprocess hardening, platform probes, and lifecycle errors ([#49](https://github.com/KirilMT/collab/issues/49)) ([3bfdfd5](https://github.com/KirilMT/collab/commit/3bfdfd5a069cd8ad5e263d6a04c623d5f683a711))
-* **phase6:** flat collab/ package at repo root (Option A) ([#51](https://github.com/KirilMT/collab/issues/51)) ([4d7d0f6](https://github.com/KirilMT/collab/commit/4d7d0f6cb19eff2872f6622a011ca8459fb2aa66))
+- **phase5:** subprocess hardening, platform probes, and lifecycle errors ([#49](https://github.com/KirilMT/collab/issues/49)) ([3bfdfd5](https://github.com/KirilMT/collab/commit/3bfdfd5a069cd8ad5e263d6a04c623d5f683a711))
+- **phase6:** flat collab/ package at repo root (Option A) ([#51](https://github.com/KirilMT/collab/issues/51)) ([4d7d0f6](https://github.com/KirilMT/collab/commit/4d7d0f6cb19eff2872f6622a011ca8459fb2aa66))
 
 ## [0.2.9](https://github.com/KirilMT/collab/compare/v0.2.8...v0.2.9) (2026-05-14)
 
