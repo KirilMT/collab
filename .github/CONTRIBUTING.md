@@ -17,7 +17,7 @@ If there is any conflict between generic contributor habits and repository workf
 Read this if you are:
 
 - Opening your first PR in this repository.
-- Modifying runtime code in `src/`.
+- Modifying runtime code in `collab/`.
 - Changing scripts in `scripts/`.
 - Updating tests under `tests/`.
 - Changing CI or release behavior.
@@ -58,10 +58,10 @@ Collab provides collaborative file-locking runtime behavior with CLI and watcher
 
 Key areas:
 
-- `src/main.py`: CLI entry orchestration.
-- `src/lock_client.py`: lock operations, daemon lifecycle, status, release logic.
-- `src/live_locks_watcher.py`: watcher runtime behavior and conflict handling.
-- `src/logging_config.py`: logging setup and lifecycle handling.
+- `collab/main.py`: CLI entry orchestration.
+- `collab/lock_client.py`: lock operations, daemon lifecycle, status, release logic.
+- `collab/live_locks_watcher.py`: watcher runtime behavior and conflict handling.
+- `collab/logging_config.py`: logging setup and lifecycle handling.
 - `scripts/`: format, validation, cleanup, utility workflows.
 - `tests/`: backend and frontend test hierarchy.
 

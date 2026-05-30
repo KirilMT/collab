@@ -102,8 +102,8 @@ Once setup is complete, test the locking system:
 **Terminal 1 (Lock a file):**
 
 ```bash
-collab acquire src/main.py --reason "Testing locking system"
-collab status src/main.py
+collab acquire collab/main.py --reason "Testing locking system"
+collab status collab/main.py
 ```
 
 **Terminal 2 (View lock in another session):**
@@ -115,7 +115,7 @@ collab active
 **Then release the lock:**
 
 ```bash
-collab release src/main.py
+collab release collab/main.py
 ```
 
 **View real-time lock changes:**
@@ -302,7 +302,7 @@ The full schema is in `supabase/schema.sql` and includes:
 
 ```
 collab/
-├── src/
+├── collab/
 │   ├── lock_client.py          # CLI entry point
 │   ├── live_locks_watcher.py   # Background watcher
 │   ├── main.py                 # CLI orchestration + module entry point

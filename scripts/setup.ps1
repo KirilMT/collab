@@ -290,13 +290,13 @@ function Test-SetupCollabInstallHealthy {
         return $false
     }
 
-    & $PythonExe -c "import src.lock_client" 2>$null
+    & $PythonExe -c "import collab.lock_client" 2>$null
     if ($LASTEXITCODE -ne 0) {
         return $false
     }
 
     if ($ExpectEditable) {
-        $moduleFile = (& $PythonExe -c "import src.lock_client as m; print(m.__file__)" 2>$null)
+        $moduleFile = (& $PythonExe -c "import collab.lock_client as m; print(m.__file__)" 2>$null)
         if (-not $moduleFile) {
             return $false
         }
@@ -338,8 +338,8 @@ function Stop-SetupCollabDaemonForReinstall {
 
     Write-Host "   Stopping collab daemon (unlock collab.exe for package upgrade)..." -ForegroundColor Gray
     & $CollabExe daemon-stop 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0 -and (Test-Path (Join-Path $ProjectRoot 'src\lock_client.py'))) {
-        & $PythonExe -m src.lock_client daemon-stop 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0 -and (Test-Path (Join-Path $ProjectRoot 'collab\lock_client.py'))) {
+        & $PythonExe -m collab.lock_client daemon-stop 2>&1 | Out-Null
     }
     Start-Sleep -Milliseconds 800
 }
@@ -614,7 +614,7 @@ $pythonResolved = (Resolve-Path $pythonPath).Path
 $venvScriptsDir = Split-Path -Parent $pythonResolved
 $sitePackagesDir = Get-SetupCollabSitePackagesDir -PythonExe $pythonResolved
 $collabExeCandidate = Join-Path $venvScriptsDir 'collab.exe'
-$expectEditable = Test-Path (Join-Path $projectRoot 'src\lock_client.py')
+$expectEditable = Test-Path (Join-Path $projectRoot 'collab\lock_client.py')
 
 $collabSpec = $env:COLLAB_RUNTIME_SPEC
 if (-not $collabSpec) {

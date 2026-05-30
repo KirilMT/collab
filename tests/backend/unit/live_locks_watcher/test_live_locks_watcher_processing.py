@@ -30,7 +30,7 @@ def test_process_new_files_handles_local_add_exception(monkeypatch):
     mod.DEVELOPER_ID = "tester"
 
     # Should not raise even though add() raises inside
-    mod._process_new_files(client, "main", {"src/a.py"})
+    mod._process_new_files(client, "main", {"collab/a.py"})
 
     # restore
     mod._local_owned_locks = old
@@ -99,7 +99,7 @@ def test_process_releases_handles_discard_exception(monkeypatch):
     mod.DEVELOPER_ID = "tester"
 
     # Should not raise even though discard() raises inside
-    mod._process_releases(fake, {"src/b.py"})
+    mod._process_releases(fake, {"collab/b.py"})
 
     mod._local_owned_locks = old
 
@@ -154,7 +154,7 @@ def test_get_modified_and_unpushed_files_status_and_diff_migrated(
     repo = tmp_path / "repo"
     repo.mkdir()
     # Create a fake file and ensure _get_modified_and_unpushed_files handles it
-    f = repo / "src" / "new.py"
+    f = repo / "collab" / "new.py"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("print('hi')")
 

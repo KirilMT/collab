@@ -38,7 +38,7 @@ def test_scan_remote_locks_warns_about_other_devs(monkeypatch, caplog):
 
     client = FakeScanClient(
         data=[
-            {"file_path": "src/app.py", "developer_id": "bob"},
+            {"file_path": "collab/app.py", "developer_id": "bob"},
         ]
     )
 
@@ -47,7 +47,7 @@ def test_scan_remote_locks_warns_about_other_devs(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="collab.pycharm_watcher"):
         mod._scan_remote_locks(client)
 
-    assert "src/app.py" in mod._warned_remote_locks
+    assert "collab/app.py" in mod._warned_remote_locks
     assert any("REMOTE LOCK" in r.message for r in caplog.records)
     mod._warned_remote_locks.clear()
 
@@ -57,10 +57,12 @@ def test_scan_remote_locks_skips_own_locks(monkeypatch):
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     mod._warned_remote_locks.clear()
 
-    client = FakeScanClient(data=[{"file_path": "src/app.py", "developer_id": "alice"}])
+    client = FakeScanClient(
+        data=[{"file_path": "collab/app.py", "developer_id": "alice"}]
+    )
     mod._scan_remote_locks(client)
 
-    assert "src/app.py" not in mod._warned_remote_locks
+    assert "collab/app.py" not in mod._warned_remote_locks
     mod._warned_remote_locks.clear()
 
 
@@ -72,10 +74,10 @@ def test_scan_remote_locks_clears_released_warnings(monkeypatch, caplog):
 
     # First scan: bob holds a lock
     client_with_lock = FakeScanClient(
-        data=[{"file_path": "src/app.py", "developer_id": "bob"}]
+        data=[{"file_path": "collab/app.py", "developer_id": "bob"}]
     )
     mod._scan_remote_locks(client_with_lock)
-    assert "src/app.py" in mod._warned_remote_locks
+    assert "collab/app.py" in mod._warned_remote_locks
 
     # Second scan: lock released
     import logging
@@ -84,7 +86,7 @@ def test_scan_remote_locks_clears_released_warnings(monkeypatch, caplog):
         client_empty = FakeScanClient(data=[])
         mod._scan_remote_locks(client_empty)
 
-    assert "src/app.py" not in mod._warned_remote_locks
+    assert "collab/app.py" not in mod._warned_remote_locks
     assert any("Remote lock cleared" in r.message for r in caplog.records)
     mod._warned_remote_locks.clear()
 
@@ -96,7 +98,9 @@ def test_scan_remote_locks_no_duplicate_warnings(monkeypatch):
     notify_calls = []
     monkeypatch.setattr(mod, "_notify", lambda t, m: notify_calls.append((t, m)))
 
-    client = FakeScanClient(data=[{"file_path": "src/app.py", "developer_id": "bob"}])
+    client = FakeScanClient(
+        data=[{"file_path": "collab/app.py", "developer_id": "bob"}]
+    )
 
     mod._scan_remote_locks(client)
     mod._scan_remote_locks(client)  # second call — should NOT notify again
@@ -162,7 +166,7 @@ def test_scan_remote_locks_warns_for_other_owner(monkeypatch):
     fake_data = [
         {
             "developer_id": "other_user",
-            "file_path": "src/locked.txt",
+            "file_path": "collab/locked.txt",
             "branch_name": None,
             "reason": None,
         }
@@ -181,7 +185,7 @@ def test_scan_remote_locks_warns_for_other_owner(monkeypatch):
     mod._warned_remote_locks.clear()
     mod._known_remote_locks.clear()
     mod._scan_remote_locks(fake)
-    assert "src/locked.txt" in mod._warned_remote_locks
+    assert "collab/locked.txt" in mod._warned_remote_locks
 
 
 def test_scan_remote_locks_same_owner_updates_known():
@@ -189,7 +193,7 @@ def test_scan_remote_locks_same_owner_updates_known():
     fake_data = [
         {
             "developer_id": "me",
-            "file_path": "src/mine.txt",
+            "file_path": "collab/mine.txt",
             "branch_name": None,
             "reason": None,
         }
@@ -216,7 +220,7 @@ def test_scan_remote_locks_same_owner_updates_known():
     mod._known_remote_locks.clear()
     mod._warned_remote_locks.clear()
     mod._scan_remote_locks(fake)
-    assert "src/mine.txt" in mod._known_remote_locks
+    assert "collab/mine.txt" in mod._known_remote_locks
 
 
 # ---- Auto-migrated from migrated_remaining ----
@@ -229,7 +233,7 @@ def test_scan_remote_locks_skips_local_owned(monkeypatch):
     fake_data = [
         {
             "developer_id": "me",
-            "file_path": "src/owned.txt",
+            "file_path": "collab/owned.txt",
             "branch_name": None,
             "reason": None,
         }
@@ -254,13 +258,13 @@ def test_scan_remote_locks_skips_local_owned(monkeypatch):
     fake = FakeClientLocal(data=fake_data)
     mod.DEVELOPER_ID = "me"
     mod._local_owned_locks.clear()
-    mod._local_owned_locks.add("src/owned.txt")
+    mod._local_owned_locks.add("collab/owned.txt")
     mod._warned_remote_locks.clear()
     mod._known_remote_locks.clear()
 
     # Should not raise and should not add to _warned_remote_locks
     mod._scan_remote_locks(fake)
-    assert "src/owned.txt" not in mod._warned_remote_locks
+    assert "collab/owned.txt" not in mod._warned_remote_locks
 
 
 def test_scan_remote_locks_removed_discards_local_owned(monkeypatch):
@@ -268,9 +272,9 @@ def test_scan_remote_locks_removed_discards_local_owned(monkeypatch):
     # Simulate a previously-known remote lock that was released; if we had it
     # recorded locally, the code path should discard it from _local_owned_locks.
     mod._known_remote_locks.clear()
-    mod._known_remote_locks.add("src/released.txt")
+    mod._known_remote_locks.add("collab/released.txt")
     mod._local_owned_locks.clear()
-    mod._local_owned_locks.add("src/released.txt")
+    mod._local_owned_locks.add("collab/released.txt")
 
     # Fake client returns no locks (empty list)
     class EmptyClient:
@@ -290,7 +294,7 @@ def test_scan_remote_locks_removed_discards_local_owned(monkeypatch):
 
     mod._scan_remote_locks(fake)
     # After scanning, released lock should be removed from local-owned set
-    assert "src/released.txt" not in mod._local_owned_locks
+    assert "collab/released.txt" not in mod._local_owned_locks
 
 
 watcher = load_watcher_module()

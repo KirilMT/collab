@@ -8,12 +8,12 @@ from unittest import mock
 
 import pytest
 
-from src.errors import (
+from collab.errors import (
     ConfigurationError,
     LockServiceUnavailableError,
     SubprocessSecurityError,
 )
-from src.safe_subprocess import CaptureResult
+from collab.safe_subprocess import CaptureResult
 
 from ._helpers import FakeResponse, load_lock_client_module, make_create_client
 
@@ -80,7 +80,7 @@ def test_daemon_status_warns_when_multiple_watchers_discovered(
         "_get_cmdline_for_pid",
         staticmethod(
             lambda pid: (
-                "python -m src.lock_client watch"
+                "python -m collab.lock_client watch"
                 if pid in {111, 222}
                 else "python unrelated.py"
             )
@@ -257,7 +257,7 @@ def test_get_git_username_and_branch_from_capture(monkeypatch):
 def test_acquire_returns_false_when_lock_service_unreachable(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    f = tmp_path / "src" / "app.py"
+    f = tmp_path / "collab" / "app.py"
     f.parent.mkdir(parents=True)
     f.write_text("x", encoding="utf-8")
     monkeypatch.setattr(
@@ -378,7 +378,7 @@ def test_daemon_status_local_only_multiple_discovered_watchers(
     monkeypatch.setattr(
         client,
         "_get_cmdline_for_pid",
-        lambda pid: "python -m src.lock_client watch",
+        lambda pid: "python -m collab.lock_client watch",
     )
     assert client.daemon_status() is True
     assert any("multiple watcher" in r.message.lower() for r in caplog.records)
@@ -400,7 +400,7 @@ def test_discover_running_watchers_win32_tasklist_fallback(monkeypatch):
         client,
         "_get_cmdline_for_pid",
         lambda pid: (
-            f"python -m src.lock_client watch {collab_root}" if pid == 555 else None
+            f"python -m collab.lock_client watch {collab_root}" if pid == 555 else None
         ),
     )
     monkeypatch.setattr(
@@ -423,14 +423,14 @@ def test_discover_running_watchers_psutil_failure_unix(monkeypatch):
     sys.modules["psutil"].process_iter.side_effect = RuntimeError("no psutil")
 
     def _ps_csv():
-        return "777 python -m src.lock_client watch\n"
+        return "777 python -m collab.lock_client watch\n"
 
     monkeypatch.setattr(mod.platform_probe, "ps_pid_cmd_csv", _ps_csv)
     client = mod.LockClient(local_only=True)
     monkeypatch.setattr(
         client,
         "_get_cmdline_for_pid",
-        lambda pid: "python -m src.lock_client watch .collab",
+        lambda pid: "python -m collab.lock_client watch .collab",
     )
     monkeypatch.setattr(client, "_cmdline_matches_watcher", lambda cmd: True)
     monkeypatch.setattr(

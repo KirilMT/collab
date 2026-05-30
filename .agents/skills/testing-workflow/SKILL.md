@@ -50,7 +50,7 @@ findstr /S "def test_" tests\\backend\\*.py
 Check what's uncovered:
 
 ```bash
-pytest --cov=src --cov=scripts --cov-report=term-missing tests/backend
+pytest --cov=collab --cov=scripts --cov-report=term-missing tests/backend
 ```
 
 ### Key Fixtures Available (tests/conftest.py)

@@ -12,10 +12,9 @@ from typing import Optional
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SRC_ROOT = PROJECT_ROOT / "src"
 
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -41,7 +40,7 @@ def _get_staged_files() -> list[str]:
 
 
 def _read_pid_file() -> Optional[int]:
-    from src.lock_client import PID_FILE
+    from collab.lock_client import PID_FILE
 
     pid_path = Path(PID_FILE)
     if not pid_path.exists():
@@ -92,7 +91,7 @@ def _watcher_pid() -> Optional[int]:
 
 
 def acquire_staged() -> int:
-    from src.lock_client import LockClient
+    from collab.lock_client import LockClient
 
     staged_files = _get_staged_files()
     if not staged_files:
@@ -135,7 +134,7 @@ def acquire_staged() -> int:
 
 
 def release_all() -> int:
-    from src.lock_client import LockClient
+    from collab.lock_client import LockClient
 
     try:
         client = LockClient()

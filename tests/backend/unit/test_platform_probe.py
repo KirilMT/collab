@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from src import platform_probe
+from collab import platform_probe
 from tests.backend.subprocess_testing import patch_subprocess
 
 
@@ -136,7 +136,9 @@ def test_wmic_and_powershell_windows_paths(monkeypatch):
         if "wmic" in joined and "Name,ParentProcessId" in joined:
             return _completed(stdout="Name ParentProcessId\npython.exe 100\n")
         if "wmic" in joined and "CommandLine" in joined:
-            return _completed(stdout="CommandLine\npython -m src.lock_client watch\n")
+            return _completed(
+                stdout="CommandLine\npython -m collab.lock_client watch\n"
+            )
         if "powershell" in joined.lower():
             return _completed(stdout="python -m watch")
         if "tasklist" in joined.lower() and "CSV" in joined:
@@ -144,7 +146,7 @@ def test_wmic_and_powershell_windows_paths(monkeypatch):
         return _completed(stdout="")
 
     patch_subprocess(monkeypatch, run=_run)
-    assert platform_probe.wmic_cmdline(555) == "python -m src.lock_client watch"
+    assert platform_probe.wmic_cmdline(555) == "python -m collab.lock_client watch"
     assert "commandline=foo" in platform_probe.wmic_cmdline_value(555)
     name, ppid = platform_probe.wmic_process_name_and_ppid(555)
     assert name == "python.exe"

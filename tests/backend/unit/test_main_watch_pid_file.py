@@ -1,4 +1,4 @@
-"""Targeted tests for watch command branches in src/main.py."""
+"""Targeted tests for watch command branches in collab/main.py."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from contextlib import nullcontext
 
 
 def test_run_cli_watch_pid_file_sets_namespace(monkeypatch):
-    import src.lock_client as lc
-    import src.main as main_mod
+    import collab.lock_client as lc
+    import collab.main as main_mod
 
     class _Client:
         def __init__(self, local_only=False):
@@ -33,7 +33,7 @@ def test_run_cli_watch_pid_file_sets_namespace(monkeypatch):
     monkeypatch.setattr(lc, "_quiet_console_loggers", lambda: None)
     monkeypatch.setattr(lc, "_COLLAB_ROOT", ".collab")
 
-    import src.logging_config as logging_config
+    import collab.logging_config as logging_config
 
     monkeypatch.setattr(logging_config, "setup_collab_logging", lambda **_k: None)
 
@@ -59,8 +59,8 @@ def test_run_cli_watch_pid_file_sets_namespace(monkeypatch):
 
 
 def test_run_cli_active_auto_starts_and_reconciles(monkeypatch, capsys):
-    import src.lock_client as lc
-    import src.main as main_mod
+    import collab.lock_client as lc
+    import collab.main as main_mod
 
     called = {"status": 0, "start": 0, "reconcile": 0}
 
@@ -99,7 +99,7 @@ def test_run_cli_active_auto_starts_and_reconciles(monkeypatch, capsys):
     monkeypatch.setattr(lc, "_quiet_console_loggers", lambda: nullcontext())
     monkeypatch.setattr(lc, "_COLLAB_ROOT", ".collab")
 
-    import src.logging_config as logging_config
+    import collab.logging_config as logging_config
 
     monkeypatch.setattr(logging_config, "setup_collab_logging", lambda **_k: None)
 
@@ -117,8 +117,8 @@ def test_run_cli_active_auto_starts_and_reconciles(monkeypatch, capsys):
 
 
 def test_run_cli_active_auto_start_can_be_disabled(monkeypatch, capsys):
-    import src.lock_client as lc
-    import src.main as main_mod
+    import collab.lock_client as lc
+    import collab.main as main_mod
 
     called = {"status": 0, "start": 0, "reconcile": 0}
 
@@ -157,7 +157,7 @@ def test_run_cli_active_auto_start_can_be_disabled(monkeypatch, capsys):
     monkeypatch.setattr(lc, "_quiet_console_loggers", lambda: nullcontext())
     monkeypatch.setattr(lc, "_COLLAB_ROOT", ".collab")
 
-    import src.logging_config as logging_config
+    import collab.logging_config as logging_config
 
     monkeypatch.setattr(logging_config, "setup_collab_logging", lambda **_k: None)
 
@@ -175,7 +175,7 @@ def test_run_cli_active_auto_start_can_be_disabled(monkeypatch, capsys):
 
 
 def test_is_truthy_env_uses_default_when_missing(monkeypatch):
-    import src.main as main_mod
+    import collab.main as main_mod
 
     monkeypatch.delenv("COLLAB_TEST_BOOL", raising=False)
     assert main_mod._is_truthy_env("COLLAB_TEST_BOOL", default=True) is True
@@ -183,7 +183,7 @@ def test_is_truthy_env_uses_default_when_missing(monkeypatch):
 
 
 def test_ensure_watcher_running_non_target_command(monkeypatch):
-    import src.main as main_mod
+    import collab.main as main_mod
 
     class _Client:
         pass
@@ -194,7 +194,7 @@ def test_ensure_watcher_running_non_target_command(monkeypatch):
 
 
 def test_ensure_watcher_running_skips_when_daemon_alive(monkeypatch):
-    import src.main as main_mod
+    import collab.main as main_mod
 
     class _Client:
         def daemon_status(self):
@@ -209,7 +209,7 @@ def test_ensure_watcher_running_skips_when_daemon_alive(monkeypatch):
 
 
 def test_ensure_watcher_running_start_failure(monkeypatch):
-    import src.main as main_mod
+    import collab.main as main_mod
 
     class _Client:
         def daemon_status(self):
@@ -224,8 +224,8 @@ def test_ensure_watcher_running_start_failure(monkeypatch):
 
 
 def test_run_cli_active_reconcile_exception_is_non_fatal(monkeypatch, capsys):
-    import src.lock_client as lc
-    import src.main as main_mod
+    import collab.lock_client as lc
+    import collab.main as main_mod
 
     called = {"start": 0}
 
@@ -263,7 +263,7 @@ def test_run_cli_active_reconcile_exception_is_non_fatal(monkeypatch, capsys):
     monkeypatch.setattr(lc, "_quiet_console_loggers", lambda: nullcontext())
     monkeypatch.setattr(lc, "_COLLAB_ROOT", ".collab")
 
-    import src.logging_config as logging_config
+    import collab.logging_config as logging_config
 
     monkeypatch.setattr(logging_config, "setup_collab_logging", lambda **_k: None)
 

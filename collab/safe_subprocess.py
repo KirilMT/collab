@@ -34,7 +34,7 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
     }
 )
 
-# Watcher daemon argv shape: python -m src.lock_client watch ...
+# Watcher daemon argv shape: python -m collab.lock_client watch ...
 _ALLOWED_WATCHER_FLAGS = frozenset(
     {
         "--daemon",
@@ -126,9 +126,9 @@ def _validate_watcher_argv(argv: Sequence[str]) -> None:
         raise SubprocessSecurityError("watcher argv too short")
     if not _is_python_executable(argv[0]):
         raise SubprocessSecurityError("watcher must be launched with python/pythonw")
-    if tuple(argv[1:4]) != ("-m", "src.lock_client", "watch"):
+    if tuple(argv[1:4]) != ("-m", "collab.lock_client", "watch"):
         raise SubprocessSecurityError(
-            "watcher module entry must be src.lock_client watch"
+            "watcher module entry must be collab.lock_client watch"
         )
     idx = 4
     while idx < len(argv):

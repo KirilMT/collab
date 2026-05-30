@@ -110,7 +110,7 @@ def test_format_failure_output_generic_fallback():
 
 
 def test_python_module_fallback_command_maps_known_tools():
-    cmd = validate_code._python_module_fallback_command(["ruff", "check", "src"])
+    cmd = validate_code._python_module_fallback_command(["ruff", "check", "collab"])
     assert cmd is not None
     assert cmd[0].lower() == validate_code.sys.executable.lower()
     assert cmd[1:3] == ["-m", "ruff"]
@@ -188,7 +188,7 @@ def test_run_command_uses_python_module_resolution(monkeypatch):
     monkeypatch.setattr(validate_code.subprocess, "run", _fake_run)
 
     success, output = validate_code.run_command(
-        ["ruff", "check", "src"],
+        ["ruff", "check", "collab"],
         "Ruff linting",
         check=False,
     )
@@ -203,7 +203,7 @@ def test_run_command_uses_python_module_resolution(monkeypatch):
 
 def test_get_changed_files_collects_all_three_sources(monkeypatch):
     payloads = [
-        "src/main.py\n",
+        "collab/main.py\n",
         "scripts/validate_code.py\n",
         "new_file.py\n",
     ]
@@ -213,7 +213,7 @@ def test_get_changed_files_collects_all_three_sources(monkeypatch):
 
     monkeypatch.setattr(validate_code.subprocess, "run", _run)
     changed = validate_code._get_changed_files()
-    assert "src/main.py" in changed
+    assert "collab/main.py" in changed
     assert "scripts/validate_code.py" in changed
     assert "new_file.py" in changed
 
@@ -252,7 +252,7 @@ def test_detect_changed_scopes_branches(monkeypatch):
     monkeypatch.setattr(
         validate_code,
         "_get_changed_files",
-        lambda: ["src/lock_client.py"],
+        lambda: ["collab/lock_client.py"],
     )
     scopes = validate_code.detect_changed_scopes()
     assert scopes["full_suite"] is False
@@ -295,14 +295,14 @@ def test_validate_python_backend_quick_modes(monkeypatch):
             "backend": ["tests/backend/unit/"],
             "frontend": [],
             "reason": None,
-            "changed_files": ["src/main.py", "tests/backend/unit/test_x.py"],
+            "changed_files": ["collab/main.py", "tests/backend/unit/test_x.py"],
         },
     )
 
     assert (
         validate_code.validate_python_backend(
             quick=True,
-            files=["src/main.py"],
+            files=["collab/main.py"],
         )
         is False
     )
@@ -373,7 +373,7 @@ def test_validate_frontend_branches(monkeypatch):
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
-            files=["src/main.py"],
+            files=["collab/main.py"],
         )
         is True
     )
@@ -388,7 +388,7 @@ def test_validate_frontend_branches(monkeypatch):
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
-            files=["src/dashboard/app.js"],
+            files=["collab/dashboard/app.js"],
         )
         is True
     )
@@ -531,7 +531,7 @@ def test_validate_backend_diff_cover_warning_and_include_filter(monkeypatch):
 
 
 def test_validate_others_early_return_and_exception(monkeypatch):
-    assert validate_code.validate_others(files=["src/main.py"]) is True
+    assert validate_code.validate_others(files=["collab/main.py"]) is True
 
     monkeypatch.setattr(
         validate_code.subprocess,
@@ -552,7 +552,7 @@ def test_validate_frontend_glob_empty_and_failure(monkeypatch):
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
-            files=["src/dashboard/app.js"],
+            files=["collab/dashboard/app.js"],
         )
         is True
     )
@@ -859,7 +859,7 @@ def test_main_unknown_args_and_multi_category_paths(monkeypatch):
             "validate_code.py",
             "--frontend",
             "--docs",
-            "src/dashboard/app.js",
+            "collab/dashboard/app.js",
             "README.md",
             "--unknown-flag",
         ],

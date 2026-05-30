@@ -4,40 +4,34 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import types
 from unittest import mock
 
 import pytest
 
-from ._helpers import load_watcher_module, patch_subprocess
+from ._helpers import load_watcher_module, patch_git_capture, patch_subprocess
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific process helper")
 def test_get_cmdline_for_pid_local_wmic_and_powershell(monkeypatch):
     mod = load_watcher_module()
-    if "psutil" in sys.modules:
-        del sys.modules["psutil"]
+    fake_psutil = types.SimpleNamespace()
 
-    import types
+    class _FailingProc:
+        def cmdline(self):
+            raise OSError("psutil unavailable in test")
 
-    def fake_run(cmd, capture_output=False, **kwargs):
-        exe = str(cmd[0]).lower()
-        if "wmic" in exe:
-            return types.SimpleNamespace(
-                returncode=0, stdout="CommandLine\npython watch.exe\n"
-            )
-        if "powershell" in exe:
-            return types.SimpleNamespace(
-                returncode=0, stdout="python powershell_watch.exe"
-            )
-        raise RuntimeError(f"unexpected cmd: {cmd!r}")
-
-    patch_subprocess(monkeypatch, run=fake_run)
+    fake_psutil.Process = lambda _pid: _FailingProc()
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "get_cmdline",
+        lambda pid: "python watch.exe" if pid == 1234 else None,
+    )
     got = mod._get_cmdline_for_pid_local(1234)
     assert got is not None
-    assert "watch.exe" in got or "powershell_watch" in got
+    assert "watch.exe" in got
 
 
 def test_write_pid_file_and_get_developer_and_branch(monkeypatch, tmp_path):
@@ -150,12 +144,12 @@ def test_get_current_branch_success(monkeypatch):
     """Test getting current branch on the current platform."""
     mod = load_watcher_module()
 
-    def mock_check_output(cmd, *args, **kwargs):
-        if "branch" in cmd and "--show-current" in cmd:
-            return b"feature/test-branch\n"
-        raise subprocess.CalledProcessError(1, cmd)
+    def _git(argv, **_k):
+        if "branch" in argv and "--show-current" in argv:
+            return "feature/test-branch"
+        return ""
 
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
+    patch_git_capture(monkeypatch, mod, _git)
     result = mod._get_current_branch()
     assert result == "feature/test-branch"
 
@@ -163,11 +157,7 @@ def test_get_current_branch_success(monkeypatch):
 def test_get_current_branch_error(monkeypatch):
     """Test getting current branch returns 'unknown' on error (lines 112-113)."""
     mod = load_watcher_module()
-
-    def mock_check_output(cmd, *args, **kwargs):
-        raise subprocess.CalledProcessError(128, cmd)
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
+    patch_git_capture(monkeypatch, mod, lambda *_a, **_k: "")
     result = mod._get_current_branch()
     assert result == "unknown"
 
@@ -203,7 +193,7 @@ def test_shorten_process_label_and_cmdline_match_moved():
 def test_should_ignore_and_cmdline_helpers_migrated():
     mod = load_watcher_module()
     assert mod._should_ignore_path(".git/objects/abc") is True
-    assert mod._should_ignore_path("src/app.py") is False
+    assert mod._should_ignore_path("collab/app.py") is False
 
     assert mod._cmdline_matches_watcher_local("python live_locks_watcher") is True
     assert mod._cmdline_matches_watcher_local(None) is False
@@ -402,18 +392,13 @@ def test_get_process_info_local_non_windows(monkeypatch):
 
 def test_get_process_info_local_parses_wmic_output(monkeypatch):
     """Windows WMIC output with process row should be parsed."""
-    import types
-
     mod = load_watcher_module()
     monkeypatch.setattr(mod.sys, "platform", "win32")
-
-    def _wmic_run(cmd, **kwargs):
-        return types.SimpleNamespace(
-            returncode=0,
-            stdout="Name  ParentProcessId\ncode.exe 456\n",
-        )
-
-    patch_subprocess(monkeypatch, run=_wmic_run)
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "wmic_process_name_and_ppid",
+        lambda pid: ("code.exe", 456) if pid == 999 else (None, None),
+    )
     assert mod._get_process_info_local(999) == ("code.exe", 456)
 
 
@@ -638,7 +623,7 @@ def test_is_process_alive_win32_tasklist_success(monkeypatch):
     """_is_process_alive returns True on win32 when tasklist finds the PID (no
     psutil)."""
     mod = load_watcher_module()
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
     import builtins as _builtins
 
@@ -650,15 +635,9 @@ def test_is_process_alive_win32_tasklist_success(monkeypatch):
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(_builtins, "__import__", _no_psutil)
-
-    import types
-
-    def _tasklist_run(cmd, **kwargs):
-        return types.SimpleNamespace(
-            returncode=0, stdout="Image  PID\npython.exe  99999"
-        )
-
-    patch_subprocess(monkeypatch, run=_tasklist_run)
+    monkeypatch.setattr(
+        mod.platform_probe, "is_pid_alive_tasklist", lambda pid: pid == 99999
+    )
     assert mod._is_process_alive(99999) is True
 
 
@@ -696,17 +675,16 @@ def test_is_process_alive_non_win32_permission_error(monkeypatch):
 
 
 def test_get_current_branch_non_win32(monkeypatch):
-    """_get_current_branch uses subprocess without creationflags on non- win32."""
+    """_get_current_branch returns git output on non-win32 platforms."""
     mod = load_watcher_module()
-    monkeypatch.setattr(sys, "platform", "linux")
-
-    def _check_output(cmd, **kwargs):
-        assert (
-            "creationflags" not in kwargs
-        ), "creationflags must not be passed on non-win32"
-        return b"main\n"
-
-    patch_subprocess(monkeypatch, check_output=_check_output)
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+    patch_git_capture(
+        monkeypatch,
+        mod,
+        lambda argv, **_k: (
+            "main" if "branch" in argv and "--show-current" in argv else ""
+        ),
+    )
     assert mod._get_current_branch() == "main"
 
 

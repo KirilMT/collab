@@ -23,8 +23,8 @@ def test_active_locks(monkeypatch):
     _patch_lock_service_reachable(monkeypatch)
 
     locks_data = [
-        {"file_path": "src/app.py", "developer_id": "user1"},
-        {"file_path": "src/routes.py", "developer_id": "user2"},
+        {"file_path": "collab/app.py", "developer_id": "user1"},
+        {"file_path": "collab/routes.py", "developer_id": "user2"},
     ]
     response = FakeResponse(status=200, data=locks_data)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
@@ -32,14 +32,14 @@ def test_active_locks(monkeypatch):
     lc = mod.LockClient(developer_id="test_user")
     locks = lc.active()
     assert len(locks) == 2
-    assert locks[0]["file_path"] == "src/app.py"
+    assert locks[0]["file_path"] == "collab/app.py"
 
 
 def test_active_locks_exception(monkeypatch):
     """Test active() raises when the API raises a network error."""
     import pytest
 
-    from src.errors import LockServiceUnavailableError
+    from collab.errors import LockServiceUnavailableError
 
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
@@ -64,7 +64,7 @@ def test_active_locks_with_error(monkeypatch):
     """Test active() raises when Supabase returns an error payload."""
     import pytest
 
-    from src.errors import LockServiceUnavailableError
+    from collab.errors import LockServiceUnavailableError
 
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
@@ -82,7 +82,7 @@ def test_active_locks_dns_failure(monkeypatch):
     """Test active() raises when the Supabase host cannot be resolved."""
     import pytest
 
-    from src.errors import LockServiceUnavailableError
+    from collab.errors import LockServiceUnavailableError
 
     # conftest sets COLLAB_TEST_MODE=1 (skips TCP probe); exercise probe path here.
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
@@ -108,7 +108,7 @@ def test_get_lock_status_expired(monkeypatch):
 
     past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     lock_data = {
-        "file_path": "src/app.py",
+        "file_path": "collab/app.py",
         "developer_id": "other_user",
         "acquired_at": "2025-01-01T10:00:00+00:00",
         "expires_at": past,
@@ -117,7 +117,7 @@ def test_get_lock_status_expired(monkeypatch):
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="test_user")
-    status = lc.get_lock_status("src/app.py")
+    status = lc.get_lock_status("collab/app.py")
     # With server-side expiry disabled, presence of a DB row implies an active
     # lock until explicitly released. The client does not evaluate expires_at.
     assert status["is_locked"] is True

@@ -107,13 +107,13 @@ setup_collab_install_healthy() {
     if setup_collab_has_pip_orphans "$site_pkgs"; then
         return 1
     fi
-    if ! "$VENV_PYTHON" -c "import src.lock_client" 2>/dev/null; then
+    if ! "$VENV_PYTHON" -c "import collab.lock_client" 2>/dev/null; then
         return 1
     fi
     if [ "$expect_editable" = true ]; then
         if ! PROJECT_ROOT="$PROJECT_ROOT" "$VENV_PYTHON" -c '
 import os
-import src.lock_client as mod
+import collab.lock_client as mod
 from pathlib import Path
 
 root = Path(os.environ["PROJECT_ROOT"]).resolve()
@@ -145,7 +145,7 @@ setup_collab_stop_daemon_for_reinstall() {
         return 0
     fi
     echo "   Stopping collab daemon (unlock for package upgrade)..." >&2
-    "$collab_bin" daemon-stop >/dev/null 2>&1 || "$VENV_PYTHON" -m src.lock_client daemon-stop >/dev/null 2>&1 || true
+    "$collab_bin" daemon-stop >/dev/null 2>&1 || "$VENV_PYTHON" -m collab.lock_client daemon-stop >/dev/null 2>&1 || true
     sleep 1
 }
 
@@ -259,7 +259,7 @@ fi
 print_step 4 10 "Installing collab package..."
 
 EXPECT_EDITABLE=false
-if [ -f "src/lock_client.py" ]; then
+if [ -f "collab/lock_client.py" ]; then
     EXPECT_EDITABLE=true
     PACKAGE_SPEC="-e ."
 elif [ -n "$COLLAB_VERSION" ]; then

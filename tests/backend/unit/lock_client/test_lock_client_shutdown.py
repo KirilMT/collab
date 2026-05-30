@@ -60,10 +60,10 @@ def test_graceful_shutdown_smart_release(monkeypatch, tmp_path):
     monkeypatch.setattr(lc, "_run_git_status", lambda: " M src/dirty.py\n")
 
     locks = [
-        {"developer_id": "test_user", "file_path": "src/dirty.py"},
-        {"developer_id": "test_user", "file_path": "src/clean.py"},
+        {"developer_id": "test_user", "file_path": "collab/dirty.py"},
+        {"developer_id": "test_user", "file_path": "collab/clean.py"},
         {"developer_id": "test_user", "file_path": ""},
-        {"developer_id": "other_user", "file_path": "src/other.py"},
+        {"developer_id": "other_user", "file_path": "collab/other.py"},
     ]
     monkeypatch.setattr(lc, "active", mock.Mock(return_value=locks))
 
@@ -121,7 +121,7 @@ def test_graceful_shutdown_releases_locks(monkeypatch, tmp_path):
 
     # Return locks to release
     locks_data = [
-        {"file_path": "src/app.py", "developer_id": "test_user"},
+        {"file_path": "collab/app.py", "developer_id": "test_user"},
     ]
     response = FakeResponse(status=200, data=locks_data)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
@@ -218,8 +218,8 @@ def test_graceful_shutdown_preserves_locks(monkeypatch, tmp_path):
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     locks_data = [
-        {"file_path": "src/app.py", "developer_id": "test_user"},
-        {"file_path": "src/utils.py", "developer_id": "test_user"},
+        {"file_path": "collab/app.py", "developer_id": "test_user"},
+        {"file_path": "collab/utils.py", "developer_id": "test_user"},
     ]
     resp = FakeResponse(status=200, data=locks_data)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(resp))
@@ -351,8 +351,8 @@ def test_graceful_shutdown_active_has_my_locks(monkeypatch, tmp_path):
     lc = _make_client(monkeypatch, tmp_path)
     lc.active = mock.Mock(
         return_value=[
-            {"developer_id": "test_user", "file_path": "src/foo.py"},
-            {"developer_id": "other_user", "file_path": "src/bar.py"},
+            {"developer_id": "test_user", "file_path": "collab/foo.py"},
+            {"developer_id": "other_user", "file_path": "collab/bar.py"},
         ]
     )
     lc._graceful_shutdown()  # covers lines where n_kept is incremented
@@ -1044,28 +1044,28 @@ def test_reconcile_git_failure_returns_current_user_locks(monkeypatch, tmp_path)
         "active",
         mock.Mock(
             return_value=[
-                {"developer_id": "test_user", "file_path": "src/a.py"},
-                {"developer_id": "other", "file_path": "src/b.py"},
+                {"developer_id": "test_user", "file_path": "collab/a.py"},
+                {"developer_id": "other", "file_path": "collab/b.py"},
             ]
         ),
     )
 
     out = lc._reconcile()
-    assert out == {"src/a.py"}
+    assert out == {"collab/a.py"}
 
 
 def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_path):
     """still_valid lock with different token but same machine enters resumed list
     path."""
     lc = _make_client(monkeypatch, tmp_path)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ["src/a.py"])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ["collab/a.py"])
     monkeypatch.setattr(
         lc,
         "active",
         lambda: [
             {
                 "developer_id": "test_user",
-                "file_path": "src/a.py",
+                "file_path": "collab/a.py",
                 "lock_token": "old-token",
             }
         ],
@@ -1091,7 +1091,7 @@ def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_pa
     monkeypatch.setattr(mod.time, "time", lambda: 0)
 
     out = lc._reconcile()
-    assert "src/a.py" in out
+    assert "collab/a.py" in out
 
 
 def test_reconcile_summary_outer_guards_swallow_exceptions(monkeypatch, tmp_path):

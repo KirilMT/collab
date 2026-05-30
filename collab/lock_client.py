@@ -38,8 +38,8 @@ from .errors import (
     WatcherDiscoveryError,
 )
 
-# CLI entrypoint (collab = "src.lock_client:main" in pyproject.toml).
-# Main orchestration is in src/main.py; import here for backward compatibility.
+# CLI entrypoint (collab = "collab.lock_client:main" in pyproject.toml).
+# Main orchestration lives in collab/main.py; re-exported here for console scripts.
 from .main import _run_cli, main
 
 __all__ = ["LockClient", "main", "_run_cli"]
@@ -1477,7 +1477,7 @@ class LockClient:
         cmd = [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--interval",
             str(interval),

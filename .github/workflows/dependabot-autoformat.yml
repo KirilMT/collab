@@ -92,7 +92,7 @@ jobs:
         if: steps.guardrail.outputs.safe == 'true'
         run: |
           # Abort if formatting introduced syntax errors.
-          ruff check src tests scripts run.py conftest.py \
+          ruff check collab tests scripts run.py conftest.py \
             --select E9 --no-fix
 
       - name: Quick test validation gate (ensure logic is sound)

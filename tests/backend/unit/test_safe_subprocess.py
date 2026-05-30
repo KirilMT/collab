@@ -8,8 +8,8 @@ import types
 
 import pytest
 
-from src import safe_subprocess
-from src.errors import SubprocessSecurityError
+from collab import safe_subprocess
+from collab.errors import SubprocessSecurityError
 from tests.backend.subprocess_testing import patch_subprocess
 
 
@@ -27,7 +27,7 @@ def test_validate_watcher_argv_accepts_daemon_shape():
     argv = [
         sys.executable,
         "-m",
-        "src.lock_client",
+        "collab.lock_client",
         "watch",
         "--interval",
         "5",
@@ -38,7 +38,7 @@ def test_validate_watcher_argv_accepts_daemon_shape():
         ".daemon.pid",
     ]
     resolved = safe_subprocess.validate_argv(argv, policy="watcher")
-    assert resolved[2] == "src.lock_client"
+    assert resolved[2] == "collab.lock_client"
     assert resolved[3] == "watch"
 
 
@@ -112,7 +112,7 @@ def test_validate_watcher_argv_rejects_non_python_executable(monkeypatch):
     monkeypatch.setattr(safe_subprocess, "_is_python_executable", lambda _p: False)
     with pytest.raises(SubprocessSecurityError, match="python/pythonw"):
         safe_subprocess._validate_watcher_argv(
-            ["/opt/python3", "-m", "src.lock_client", "watch"],
+            ["/opt/python3", "-m", "collab.lock_client", "watch"],
         )
 
 
@@ -124,7 +124,7 @@ def test_validate_watcher_rejects_non_python_launcher():
             [
                 launcher,
                 "-m",
-                "src.lock_client",
+                "collab.lock_client",
                 "watch",
                 "--daemon",
                 "--pid-file",
@@ -140,14 +140,14 @@ def test_validate_auto_policy_selects_watcher_for_python_module(monkeypatch):
         [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
             "--pid-file",
             "p.pid",
         ],
     )
-    assert argv[2] == "src.lock_client"
+    assert argv[2] == "collab.lock_client"
 
 
 def test_validate_auto_policy_generic_executable_in_test_mode(monkeypatch):
@@ -162,7 +162,7 @@ def test_validate_watcher_resolves_relative_python_to_sys_executable(monkeypatch
         [
             "python",
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
             "--pid-file",
@@ -193,7 +193,7 @@ def test_validate_watcher_rejects_bad_flags_and_short_argv():
             [
                 sys.executable,
                 "-m",
-                "src.lock_client",
+                "collab.lock_client",
                 "watch",
                 "--evil",
             ],
@@ -240,7 +240,7 @@ def test_validate_watcher_pythonw_resolves_executable(monkeypatch, tmp_path):
         [
             "pythonw",
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
         ],
@@ -292,7 +292,7 @@ def test_spawn_background_unix(monkeypatch):
         [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
             "--pid-file",
@@ -324,7 +324,7 @@ def test_spawn_background_windows(monkeypatch):
         [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
             "--pid-file",

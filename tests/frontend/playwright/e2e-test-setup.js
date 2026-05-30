@@ -66,7 +66,7 @@ async function globalSetup() {
 
   console.warn(`📝 Dashboard will be served on: ${TEST_HOST}:${TEST_PORT}`);
   console.warn(
-    `   Source: ${path.join(PROJECT_ROOT, "src", "dashboard", "index.html")}\n`,
+    `   Source: ${path.join(PROJECT_ROOT, "collab", "dashboard", "index.html")}\n`,
   );
 
   console.warn(

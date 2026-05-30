@@ -123,10 +123,10 @@ and this project adheres to
 
 - **frontend:** Add `eslint.config.js` with production-aligned flat-config rules (recommended
   - no-unused-vars warn, no-console warn, no-undef error; targets
-    `src/dashboard/**/*.js` and `tests/frontend/playwright/**/*.js`)
+    `collab/dashboard/**/*.js` and `tests/frontend/playwright/**/*.js`)
 - **frontend:** Add `playwright.config.js` with full E2E test
   configuration — globalSetup/globalTeardown hooks, webServer auto-start,
-  `src/dashboard` static serving, Chromium + Firefox projects, visual regression
+  `collab/dashboard` static serving, Chromium + Firefox projects, visual regression
   settings, .env feature-flag support
 - **frontend:** Add four Playwright E2E helper modules under
   `tests/frontend/playwright/` (e2e-test-setup.js, e2e-test-teardown.js,

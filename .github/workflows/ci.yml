@@ -63,16 +63,16 @@ jobs:
 
       - name: Check import sorting with isort
         run: |
-          isort src tests scripts \
+          isort collab tests scripts \
             --check-only
 
       - name: Check code formatting with black
         run: |
-          black --check src tests scripts
+          black --check collab tests scripts
 
       - name: Check docstring formatting with docformatter
         run: |
-          docformatter --check -r src tests scripts
+          docformatter --check -r collab tests scripts
 
       - name: Check documentation formatting with prettier
         run: |
@@ -83,12 +83,12 @@ jobs:
 
       - name: Check Jinja2 templates with djlint
         run: |
-          djlint --check src/dashboard || \
+          djlint --check collab/dashboard || \
             echo "::warning::djlint found formatting issues"
 
       - name: Lint with ruff
         run: |
-          ruff check src tests scripts
+          ruff check collab tests scripts
 
       - name: Lint with flake8
         run: >-
@@ -104,13 +104,13 @@ jobs:
 
       - name: Security scan with bandit
         run: |
-          bandit -r src/ scripts/ \
+          bandit -r collab/ scripts/ \
             -ll
 
       - name: Test with pytest and generate comprehensive coverage
         run: |
           pytest \
-            --cov=src \
+            --cov=collab \
             --cov=scripts \
             --cov-report=xml \
             tests/

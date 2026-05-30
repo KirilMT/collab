@@ -26,14 +26,14 @@ def _load_fresh(module_name: str):
     return mod
 
 
-def test_src_root_added_to_sys_path(monkeypatch):
+def test_project_root_added_to_sys_path(monkeypatch):
     root = _repo_root()
-    src_root = str((root / "src").resolve())
-    if src_root in sys.path:
-        sys.path.remove(src_root)
+    project_root = str(root.resolve())
+    if project_root in sys.path:
+        sys.path.remove(project_root)
 
     mod = _load_fresh("collab_git_hook_fresh_path")
-    assert str(mod.SRC_ROOT) in sys.path
+    assert str(mod.PROJECT_ROOT) in sys.path
 
 
 def test_read_pid_file_json_decode_and_non_int_pid(monkeypatch, tmp_path):
@@ -41,7 +41,7 @@ def test_read_pid_file_json_decode_and_non_int_pid(monkeypatch, tmp_path):
 
     hook = load_script_module("collab_git_hook.py", "collab_git_hook_extra_pid")
     pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr("src.lock_client.PID_FILE", str(pid_file))
+    monkeypatch.setattr("collab.lock_client.PID_FILE", str(pid_file))
 
     pid_file.write_text("{bad-json", encoding="utf-8")
     assert hook._read_pid_file() is None

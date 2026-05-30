@@ -543,11 +543,11 @@ def test_scan_remote_locks_logs_owned_locks(monkeypatch):
                     "data": [
                         {
                             "developer_id": "alice",
-                            "file_path": "src/a.py",
+                            "file_path": "collab/a.py",
                             "branch_name": "feat",
                             "reason": "manual",
                         },
-                        {"developer_id": "bob", "file_path": "src/b.py"},
+                        {"developer_id": "bob", "file_path": "collab/b.py"},
                         {"developer_id": "alice", "file_path": ""},
                     ]
                 },
@@ -922,7 +922,7 @@ def test_get_lock_status_exception_and_error_branches(monkeypatch):
 
     # API exception path
     c._client = _make_table_client(raise_on=RuntimeError("api fail"))
-    result = c.get_lock_status("src/foo.py")
+    result = c.get_lock_status("collab/foo.py")
     assert result.get("is_locked") is False
     assert "api fail" in result.get("error", "")
 
@@ -949,7 +949,7 @@ def test_get_lock_status_exception_and_error_branches(monkeypatch):
             return _ErrQ()
 
     c._client = _ErrClient()
-    result2 = c.get_lock_status("src/bar.py")
+    result2 = c.get_lock_status("collab/bar.py")
     assert result2.get("is_locked") is False
 
 
@@ -973,7 +973,7 @@ def test_release_no_lock_released_branch(monkeypatch):
             return _Q()
 
     c._client = _TC()
-    ok, msg = c.release("src/foo.py")
+    ok, msg = c.release("collab/foo.py")
     assert not ok
     assert "not owner" in msg.lower() or "no lock" in msg.lower()
 

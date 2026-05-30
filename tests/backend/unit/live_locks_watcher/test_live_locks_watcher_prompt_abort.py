@@ -39,7 +39,7 @@ def test_handle_post_restart_conflict_abort_choice(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         watcher._handle_post_restart_conflict(
             client=object(),
-            fp="src/live_locks_watcher.py",
+            fp="collab/live_locks_watcher.py",
             lock_data={"owner": "dev", "branch": "main", "reason": "test"},
         )
 
@@ -63,7 +63,7 @@ def test_handle_post_restart_conflict_dashboard_unavailable(monkeypatch, capsys)
 
     watcher._handle_post_restart_conflict(
         client=object(),
-        fp="src/live_locks_watcher.py",
+        fp="collab/live_locks_watcher.py",
         lock_data={"owner": "dev", "branch": "main", "reason": "test"},
     )
 

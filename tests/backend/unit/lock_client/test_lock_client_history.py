@@ -15,8 +15,8 @@ def test_history_all_files(monkeypatch):
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
     history_data = [
-        {"file_path": "src/app.py", "developer_id": "user1", "action": "acquired"},
-        {"file_path": "src/app.py", "developer_id": "user1", "action": "released"},
+        {"file_path": "collab/app.py", "developer_id": "user1", "action": "acquired"},
+        {"file_path": "collab/app.py", "developer_id": "user1", "action": "released"},
     ]
     response = FakeResponse(status=200, data=history_data)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
@@ -32,13 +32,13 @@ def test_history_specific_file(monkeypatch):
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
     history_data = [
-        {"file_path": "src/app.py", "developer_id": "user1", "action": "acquired"}
+        {"file_path": "collab/app.py", "developer_id": "user1", "action": "acquired"}
     ]
     response = FakeResponse(status=200, data=history_data)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="test_user")
-    history = lc.history(file_path="src/app.py", limit=10)
+    history = lc.history(file_path="collab/app.py", limit=10)
     assert isinstance(history, list)
 
 

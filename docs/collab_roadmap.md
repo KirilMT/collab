@@ -48,9 +48,9 @@ This roadmap is a living document that evolves with the project.
 ## 🔥 ACTIVE WORK
 
 **Current Phase:** Phase 6 — Flat `collab/` package at repo root (Option A)
-**Status:** 🔄 In progress — branch `feat/phase6-flat-collab-package`
+**Status:** ✅ Complete — branch `feat/phase6-flat-collab-package`
 **Started:** May 27, 2026
-**Target Completion:** TBD
+**Completed:** May 27, 2026
 
 > [!NOTE]
 > Phases 1–4.7 and Phase 5 are complete. Phase 6 merges `src/` into root `collab/`, removes the `__path__` shim, and standardizes on `import collab` / `collab.*` everywhere. We are **not** using `src/collab/` (nested src layout).
@@ -95,19 +95,19 @@ This roadmap is a living document that evolves with the project.
 
 ### Phase 5 — Hardening and Security
 
-- [x] Build central subprocess wrapper utility (`src/safe_subprocess.py`)
+- [x] Build central subprocess wrapper utility (`collab/safe_subprocess.py`)
 - [x] Replace runtime asserts with explicit guards
-- [x] Define error taxonomy for lifecycle paths (`src/errors.py`)
+- [x] Define error taxonomy for lifecycle paths (`collab/errors.py`)
 - [x] Add security regression tests
 - [x] Bandit `-ll` clean on runtime modules (ongoing burndown via wrapper adoption)
 
 ### Phase 6 — Flat `collab/` at repo root (Option A)
 
-- [ ] Merge `src/*.py` and `src/dashboard/` into root `collab/`
-- [ ] Update `pyproject.toml` entry points to `collab.*` (drop `src` package)
-- [ ] Replace `from src.*` with `collab.*` in tests, scripts, and docs
-- [ ] Remove `__path__` shim; delete empty `src/` tree
-- [ ] Verify wheel contains only `collab/`; packaging smoke tests pass
+- [x] Merge `src/*.py` and `src/dashboard/` into root `collab/`
+- [x] Update `pyproject.toml` entry points to `collab.*` (drop `src` package)
+- [x] Replace `from src.*` / `import src.*` with `collab.*` in tests, scripts, and docs
+- [x] Remove `__path__` shim; delete empty `src/` tree
+- [x] Verify wheel contains only `collab/`; packaging smoke tests pass
 
 ---
 
@@ -125,15 +125,14 @@ This roadmap is a living document that evolves with the project.
 | Phase 4.6: Legacy entrypoint removed                       | May 12, 2026 | ✅     |
 | Phase 4.7: Extension distribution                          | May 12, 2026 | ✅     |
 | Phase 5: Hardening complete                                | May 27, 2026 | ✅     |
-| Phase 6: flat `collab/` package (Option A, no `src/` shim) | TBD          | 🔄     |
+| Phase 6: flat `collab/` package (Option A, no `src/` shim) | May 27, 2026 | ✅     |
 | First stable release (v1.0.0)                              | TBD          | 🔄     |
 
 ---
 
 ## 🎯 KEY UNIMPLEMENTED FEATURES
 
-1. **Phase 6 package consolidation** — Single flat `collab/` tree; remove `src/` shim
-2. **First stable release (v1.0.0)** — After Phase 6 and publish housekeeping
+1. **First stable release (v1.0.0)** — After publish housekeeping and consumer verification
 
 ---
 
