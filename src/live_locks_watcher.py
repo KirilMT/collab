@@ -18,7 +18,6 @@ import logging
 import os
 import signal
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -88,6 +87,11 @@ os.makedirs(_COLLAB_ROOT, exist_ok=True)
 
 # Load environment before reading config variables
 load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
+try:
+    from . import platform_probe, safe_subprocess
+except ImportError:
+    from src import platform_probe, safe_subprocess
 
 _setup_collab_logging_obj: Any = None
 try:
@@ -270,17 +274,21 @@ _dashboard_url: str | None = None
 SESSION_TOKEN: str = ""
 
 
+def _git_capture_text(argv: list[str], *, cwd: str | None = None) -> str:
+    """Run an allowlisted git argv and return decoded stdout (empty on failure)."""
+    try:
+        captured = safe_subprocess.capture(argv, policy="git", cwd=cwd or _PROJECT_ROOT)
+        if captured.ok:
+            return safe_subprocess.decode_output(captured.stdout).strip()
+    except Exception as exc:
+        logger.debug("git command failed %s: %s", argv, exc)
+    return ""
+
+
 def _get_developer_id() -> str:
     """Derive developer identity from git config or environment."""
     try:
-        name = (
-            subprocess.check_output(
-                ["git", "config", "user.name"],
-                stderr=subprocess.DEVNULL,
-            )
-            .decode()
-            .strip()
-        )
+        name = _git_capture_text(["git", "config", "user.name"])
         if name:
             return name
     except Exception as exc:
@@ -331,15 +339,7 @@ def _is_same_machine_token(stored_token: str) -> bool:
 
     # Also try git config user.name directly from the current environment
     try:
-        git_name = (
-            subprocess.check_output(
-                ["git", "config", "user.name"],
-                stderr=subprocess.DEVNULL,
-            )
-            .decode()
-            .strip()
-            .lower()
-        )
+        git_name = _git_capture_text(["git", "config", "user.name"]).lower()
         if git_name:
             candidates.append(git_name)
     except Exception as exc:
@@ -373,27 +373,12 @@ def _is_same_machine_token(stored_token: str) -> bool:
 def _get_current_branch() -> str:
     """Return the current git branch name."""
     try:
-        if sys.platform == "win32":
-            return (
-                subprocess.check_output(
-                    ["git", "branch", "--show-current"],
-                    stderr=subprocess.DEVNULL,
-                    creationflags=0x08000000,
-                )
-                .decode()
-                .strip()
-            )
-        else:
-            return (
-                subprocess.check_output(
-                    ["git", "branch", "--show-current"],
-                    stderr=subprocess.DEVNULL,
-                )
-                .decode()
-                .strip()
-            )
+        branch = _git_capture_text(["git", "branch", "--show-current"])
+        if branch:
+            return branch
     except Exception:
-        return "unknown"
+        pass
+    return "unknown"
 
 
 def _parse_git_status_path(line: str) -> str:
@@ -489,15 +474,7 @@ def _is_process_alive(pid: int) -> bool:
 
             return bool(psutil.pid_exists(pid))
         except ImportError:
-            try:
-                out = subprocess.check_output(
-                    ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                    text=True,
-                    creationflags=0x08000000,
-                )
-                return str(pid) in out
-            except Exception:
-                return False
+            return platform_probe.is_pid_alive_tasklist(pid)
     else:
         try:
             os.kill(pid, 0)
@@ -799,17 +776,10 @@ def _get_modified_and_unpushed_files() -> set[str]:
     agree on which files should be locked.
     """
     result: set[str] = set()
-    kwargs: dict[str, Any] = {"stderr": subprocess.DEVNULL}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000
 
     # Part 1: dirty/staged files
     try:
-        out = (
-            subprocess.check_output(["git", "status", "--porcelain"], **kwargs)
-            .decode()
-            .strip()
-        )
+        out = _git_capture_text(["git", "status", "--porcelain"])
         if out:
             for line in out.splitlines():
                 if len(line) > 3:
@@ -821,18 +791,11 @@ def _get_modified_and_unpushed_files() -> set[str]:
 
     # Part 2: committed but unpushed files
     try:
-        # First verify an upstream branch exists; if not, skip silently
-        subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            **kwargs,
-        )
-        diff_out = (
-            subprocess.check_output(
-                ["git", "diff", "--name-only", "@{u}..HEAD"], **kwargs
-            )
-            .decode()
-            .strip()
-        )
+        if not _git_capture_text(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        ):
+            raise RuntimeError("no upstream")
+        diff_out = _git_capture_text(["git", "diff", "--name-only", "@{u}..HEAD"])
         if diff_out:
             for line in diff_out.splitlines():
                 p = _normalize_path(line.strip(), _PROJECT_ROOT)
@@ -1152,14 +1115,10 @@ def _handle_post_restart_conflict(client, fp: str, lock_data: dict) -> None:
             if choice == "2":
                 try:
                     diff_args = ["git", "diff", fp]
-                    diff_kwargs: dict[str, Any] = {
-                        "stderr": subprocess.DEVNULL,
-                    }
-                    if sys.platform == "win32":
-                        diff_kwargs["creationflags"] = 0x08000000
-                    diff_out = subprocess.check_output(diff_args, **diff_kwargs).decode(
-                        errors="replace"
+                    captured = safe_subprocess.capture(
+                        diff_args, policy="git", cwd=_PROJECT_ROOT
                     )
+                    diff_out = safe_subprocess.decode_output(captured.stdout)
                     print(f"\n--- git diff {fp} ---")
                     print(diff_out or "(no diff output)")
                     print("---\n")
@@ -1205,7 +1164,6 @@ def _graceful_shutdown() -> None:
     dev_id = DEVELOPER_ID
     if dev_id and SUPABASE_URL and SUPABASE_ANON_KEY and create_client is not None:
         try:
-            assert create_client is not None
             client = cast(Callable[..., Any], create_client)(
                 SUPABASE_URL, SUPABASE_ANON_KEY
             )
@@ -1349,35 +1307,11 @@ def _write_pid_file(pid: int, parent_pid: int | None = None) -> None:
 
 
 def _get_process_info_local(pid: int) -> tuple[str | None, int | None]:
-    """Fetch process name and parent PID via wmic on Windows."""
+    """Fetch process name and parent PID via platform probe on Windows."""
     if sys.platform != "win32":
         return None, None
     try:
-        # Creationflags=0x08000000 hides the console window on Windows
-        out = (
-            subprocess.check_output(
-                [
-                    "wmic",
-                    "process",
-                    "where",
-                    f"ProcessId={pid}",
-                    "get",
-                    "Name,ParentProcessId",
-                ],
-                stderr=subprocess.DEVNULL,
-                creationflags=0x08000000,
-            )
-            .decode()
-            .strip()
-        )
-        lines = out.splitlines()
-        if len(lines) > 1:
-            parts = lines[1].split()
-            # Parts usually [Name, ParentProcessId]
-            if len(parts) >= 2:
-                name = parts[0]
-                ppid = int(parts[1])
-                return name, ppid
+        return platform_probe.wmic_process_name_and_ppid(pid)
     except Exception as exc:
         logger.debug("wmic process-info lookup for pid=%d failed: %s", pid, exc)
     return None, None
@@ -1470,36 +1404,7 @@ def _get_cmdline_for_pid_local(pid: int) -> Optional[str]:
     except Exception:
         logger.debug("psutil not available for cmdline lookup (pid=%d)", pid)
 
-    # Windows fallbacks
-    if sys.platform == "win32":
-        try:
-            out = subprocess.check_output(
-                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            lines = [line.strip() for line in out.splitlines() if line.strip()]
-            if len(lines) >= 2:
-                return " ".join(lines[1:]).strip()
-        except Exception as exc:
-            logger.debug("wmic cmdline lookup failed for pid=%d: %s", pid, exc)
-        try:
-            cmd_str = (
-                '(Get-CimInstance Win32_Process -Filter "ProcessId=%d").'
-                "CommandLine" % pid
-            )
-            ps_cmd = ("-NoProfile", "-Command", cmd_str)
-            out = subprocess.check_output(
-                ["powershell", *ps_cmd], stderr=subprocess.DEVNULL, text=True
-            )
-            out = out.strip()
-            if out:
-                return out
-        except Exception as exc:
-            logger.debug("PowerShell cmdline lookup failed for pid=%d: %s", pid, exc)
-        return None
-
-    return None
+    return platform_probe.get_cmdline(pid)
 
 
 def _cmdline_matches_watcher_local(cmdline: Optional[str]) -> bool:

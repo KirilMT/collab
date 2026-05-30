@@ -246,6 +246,8 @@ def _run_cli() -> None:
             print(f"{'✓' if ok else '✗'} {msg}")
 
         elif args.command == "active":
+            from .errors import LockServiceUnavailableError
+
             started_watcher = _ensure_watcher_running(client, "active")
             if started_watcher:
                 try:
@@ -254,7 +256,17 @@ def _run_cli() -> None:
                     client._reconcile()
                 except Exception as exc:
                     logger.debug("Auto-start reconcile failed: %s", exc)
-            locks = client.active()
+            try:
+                locks = client.active()
+            except LockServiceUnavailableError as exc:
+                print(f"❌ Lock service unavailable: {exc.message}")
+                if exc.detail:
+                    print(f"   {exc.detail}")
+                print(
+                    "   Local git changes are not listed as locks until the "
+                    "service is reachable."
+                )
+                sys.exit(1)
             if not locks:
                 print("No active locks.")
             else:

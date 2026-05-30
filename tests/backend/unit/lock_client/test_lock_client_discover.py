@@ -2,7 +2,7 @@ import os
 import sys
 import types
 
-from ._helpers import load_lock_client_module
+from ._helpers import load_lock_client_module, patch_subprocess
 
 
 def test_discover_running_watchers_with_psutil_workspace_match(monkeypatch):
@@ -147,7 +147,7 @@ def test_is_process_alive_win32_tasklist_fallback(monkeypatch):
             return f"python.exe  {os.getpid()} Console 1 12345 KB"
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
 
     result = mod.LockClient._is_process_alive(os.getpid())
     assert result is True
@@ -183,7 +183,7 @@ def test_discover_running_watchers_no_psutil_win32(monkeypatch):
             )
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_subprocess_run)
+    patch_subprocess(monkeypatch, run=fake_subprocess_run)
     monkeypatch.setattr(
         mod.LockClient,
         "_get_cmdline_for_pid",
@@ -206,7 +206,7 @@ def test_discover_running_watchers_unix_no_psutil(monkeypatch):
         stdout = "12345 python /path/.collab/core/lock_client.py watch\n"
         return types.SimpleNamespace(stdout=stdout, returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
     monkeypatch.setattr(
         mod.LockClient, "_cmdline_matches_watcher", staticmethod(lambda cmd: True)
     )
@@ -234,7 +234,7 @@ def test_get_process_info_local_no_wmic_tasklist_fallback(monkeypatch):
             returncode=0,
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     client = mod.LockClient(local_only=True)
     name = client._get_process_name_via_tasklist(12345)

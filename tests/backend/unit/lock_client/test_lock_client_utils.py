@@ -4,7 +4,12 @@ import types
 from datetime import datetime as _real_datetime
 from pathlib import Path
 
-from ._helpers import FakeClient, FakeResponse, load_lock_client_module
+from ._helpers import (
+    FakeClient,
+    FakeResponse,
+    load_lock_client_module,
+    patch_subprocess,
+)
 
 mod = load_lock_client_module()
 
@@ -161,7 +166,7 @@ def test_get_cmdline_for_pid_windows_powershell_failure_returns_none(monkeypatch
     def _check_output(*_a, **_k):
         raise RuntimeError("powershell failure")
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     assert mod.LockClient._get_cmdline_for_pid(12345) is None
 
 

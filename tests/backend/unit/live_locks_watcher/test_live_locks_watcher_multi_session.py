@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 
 def test_handle_multi_session_interactive_readopt_choice_1(monkeypatch):
@@ -164,11 +164,8 @@ def test_handle_post_restart_conflict_interactive_show_diff_then_continue(monkey
     import builtins
 
     monkeypatch.setattr(builtins, "input", lambda p: next(inputs))
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: b"diff --git a/src/conflict.py b/src/conflict.py\n",
-    )
+    diff_bytes = b"diff --git a/src/conflict.py b/src/conflict.py\n"
+    patch_subprocess(monkeypatch, check_output=lambda *a, **k: diff_bytes)
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
     mod._active_conflicts.clear()
@@ -198,7 +195,7 @@ def test_handle_post_restart_conflict_interactive_diff_failure_then_continue(
     def _boom(*args, **kwargs):
         raise RuntimeError("git diff unavailable")
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _boom)
+    patch_subprocess(monkeypatch, check_output=_boom)
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
     mod._active_conflicts.clear()

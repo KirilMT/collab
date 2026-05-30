@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 
 def test_get_developer_id_from_env(monkeypatch):
@@ -15,7 +15,7 @@ def test_get_developer_id_from_env(monkeypatch):
     def mock_check_output(cmd, *a, **k):
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     result = mod._get_developer_id()
     assert result == "test_developer"
@@ -30,7 +30,7 @@ def test_get_developer_id_from_git(monkeypatch):
             return b"git_user\n"
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     result = mod._get_developer_id()
     assert result == "git_user"

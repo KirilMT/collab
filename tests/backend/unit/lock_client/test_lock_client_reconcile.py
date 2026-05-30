@@ -10,6 +10,7 @@ from ._helpers import (
     FakeResponse,
     load_lock_client_module,
     make_create_client,
+    patch_subprocess,
 )
 
 mod = load_lock_client_module()
@@ -86,7 +87,7 @@ def test_run_git_status(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         return b" M src/app.py\n M src/routes.py\n"
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
     result = mod.LockClient._run_git_status()
     assert "src/app.py" in result
 
@@ -124,7 +125,7 @@ def test_run_git_status_unix(monkeypatch):
     def fake_check_output(args, *a, **k):
         return b" M src/foo.py\n"
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
     out = mod_local.LockClient._run_git_status()
     assert "src/foo.py" in out
 
@@ -194,7 +195,7 @@ def test_get_current_branch_error_lock_client(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         raise subprocess.CalledProcessError(128, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     result = mod.LockClient._get_current_branch()
     assert result is None
@@ -207,7 +208,7 @@ def test_get_current_branch_win32(monkeypatch):
     def fake_check_output(cmd, *a, **k):
         return b"feature/win-branch\n"
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
     got = mod.LockClient._get_current_branch()
     assert got == "feature/win-branch"
 
@@ -219,7 +220,7 @@ def test_get_current_branch_non_win_error(monkeypatch):
     def fail_check_output(cmd, *a, **k):
         raise subprocess.CalledProcessError(2, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", fail_check_output)
+    patch_subprocess(monkeypatch, check_output=fail_check_output)
     got = mod.LockClient._get_current_branch()
     assert got is None
 
@@ -400,7 +401,7 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
             return b"M\tsrc/unpushed.py\n"
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p)
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
@@ -432,7 +433,7 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
             )
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
@@ -455,7 +456,7 @@ def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
             raise RuntimeError("no upstream")
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 

@@ -7,13 +7,17 @@ FakeResponse/FakeClient factories.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import tempfile
 
 import pytest
 
-from ._helpers import FakeResponse, load_lock_client_module, make_create_client
+from ._helpers import (
+    FakeResponse,
+    load_lock_client_module,
+    make_create_client,
+    patch_subprocess,
+)
 
 mod = load_lock_client_module()
 
@@ -355,7 +359,7 @@ def test_cli_daemon_start(monkeypatch, tmp_path, capsys):
     # Ensure we don't rely on a real process check in tests
     is_alive = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive)
-    monkeypatch.setattr(subprocess, "Popen", mock_popen_wrap)
+    patch_subprocess(monkeypatch, popen=mock_popen_wrap)
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-start"])
 
     try:
@@ -658,7 +662,7 @@ def test_cli_daemon_start_with_auto_open_env(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(mod, "LockClient", LocalLockClient)
     # Mock Popen so we capture the child command, and stub process liveness
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     is_alive = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive)
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-start"])

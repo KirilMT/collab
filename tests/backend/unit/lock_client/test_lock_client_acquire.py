@@ -71,6 +71,7 @@ def test_acquire_api_exception(monkeypatch, tmp_path):
         lambda: lambda url, key: ExplodingClient(FakeResponse()),
     )
     monkeypatch.setattr(mod, "_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(mod, "_ensure_lock_service_reachable", lambda: None)
 
     lc = mod.LockClient(developer_id="test_user")
     ok, msg = lc.acquire(str(test_file))
