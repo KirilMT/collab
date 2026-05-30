@@ -69,6 +69,44 @@ def test_main_unhandled_exception_exits_with_fatal(monkeypatch, capsys):
     assert "fatal: lock_client crashed" in err.lower()
 
 
+def test_cli_active_lock_service_unavailable(monkeypatch, capsys):
+    """``collab active`` prints a clear message and exits when Supabase is down."""
+    from src.errors import LockServiceUnavailableError
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    class _UnavailableClient:
+        local_only = False
+
+        def daemon_status(self) -> bool:
+            return True
+
+        def daemon_start(self) -> None:
+            return None
+
+        def _reconcile(self) -> set:
+            return set()
+
+        def active(self):
+            raise LockServiceUnavailableError(
+                "Lock service query failed",
+                detail="getaddrinfo failed",
+            )
+
+    monkeypatch.setattr(mod, "LockClient", lambda **_kw: _UnavailableClient())
+    monkeypatch.setattr(sys, "argv", ["collab", "active"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Lock service unavailable" in out
+    assert "getaddrinfo failed" in out
+
+
 def test_cli_history_prune_success(monkeypatch, capsys):
     """History-prune should print success message when prune succeeds."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")

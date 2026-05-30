@@ -219,3 +219,32 @@ def test_get_cmdline_windows_falls_back_to_powershell(monkeypatch):
     monkeypatch.setattr(platform_probe, "wmic_cmdline", lambda _pid: None)
     monkeypatch.setattr(platform_probe, "powershell_cmdline", lambda _pid: "ps-line")
     assert platform_probe.get_cmdline(3) == "ps-line"
+
+
+def test_windows_helpers_no_executable_on_path(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(platform_probe.safe_subprocess, "is_test_mode", lambda: False)
+    assert platform_probe.wmic_cmdline(5) is None
+    assert platform_probe.wmic_cmdline_value(5) == ""
+    assert platform_probe.wmic_process_name_and_ppid(5) == (None, None)
+    assert platform_probe.wmic_process_name_and_ppid_value(5) == (None, None)
+    assert platform_probe.powershell_cmdline(5) is None
+    assert platform_probe.tasklist_csv_for_image("python.exe") == ""
+
+
+def test_ps_helpers_return_empty_on_windows(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    assert platform_probe.ps_aux() == ""
+    assert platform_probe.ps_pid_cmd_csv() == ""
+
+
+def test_iter_tasklist_skips_blank_csv_lines(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: "tasklist")
+
+    def _run(argv, **kwargs):
+        return _completed(stdout='\n"python.exe","77","Console","1","1 K"\n')
+
+    patch_subprocess(monkeypatch, run=_run)
+    assert platform_probe.iter_tasklist_python_pids() == [77]

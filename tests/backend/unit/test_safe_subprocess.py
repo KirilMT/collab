@@ -101,6 +101,19 @@ def test_validate_taskkill_too_short_and_bad_flags():
         )
     with pytest.raises(SubprocessSecurityError):
         safe_subprocess.validate_argv(["taskkill", "/F", "1234"], policy="taskkill")
+    with pytest.raises(SubprocessSecurityError, match="/PID"):
+        safe_subprocess.validate_argv(
+            ["taskkill", "/F", "9999", "extra"],
+            policy="taskkill",
+        )
+
+
+def test_validate_watcher_argv_rejects_non_python_executable(monkeypatch):
+    monkeypatch.setattr(safe_subprocess, "_is_python_executable", lambda _p: False)
+    with pytest.raises(SubprocessSecurityError, match="python/pythonw"):
+        safe_subprocess._validate_watcher_argv(
+            ["/opt/python3", "-m", "src.lock_client", "watch"],
+        )
 
 
 def test_validate_watcher_rejects_non_python_launcher():
