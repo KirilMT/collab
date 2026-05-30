@@ -1353,11 +1353,15 @@ def test_terminate_process_unix_not_found(monkeypatch):
 
 
 def test_get_process_name_via_tasklist(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+
     def fake_run(cmd, **kw):
-        return types.SimpleNamespace(
-            stdout='"python.exe","12345","Console","1","12345 K"\n',
-            returncode=0,
-        )
+        if isinstance(cmd, (list, tuple)) and any("tasklist" in str(c) for c in cmd):
+            return types.SimpleNamespace(
+                stdout='"python.exe","12345","Console","1","12345 K"\n',
+                returncode=0,
+            )
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="")
 
     patch_subprocess(monkeypatch, run=fake_run)
 
@@ -3387,8 +3391,12 @@ def test_cleanup_orphaned_processes_unix_ps_scan(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
 
+    from tests.backend.subprocess_testing import argv_executable_is
+
     def fake_run(cmd, **kwargs):
-        assert cmd == ["ps", "aux"]
+        cmd_list = list(cmd)
+        assert argv_executable_is(cmd_list, "ps")
+        assert cmd_list[1:] == ["aux"]
         return types.SimpleNamespace(
             stdout=(
                 "user 34567 0.0 0.1 ? S 00:00:00 python "

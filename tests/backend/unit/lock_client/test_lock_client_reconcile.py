@@ -381,6 +381,8 @@ def test_reconcile_handles_resume_multi_refresh_and_summary_cleanup_paths(monkey
 
 def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
     """Cover non-Windows upstream check + diff code path and status-only fallback."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
@@ -388,16 +390,16 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
 
     def _check_output(args, *a, **k):
         # status
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b" M src/dirty.py\n"
         # upstream check
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             calls["n"] += 1
             if calls["n"] == 1:
                 return b"origin/main\n"
             raise RuntimeError("no upstream")
         # diff against upstream
-        if args[:3] == ["git", "diff", "--name-status"]:
+        if argv_subcommand(args, "git", "diff", "--name-status"):
             return b"M\tsrc/unpushed.py\n"
         return b""
 
@@ -416,15 +418,17 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
 
 def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatch):
     """Deleted files from unpushed history remain in-progress for locking."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     def _check_output(args, *a, **k):
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b""
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             return b"origin/main\n"
-        if args[:3] == ["git", "diff", "--name-status"]:
+        if argv_subcommand(args, "git", "diff", "--name-status"):
             return (
                 b"D\t.collab/core/watcher.py\n"
                 b"D\t.collab/dashboard/server.py\n"
@@ -446,13 +450,15 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
 
 def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     """Directory-like status entries ending in '/' are ignored."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     def _check_output(args, *a, **k):
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b" M apps/reporting/instance/\n M src/real.py\n"
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             raise RuntimeError("no upstream")
         return b""
 

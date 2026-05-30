@@ -172,6 +172,16 @@ def validate_argv(argv: Sequence[str], *, policy: str = "auto") -> tuple[str, ..
         normalized[0] = tk
         _validate_taskkill_argv(normalized)
     elif policy == "watcher":
+        if not _is_python_executable(normalized[0]) and _basename(
+            normalized[0]
+        ) not in {
+            "python",
+            "pythonw",
+            "python3",
+        }:
+            raise SubprocessSecurityError(
+                "watcher must be launched with python/pythonw"
+            )
         if not os.path.isabs(normalized[0]):
             if _basename(normalized[0]) == "pythonw":
                 candidate = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")

@@ -6,13 +6,30 @@ which call :func:`src.subprocess_bridge.get_subprocess`.
 
 from __future__ import annotations
 
+import os
 import subprocess as _stdlib_subprocess
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any, Optional
 
 from src import subprocess_bridge
+
+
+def argv_executable_is(args: Sequence[str], name: str) -> bool:
+    """True when argv[0] is ``name`` or ``name.exe`` (PATH-resolved paths included)."""
+    if not args:
+        return False
+    base = os.path.basename(str(args[0])).lower()
+    want = name.lower()
+    return base == want or base == f"{want}.exe"
+
+
+def argv_subcommand(args: Sequence[str], executable: str, *parts: str) -> bool:
+    """Match argv when the executable may be an absolute PATH resolution."""
+    if not argv_executable_is(args, executable):
+        return False
+    return tuple(args[1 : 1 + len(parts)]) == parts
 
 
 def _shim_from_stdlib(
