@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 
 def test_process_new_files_handles_local_add_exception(monkeypatch):
@@ -166,7 +166,7 @@ def test_get_modified_and_unpushed_files_status_and_diff_migrated(
             return b""
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
     # The watcher implementation reads from module-level _PROJECT_ROOT
     monkeypatch.setattr(mod, "_PROJECT_ROOT", str(repo))
     changed = mod._get_modified_and_unpushed_files()

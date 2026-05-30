@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from ._helpers import load_lock_client_module
+from ._helpers import load_lock_client_module, patch_subprocess
 
 mod = load_lock_client_module()
 
@@ -317,10 +317,9 @@ def test_is_same_machine_token_env_fallback_with_git_error(monkeypatch):
     monkeypatch.setattr(mod.socket, "gethostname", lambda: "hostA")
     monkeypatch.setattr(mod.os.path, "abspath", lambda p: "C:/repo")
     monkeypatch.setenv("USERNAME", "alice")
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("git fail")),
+    patch_subprocess(
+        monkeypatch,
+        check_output=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("git fail")),
     )
 
     import hashlib
@@ -347,24 +346,24 @@ def test_get_cmdline_for_pid_windows_wmic_and_powershell_paths(monkeypatch):
         mod.shutil, "which", lambda exe: "wmic" if exe == "wmic" else None
     )
 
-    # WMIC success path
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: "CommandLine\npython watcher.py\n",
-    )
+    def _wmic_ok_run(cmd, **kwargs):
+        return types.SimpleNamespace(
+            returncode=0, stdout="CommandLine\npython watcher.py\n"
+        )
+
+    patch_subprocess(monkeypatch, run=_wmic_ok_run)
     got = mod.LockClient._get_cmdline_for_pid(111)
     assert "watcher.py" in (got or "")
 
-    # WMIC failure then PowerShell success
-    def _check_output(args, *a, **k):
-        if args and args[0] == "wmic":
+    def _wmic_fail_ps_ok_run(cmd, **kwargs):
+        exe = str(cmd[0]).lower()
+        if "wmic" in exe:
             raise RuntimeError("wmic fail")
-        if args and args[0] == "powershell":
-            return "python from-powershell"
-        return ""
+        if "powershell" in exe:
+            return types.SimpleNamespace(returncode=0, stdout="python from-powershell")
+        return types.SimpleNamespace(returncode=1, stdout="")
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, run=_wmic_fail_ps_ok_run)
     got2 = mod.LockClient._get_cmdline_for_pid(222)
     assert got2 == "python from-powershell"
 
@@ -382,11 +381,12 @@ def test_get_cmdline_for_pid_windows_outer_fallback_exception(monkeypatch):
             Process=lambda pid: (_ for _ in ()).throw(RuntimeError("mocked"))
         ),
     )
-    monkeypatch.setattr(
-        mod.shutil,
-        "which",
-        lambda exe: (_ for _ in ()).throw(RuntimeError("which fail")),
-    )
+
+    def failing_which(_exe: str):
+        raise RuntimeError("which fail")
+
+    monkeypatch.setattr(mod.shutil, "which", failing_which)
+    monkeypatch.setattr(mod.platform_probe.shutil, "which", failing_which)
     assert mod.LockClient._get_cmdline_for_pid(333) is None
 
 
@@ -519,10 +519,9 @@ def test_is_process_alive_windows_fallback_branches(monkeypatch):
 
     # Force ctypes path to fail too; then tasklist exception -> False
     monkeypatch.setitem(sys.modules, "ctypes", types.SimpleNamespace(windll=None))
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("tasklist fail")),
+    patch_subprocess(
+        monkeypatch,
+        run=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("tasklist fail")),
     )
     assert mod.LockClient._is_process_alive(3333) is False
 
@@ -598,7 +597,7 @@ def test_discover_running_watchers_fallback_branches(monkeypatch):
             stdout='\n"python.exe","4321","Console","1","1 K"\n', returncode=0
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_win)
+    patch_subprocess(monkeypatch, run=_run_win)
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(
         c,
@@ -620,7 +619,7 @@ def test_discover_running_watchers_fallback_branches(monkeypatch):
             stdout="\n111 python a\n222 python b\n", returncode=0
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_unix)
+    patch_subprocess(monkeypatch, run=_run_unix)
 
     def _cmd(pid):
         if pid == 111:
@@ -633,10 +632,9 @@ def test_discover_running_watchers_fallback_branches(monkeypatch):
     out2 = c._discover_running_watchers()
     assert out2 == []
 
-    monkeypatch.setattr(
-        mod.subprocess,
-        "run",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ps fail")),
+    patch_subprocess(
+        monkeypatch,
+        run=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ps fail")),
     )
     assert c._discover_running_watchers() == []
 
@@ -660,16 +658,16 @@ def test_get_process_info_local_wmic_and_tasklist_fail_branches(monkeypatch):
     monkeypatch.setattr(
         mod.shutil, "which", lambda exe: "wmic" if exe == "wmic" else None
     )
-    monkeypatch.setattr(
-        mod.subprocess,
-        "run",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("wmic fail")),
-    )
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("tasklist fail")),
-    )
+
+    def _wmic_then_tasklist_fail(cmd, **kwargs):
+        exe = str(cmd[0]).lower()
+        if "wmic" in exe:
+            raise RuntimeError("wmic fail")
+        if "tasklist" in exe:
+            raise RuntimeError("tasklist fail")
+        raise RuntimeError(f"unexpected: {cmd!r}")
+
+    patch_subprocess(monkeypatch, run=_wmic_then_tasklist_fail)
 
     assert c._get_process_info_local(9999) == (None, None)
 
@@ -700,7 +698,7 @@ def test_cleanup_orphaned_processes_windows_and_unix_branches(monkeypatch):
             raise RuntimeError("wmic fail")
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_win)
+    patch_subprocess(monkeypatch, run=_run_win)
 
     # psutil present: one PID disappears, one PID generic exception => inspected False
     class _Psutil:
@@ -739,35 +737,33 @@ def test_cleanup_orphaned_processes_windows_and_unix_branches(monkeypatch):
             stdout="u 3333 0 0 python collab_test_lock_client\n", returncode=0
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_unix)
+    patch_subprocess(monkeypatch, run=_run_unix)
     monkeypatch.setattr(
         mod.os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError())
     )
     c.cleanup_orphaned_processes()
 
-    monkeypatch.setattr(
-        mod.subprocess,
-        "run",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ps fail")),
+    patch_subprocess(
+        monkeypatch,
+        run=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ps fail")),
     )
     c.cleanup_orphaned_processes()
 
 
 def test_get_cmdline_for_pid_importerror_and_proc_parse(monkeypatch):
     """Cover psutil import-exception fallback and /proc null-separated parsing."""
+    import builtins
+
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
-    import builtins as _builtins
-
-    real_import = _builtins.__import__
+    real_import = builtins.__import__
 
     def _fake_import(name, *a, **k):
         if name == "psutil":
             raise RuntimeError("import failed")
         return real_import(name, *a, **k)
 
-    monkeypatch.setattr(_builtins, "__import__", _fake_import)
-
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
     monkeypatch.setattr(mod.os.path, "exists", lambda p: p == "/proc/555/cmdline")
 
     class _FH:
@@ -780,7 +776,7 @@ def test_get_cmdline_for_pid_importerror_and_proc_parse(monkeypatch):
         def read(self):
             return b"python\x00.collab/core/lock_client.py\x00watch\x00"
 
-    monkeypatch.setattr(mod, "open", lambda *a, **k: _FH(), raising=False)
+    monkeypatch.setattr(builtins, "open", lambda *a, **k: _FH())
 
     got = mod.LockClient._get_cmdline_for_pid(555)
     assert got == "python .collab/core/lock_client.py watch"
@@ -1064,7 +1060,7 @@ def test_cleanup_orphaned_processes_no_wmic_debug_and_outer_exception(monkeypatc
             returncode=0,
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_tasklist)
+    patch_subprocess(monkeypatch, run=_run_tasklist)
 
     # psutil raises non-NoSuchProcess (inspected=False) and no wmic available.
     class _Psutil:
@@ -1099,7 +1095,7 @@ def test_cleanup_orphaned_processes_unix_valueerror_branch(monkeypatch):
             returncode=0,
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_unix)
+    patch_subprocess(monkeypatch, run=_run_unix)
     c = mod.LockClient(local_only=True)
     c.cleanup_orphaned_processes()  # No raise; ValueError silently continues
 
@@ -1130,7 +1126,7 @@ def test_cleanup_orphaned_processes_psutil_nosuchprocess_continue(monkeypatch):
             )
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", _run)
+    patch_subprocess(monkeypatch, run=_run)
     c = mod.LockClient(local_only=True)
     # Should not raise; PID 1111 hits NoSuchProcess and continues.
     c.cleanup_orphaned_processes()
@@ -1158,11 +1154,10 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
 
     c = mod.LockClient(local_only=True)
     # Prevent actual process spawn; just hit the stale-stop-request removal path.
-    monkeypatch.setattr(c, "_read_pid", lambda: None)
-    monkeypatch.setattr(
-        mod.subprocess,
-        "Popen",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no spawn")),
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: None)
+    patch_subprocess(
+        monkeypatch,
+        popen=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no spawn")),
     )
 
     try:
@@ -1505,10 +1500,9 @@ def test_daemon_start_legacy_cmdline_already_running(monkeypatch, tmp_path):
 
     # daemon_start should return early without spawning
     spawn_called = [False]
-    monkeypatch.setattr(
-        mod.subprocess,
-        "Popen",
-        lambda *a, **k: spawn_called.__setitem__(0, True)
+    patch_subprocess(
+        monkeypatch,
+        popen=lambda *a, **k: spawn_called.__setitem__(0, True)
         or types.SimpleNamespace(pid=1),
     )
 
@@ -1523,7 +1517,7 @@ def test_daemon_stop_propagate_restore_exception(monkeypatch, tmp_path):
     c = mod.LockClient(local_only=True)
     # No running watchers so the stop loop is short
     monkeypatch.setattr(c, "_discover_running_watchers", lambda: [])
-    monkeypatch.setattr(c, "_read_pid", lambda: None)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: None)
 
     class _BadPropLogger:
         propagate = True
@@ -1566,7 +1560,7 @@ def test_daemon_stop_import_failure_is_best_effort(monkeypatch, tmp_path):
     monkeypatch.setattr(_builtins, "__import__", _fake_import)
 
     c = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c, "_read_pid", lambda: None)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(c, "_discover_running_watchers", lambda: [])
     monkeypatch.setattr(c, "_remove_pid", lambda: None)
 
@@ -1839,7 +1833,7 @@ def test_cleanup_orphaned_processes_windows_no_inspection_paths(monkeypatch):
             )
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", _run_win)
+    patch_subprocess(monkeypatch, run=_run_win)
     monkeypatch.setitem(sys.modules, "psutil", None)
     monkeypatch.setattr(mod.os.path, "exists", lambda _p: False)
 
@@ -1873,7 +1867,7 @@ def test_cleanup_orphaned_processes_windows_parsing_and_wmic_error_branches(
             raise RuntimeError("wmic failed")
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", _run)
+    patch_subprocess(monkeypatch, run=_run)
     monkeypatch.setitem(sys.modules, "psutil", None)
 
     which_calls = {"n": 0}

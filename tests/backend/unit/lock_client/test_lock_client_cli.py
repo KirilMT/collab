@@ -7,13 +7,17 @@ FakeResponse/FakeClient factories.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import tempfile
 
 import pytest
 
-from ._helpers import FakeResponse, load_lock_client_module, make_create_client
+from ._helpers import (
+    FakeResponse,
+    load_lock_client_module,
+    make_create_client,
+    patch_subprocess,
+)
 
 mod = load_lock_client_module()
 
@@ -63,6 +67,44 @@ def test_main_unhandled_exception_exits_with_fatal(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert "fatal: lock_client crashed" in err.lower()
+
+
+def test_cli_active_lock_service_unavailable(monkeypatch, capsys):
+    """``collab active`` prints a clear message and exits when Supabase is down."""
+    from src.errors import LockServiceUnavailableError
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    class _UnavailableClient:
+        local_only = False
+
+        def daemon_status(self) -> bool:
+            return True
+
+        def daemon_start(self) -> None:
+            return None
+
+        def _reconcile(self) -> set:
+            return set()
+
+        def active(self):
+            raise LockServiceUnavailableError(
+                "Lock service query failed",
+                detail="getaddrinfo failed",
+            )
+
+    monkeypatch.setattr(mod, "LockClient", lambda **_kw: _UnavailableClient())
+    monkeypatch.setattr(sys, "argv", ["collab", "active"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Lock service unavailable" in out
+    assert "getaddrinfo failed" in out
 
 
 def test_cli_history_prune_success(monkeypatch, capsys):
@@ -355,7 +397,7 @@ def test_cli_daemon_start(monkeypatch, tmp_path, capsys):
     # Ensure we don't rely on a real process check in tests
     is_alive = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive)
-    monkeypatch.setattr(subprocess, "Popen", mock_popen_wrap)
+    patch_subprocess(monkeypatch, popen=mock_popen_wrap)
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-start"])
 
     try:
@@ -658,7 +700,7 @@ def test_cli_daemon_start_with_auto_open_env(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(mod, "LockClient", LocalLockClient)
     # Mock Popen so we capture the child command, and stub process liveness
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     is_alive = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive)
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-start"])

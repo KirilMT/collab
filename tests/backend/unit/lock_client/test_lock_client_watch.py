@@ -315,7 +315,7 @@ def test_watch_stop_request_token_based(monkeypatch, tmp_path):
     # Make session token predictable
     token = "mytoken123"
     monkeypatch.setattr(lc, "_get_session_token", lambda: token)
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -372,7 +372,7 @@ def test_watch_stop_request_pid_based(monkeypatch, tmp_path):
     monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "some_token")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -430,7 +430,7 @@ def test_watch_heartbeat_missing_after_grace(monkeypatch, tmp_path):
     # heartbeat does NOT exist
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -504,7 +504,7 @@ def test_watch_parent_pid_dead_shuts_down(monkeypatch, tmp_path):
     monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -555,7 +555,7 @@ def test_watch_parent_pid_dead_shuts_down(monkeypatch, tmp_path):
 def _configure_watch_loop_common(monkeypatch, lc):
     """Common deterministic watch-loop wiring for deep parent/heartbeat branches."""
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -724,7 +724,7 @@ def test_watch_stop_request_numeric_payload_and_remove_exception(monkeypatch, tm
         f.write(str(os.getpid()))
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -765,7 +765,7 @@ def test_watch_stop_request_invalid_payload_and_open_exception(monkeypatch, tmp_
         f.write("not-a-number")
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
@@ -813,7 +813,7 @@ def test_watch_heartbeat_stale_read_exception_and_parent_name_resolution(
     heartbeat.write_text("alive", encoding="utf-8")
 
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
-    monkeypatch.setattr(lc, "_read_pid", lambda: os.getpid())
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: os.getpid())
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
     monkeypatch.setattr(lc, "_start_parent_monitor_thread", lambda: None)
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)

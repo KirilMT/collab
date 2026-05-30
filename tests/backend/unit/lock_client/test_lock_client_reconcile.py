@@ -10,6 +10,7 @@ from ._helpers import (
     FakeResponse,
     load_lock_client_module,
     make_create_client,
+    patch_subprocess,
 )
 
 mod = load_lock_client_module()
@@ -86,7 +87,7 @@ def test_run_git_status(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         return b" M src/app.py\n M src/routes.py\n"
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
     result = mod.LockClient._run_git_status()
     assert "src/app.py" in result
 
@@ -124,7 +125,7 @@ def test_run_git_status_unix(monkeypatch):
     def fake_check_output(args, *a, **k):
         return b" M src/foo.py\n"
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
     out = mod_local.LockClient._run_git_status()
     assert "src/foo.py" in out
 
@@ -194,7 +195,7 @@ def test_get_current_branch_error_lock_client(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         raise subprocess.CalledProcessError(128, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     result = mod.LockClient._get_current_branch()
     assert result is None
@@ -207,7 +208,7 @@ def test_get_current_branch_win32(monkeypatch):
     def fake_check_output(cmd, *a, **k):
         return b"feature/win-branch\n"
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
     got = mod.LockClient._get_current_branch()
     assert got == "feature/win-branch"
 
@@ -219,7 +220,7 @@ def test_get_current_branch_non_win_error(monkeypatch):
     def fail_check_output(cmd, *a, **k):
         raise subprocess.CalledProcessError(2, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", fail_check_output)
+    patch_subprocess(monkeypatch, check_output=fail_check_output)
     got = mod.LockClient._get_current_branch()
     assert got is None
 
@@ -380,6 +381,8 @@ def test_reconcile_handles_resume_multi_refresh_and_summary_cleanup_paths(monkey
 
 def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
     """Cover non-Windows upstream check + diff code path and status-only fallback."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
@@ -387,20 +390,20 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
 
     def _check_output(args, *a, **k):
         # status
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b" M src/dirty.py\n"
         # upstream check
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             calls["n"] += 1
             if calls["n"] == 1:
                 return b"origin/main\n"
             raise RuntimeError("no upstream")
         # diff against upstream
-        if args[:3] == ["git", "diff", "--name-status"]:
+        if argv_subcommand(args, "git", "diff", "--name-status"):
             return b"M\tsrc/unpushed.py\n"
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p)
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
@@ -415,15 +418,17 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
 
 def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatch):
     """Deleted files from unpushed history remain in-progress for locking."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     def _check_output(args, *a, **k):
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b""
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             return b"origin/main\n"
-        if args[:3] == ["git", "diff", "--name-status"]:
+        if argv_subcommand(args, "git", "diff", "--name-status"):
             return (
                 b"D\t.collab/core/watcher.py\n"
                 b"D\t.collab/dashboard/server.py\n"
@@ -432,7 +437,7 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
             )
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
@@ -445,17 +450,19 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
 
 def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     """Directory-like status entries ending in '/' are ignored."""
+    from tests.backend.subprocess_testing import argv_subcommand
+
     c = mod.LockClient(local_only=True)
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     def _check_output(args, *a, **k):
-        if args[:3] == ["git", "status", "--porcelain"]:
+        if argv_subcommand(args, "git", "status", "--porcelain"):
             return b" M apps/reporting/instance/\n M src/real.py\n"
-        if args[:2] == ["git", "rev-parse"]:
+        if argv_subcommand(args, "git", "rev-parse"):
             raise RuntimeError("no upstream")
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 

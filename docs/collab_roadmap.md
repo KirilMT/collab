@@ -1,6 +1,6 @@
 # Collab Runtime Project Roadmap
 
-_Updated May 13, 2026_ (Phase 5 — Hardening kickoff)
+_Updated May 27, 2026_ (Phase 5.1–5.2 complete; Phase 6 next)
 
 ---
 
@@ -47,13 +47,13 @@ This roadmap is a living document that evolves with the project.
 
 ## 🔥 ACTIVE WORK
 
-**Current Phase:** Phase 5 — Hardening
-**Status:** 🔄 Commencing Workstream A (Central Subprocess Wrapper)
-**Started:** May 13, 2026
-**Target Completion:** May 20, 2026
+**Current Phase:** Phase 6 — Package tree consolidation
+**Status:** 🔄 Planned (see `MIGRATION_PLAN.md` Phase 6)
+**Started:** May 27, 2026
+**Target Completion:** TBD
 
 > [!NOTE]
-> All migration phases (1-4.7) are successfully completed. The repository is now a standalone package with auto-provisioning extension. Phase 5 focuses on security, reliability, and error taxonomy.
+> Phases 1–4.7 and Phase 5 (5.0 foundation, 5.1 git/taskkill/errors, 5.2 platform_probe) are complete in the collab repository. Phase 6 will move `src/` implementation modules into the `collab/` package tree and remove the import shim.
 
 ---
 
@@ -95,11 +95,17 @@ This roadmap is a living document that evolves with the project.
 
 ### Phase 5 — Hardening and Security
 
-- [ ] Build central subprocess wrapper utility
-- [ ] Replace runtime asserts with explicit guards
-- [ ] Define error taxonomy for lifecycle paths
-- [ ] Add security regression tests
-- [ ] Module-by-module Bandit debt burndown
+- [x] Build central subprocess wrapper utility (`src/safe_subprocess.py`)
+- [x] Replace runtime asserts with explicit guards
+- [x] Define error taxonomy for lifecycle paths (`src/errors.py`)
+- [x] Add security regression tests
+- [x] Bandit `-ll` clean on runtime modules (ongoing burndown via wrapper adoption)
+
+### Phase 6 — Consolidate `src/` into `collab/`
+
+- [ ] Move implementation modules under `collab/`
+- [ ] Update entry points and tests
+- [ ] Remove `collab` `__path__` shim to `src/`
 
 ---
 
@@ -116,7 +122,8 @@ This roadmap is a living document that evolves with the project.
 | Phase 4.5: Package published to TestPyPI                | May 12, 2026 | ✅     |
 | Phase 4.6: Legacy entrypoint removed                    | May 12, 2026 | ✅     |
 | Phase 4.7: Extension distribution                       | May 12, 2026 | ✅     |
-| Phase 5: Hardening complete                             | TBD          | 🔄     |
+| Phase 5: Hardening complete                             | May 27, 2026 | ✅     |
+| Phase 6: `src/` merged into `collab/` package tree      | TBD          | 🔄     |
 | First stable release (v1.0.0)                           | TBD          | 🔄     |
 
 ---

@@ -14,7 +14,12 @@ from unittest import mock
 
 import pytest
 
-from ._helpers import FakeResponse, load_lock_client_module, make_create_client
+from ._helpers import (
+    FakeResponse,
+    load_lock_client_module,
+    make_create_client,
+    patch_subprocess,
+)
 
 mod = load_lock_client_module()
 
@@ -376,10 +381,10 @@ def test_cleanup_orphaned_processes_unix_cli(monkeypatch, capsys):
 
     out_line = "root 9999 0.0 0 0 ? S 0:00 python collab_test_lock_client"
 
-    def fake_run(*a, **k):
-        return types.SimpleNamespace(stdout=out_line)
+    def fake_run(cmd, **kwargs):
+        return types.SimpleNamespace(stdout=out_line, returncode=0)
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     killed = {"n": 0}
 

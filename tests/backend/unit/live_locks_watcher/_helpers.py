@@ -121,3 +121,10 @@ def load_watcher_module():
     except Exception:
         pass
     return mod
+
+
+def patch_subprocess(monkeypatch, **kwargs):
+    """Stub subprocess for code paths using ``subprocess_bridge``."""
+    from tests.backend.subprocess_testing import patch_subprocess as _patch
+
+    return _patch(monkeypatch, **kwargs)

@@ -39,6 +39,13 @@ def load_lock_client_module():
     return importlib.import_module("src.lock_client")
 
 
+def patch_subprocess(monkeypatch, **kwargs):
+    """Stub subprocess for code paths using ``subprocess_bridge``."""
+    from tests.backend.subprocess_testing import patch_subprocess as _patch
+
+    return _patch(monkeypatch, **kwargs)
+
+
 def _load_lock_client_module():
     """Backward-compatible alias for older tests that call `_load_lock_client_module()`.
 

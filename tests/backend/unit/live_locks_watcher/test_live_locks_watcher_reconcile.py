@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 # ---- Auto-migrated from migrated_remaining ----
 
@@ -410,15 +410,15 @@ def test_get_modified_and_unpushed_files_status_exception(monkeypatch):
     mod = load_watcher_module()
 
     def _check_output(cmd, *args, **kwargs):
-        if cmd[:3] == ["git", "status", "--porcelain"]:
+        if len(cmd) >= 2 and cmd[1] == "status":
             raise RuntimeError("status fail")
-        if cmd[:2] == ["git", "rev-parse"]:
+        if len(cmd) >= 2 and cmd[1] == "rev-parse":
             return b"origin/main\n"
-        if cmd[:3] == ["git", "diff", "--name-only"]:
+        if len(cmd) >= 3 and cmd[1] == "diff":
             return b"src/from_diff.py\n"
         return b""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     monkeypatch.setattr(mod, "_normalize_path", lambda p, root: p)
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
     out = mod._get_modified_and_unpushed_files()

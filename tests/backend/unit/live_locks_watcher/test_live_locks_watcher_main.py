@@ -10,7 +10,7 @@ from unittest import mock
 
 import pytest
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 
 def _setup_common(monkeypatch, mod):
@@ -53,7 +53,7 @@ def test_main_with_default_args(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -80,7 +80,7 @@ def test_main_with_interval_arg(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -107,7 +107,7 @@ def test_main_with_timeout_arg(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -142,7 +142,7 @@ def test_main_detects_file_changes(monkeypatch):
             return b"M  src/app.py\n"
         return b"test_dev\n"
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -177,7 +177,7 @@ def test_main_releases_locks_on_file_removal(monkeypatch):
             return b""
         return b"test_dev\n"
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -211,7 +211,7 @@ def test_main_handles_keyboard_interrupt(monkeypatch):
             return b"main\n"
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -236,7 +236,7 @@ def test_main_handles_git_error(monkeypatch):
             return b"main\n"
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -267,7 +267,7 @@ def test_main_timeout_triggers(monkeypatch):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     # Use a mock for time.sleep that also advances "now"
 
@@ -366,7 +366,7 @@ def test_main_writes_pid_file(monkeypatch, tmp_path):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -464,7 +464,7 @@ def test_main_detects_conflict(monkeypatch, tmp_path):
             return b" M src/app.py\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -533,7 +533,7 @@ def test_main_releases_lock_on_revert(monkeypatch, tmp_path):
             return b""
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -598,7 +598,7 @@ def test_main_release_lock_exception(monkeypatch, tmp_path):
             return b""
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -653,7 +653,7 @@ def test_main_idle_timeout(monkeypatch, tmp_path):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     real_now = datetime.now
     offset = [timedelta()]
@@ -732,7 +732,7 @@ def test_main_does_not_exit_on_parent_death(monkeypatch, tmp_path):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -808,7 +808,7 @@ def test_main_conflict_cleared_on_revert(monkeypatch, tmp_path):
             return b""
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -1049,7 +1049,7 @@ def test_main_pid_write_oserror(monkeypatch, tmp_path):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -1123,7 +1123,7 @@ def test_main_lock_release_success(monkeypatch, tmp_path):
             return b""
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -1181,7 +1181,7 @@ def test_main_idle_timeout_break(monkeypatch, tmp_path):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     real_now = datetime.now
     offset = [timedelta()]
@@ -1283,7 +1283,7 @@ def test_main_dashboard_fallback_message(monkeypatch, tmp_path, caplog):
             return b"main\n"
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
 
@@ -1526,7 +1526,7 @@ def test_main_parent_pid_from_cli_arg(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1555,7 +1555,7 @@ def test_main_no_parent_pid_detected(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1587,7 +1587,7 @@ def test_main_write_pid_file_falls_back_to_plain_pid(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1632,7 +1632,7 @@ def test_main_parent_pid_dies_breaks_loop(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     # Make datetime advance so parent check runs (>5s)
     real_now = datetime.now
@@ -1686,7 +1686,7 @@ def test_main_debug_mode_via_env(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1716,7 +1716,7 @@ def test_main_debug_mode_via_flag(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1760,7 +1760,7 @@ def test_main_initial_git_status_raises_ignores_exception(monkeypatch, tmp_path)
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1822,7 +1822,7 @@ def test_main_timeout_dirty_status_raises_uses_local_set(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1873,7 +1873,7 @@ def test_main_timeout_with_kept_locks_logs_warning(monkeypatch, tmp_path):
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
@@ -1914,7 +1914,7 @@ def test_main_loop_git_status_exception_logs_and_continues(monkeypatch, tmp_path
     def mock_check_output(cmd, *args, **kwargs):
         return b""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     try:
         mod.main()
