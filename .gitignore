@@ -45,6 +45,7 @@ htmlcov/
 *.log
 *.pid
 logs/
+collab/logs/
 
 # OS and editor files
 .DS_Store

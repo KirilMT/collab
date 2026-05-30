@@ -195,7 +195,7 @@ def setup_collab_logging(
     # prevents unrelated libraries or the application root logger from
     # polluting the logs/ files. Handlers are attached to the
     # 'collab' logger (and not to the root logger) so only logs emitted by
-    # 'collab' namespace (e.g. "src.lock_client", "collab.pycharm_watcher")
+    # 'collab' namespace (e.g. "collab.lock_client", "collab.pycharm_watcher")
     # are written to collab.log / test_collab.log.
     collab_logger = logging.getLogger("collab")
     collab_logger.setLevel(level)

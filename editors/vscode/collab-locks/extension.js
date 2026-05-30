@@ -25,7 +25,7 @@ function getStateDir(workspaceRoot) {
       .update(normRoot)
       .digest("hex")
       .slice(0, 8);
-    // Keep namespace aligned with src/lock_client.py::_get_state_dir().
+    // Keep namespace aligned with collab/lock_client.py::_get_state_dir().
     const dir = path.join(os.tmpdir(), `collab_runtime_${h}`);
     if (!fs.existsSync(dir)) {
       try {

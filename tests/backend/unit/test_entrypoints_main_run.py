@@ -1,4 +1,4 @@
-"""Tests for entrypoint modules run.py and src/main.py (implementation module)."""
+"""Tests for entrypoint modules run.py and collab/main.py (implementation module)."""
 
 from __future__ import annotations
 
@@ -35,32 +35,32 @@ def test_run_py_dunder_main_executes(monkeypatch):
     assert called["n"] == 1
 
 
-def test_src_main_module_executes_as_script(monkeypatch):
+def test_collab_main_module_executes_as_script(monkeypatch):
     monkeypatch.setattr("sys.argv", ["python", "daemon-status"])
-    # Ensure package 'src' is not present in sys.modules to avoid
+    # Ensure package 'collab' is not present in sys.modules to avoid
     # runpy runtime-warning about pre-imported package state.
     import sys as _sys
 
-    saved = _sys.modules.pop("src", None)
+    saved = _sys.modules.pop("collab", None)
     try:
         with pytest.raises(SystemExit) as exc:
-            runpy.run_module("src.main", run_name="__main__")
+            runpy.run_module("collab.main", run_name="__main__")
     finally:
         if saved is not None:
-            _sys.modules["src"] = saved
+            _sys.modules["collab"] = saved
 
     assert exc.value.code in (0, 1)
 
 
-def test_src_main_success_path(monkeypatch):
-    import src.main as main_mod
+def test_collab_main_success_path(monkeypatch):
+    import collab.main as main_mod
 
     monkeypatch.setattr(main_mod, "_run_cli", lambda: None)
     main_mod.main()
 
 
-def test_src_main_exception_path(monkeypatch, capsys):
-    import src.main as main_mod
+def test_collab_main_exception_path(monkeypatch, capsys):
+    import collab.main as main_mod
 
     monkeypatch.setattr(
         main_mod,

@@ -1145,7 +1145,7 @@ def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
         client,
         "active",
         mock.Mock(
-            return_value=[{"file_path": "src/app.py", "developer_id": "test_user"}]
+            return_value=[{"file_path": "collab/app.py", "developer_id": "test_user"}]
         ),
     )
     monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=""))

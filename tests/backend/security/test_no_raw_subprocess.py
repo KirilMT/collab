@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).resolve().parents[3] / "src"
+_SRC = Path(__file__).resolve().parents[3] / "collab"
 _ALLOWED = frozenset(
     {"safe_subprocess.py", "platform_probe.py", "subprocess_bridge.py"}
 )

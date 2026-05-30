@@ -9,27 +9,27 @@ from __future__ import annotations
 
 def test_lock_client_import() -> None:
     """Verify LockClient module can be imported."""
-    from src.lock_client import LockClient  # noqa: F401
+    from collab.lock_client import LockClient  # noqa: F401
 
 
 def test_main_module_import() -> None:
     """Verify main module can be imported."""
-    from src import main  # noqa: F401
+    from collab import main  # noqa: F401
 
 
 def test_live_locks_watcher_import() -> None:
     """Verify live_locks_watcher module can be imported."""
-    from src import live_locks_watcher  # noqa: F401
+    from collab import live_locks_watcher  # noqa: F401
 
 
 def test_logging_config_import() -> None:
     """Verify logging_config module can be imported."""
-    from src import logging_config  # noqa: F401
+    from collab import logging_config  # noqa: F401
 
 
 def test_lock_client_instantiation() -> None:
     """Verify LockClient can be instantiated in test mode."""
-    from src.lock_client import LockClient
+    from collab.lock_client import LockClient
 
     # Should not crash; connection errors are acceptable
     try:

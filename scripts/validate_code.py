@@ -548,14 +548,14 @@ _FULL_SUITE_FILENAMES: frozenset = frozenset(
 _FULL_SUITE_PREFIXES: tuple = ("scripts/", ".github/")
 
 _BACKEND_MAP: List[Tuple[str, List[str]]] = [
-    ("src/", ["tests/backend/unit/"]),
-    ("src/dashboard/", []),
+    ("collab/", ["tests/backend/unit/"]),
+    ("collab/dashboard/", []),
     ("tests/backend/", ["tests/backend/"]),
     ("scripts/", ["tests/backend/"]),
 ]
 
 _FRONTEND_MAP: List[Tuple[str, List[str]]] = [
-    ("src/dashboard/", ["tests/frontend/"]),
+    ("collab/dashboard/", ["tests/frontend/"]),
     ("tests/frontend/", ["tests/frontend/"]),
 ]
 
@@ -703,7 +703,7 @@ def validate_python_backend(
 
         python_targets = [f for f in clean_files if f.endswith(".py")]
         template_targets = [f for f in clean_files if f.endswith(".html")]
-        _bandit_prefixes = ("src/", "scripts/")
+        _bandit_prefixes = ("collab/", "scripts/")
         bandit_targets = [
             f
             for f in clean_files
@@ -726,7 +726,7 @@ def validate_python_backend(
     # Full run (no specific files provided)
     if not files:
         python_targets = [
-            "src",
+            "collab",
             "tests",
             "scripts",
         ]
@@ -831,7 +831,7 @@ def validate_python_backend(
             [
                 "bandit",
                 "-r",
-                "src/",
+                "collab/",
                 "scripts/",
                 "-ll",
             ],
@@ -856,7 +856,7 @@ def validate_python_backend(
             success = "skipped"
     else:
         success, _ = run_command(
-            [python_exe, "-m", "djlint", "--check", "src/dashboard"],
+            [python_exe, "-m", "djlint", "--check", "collab/dashboard"],
             "HTML template linting",
         )
 
@@ -868,7 +868,7 @@ def validate_python_backend(
 
     _FULL_TESTPATHS = ["tests/backend", "tests/frontend"]
     _cov_sources = [
-        "--cov=src",
+        "--cov=collab",
         "--cov=scripts",
     ]
     quick_cov_args = _cov_sources + ["--cov-report=xml"]
@@ -1146,8 +1146,8 @@ def validate_javascript_frontend(
             return True
     else:
         glob_patterns = [
-            "src/**/*.js",
-            "src/**/*.css",
+            "collab/**/*.js",
+            "collab/**/*.css",
             "tests/frontend/**/*.js",
         ]
         discovered = [
@@ -1307,7 +1307,7 @@ def main():
                     for f in args.files
                     if (f.endswith(".py")) and not Path(f).name.startswith(".")
                 ],
-                [f for f in args.files if f.startswith("src/")],
+                [f for f in args.files if f.startswith("collab/")],
             ]
         )
         has_docs = any(

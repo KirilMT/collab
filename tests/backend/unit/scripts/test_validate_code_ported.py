@@ -40,7 +40,7 @@ class TestValidatePythonBackendPaths:
         assert (
             validate_code.validate_python_backend(
                 quick=True,
-                files=["tests/backend/unit/test_foo.py", "src/main.py"],
+                files=["tests/backend/unit/test_foo.py", "collab/main.py"],
             )
             is True
         )
@@ -70,7 +70,7 @@ class TestValidatePythonBackendPaths:
         assert (
             validate_code.validate_python_backend(
                 quick=True,
-                files=["src/main.py"],
+                files=["collab/main.py"],
             )
             is True
         )
@@ -94,7 +94,7 @@ class TestValidatePythonBackendPaths:
                 "backend": ["tests/backend/unit/"],
                 "frontend": [],
                 "reason": None,
-                "changed_files": ["src/main.py"],
+                "changed_files": ["collab/main.py"],
             },
         )
         assert validate_code.validate_python_backend(quick=True, files=None) is True
@@ -124,7 +124,7 @@ class TestValidatePythonBackendPaths:
         assert (
             validate_code.validate_python_backend(
                 quick=True,
-                files=["src/main.py"],
+                files=["collab/main.py"],
             )
             is True
         )
@@ -212,15 +212,15 @@ def test_validate_frontend_branches(monkeypatch):
         lambda *args, **kwargs: {
             "full_suite": False,
             "backend": [],
-            "frontend": ["src/dashboard/app.js"],
+            "frontend": ["collab/dashboard/app.js"],
             "reason": None,
-            "changed_files": ["src/dashboard/app.js"],
+            "changed_files": ["collab/dashboard/app.js"],
         },
     )
     assert (
         validate_code.validate_javascript_frontend(
             quick=True,
-            files=["src/dashboard/app.js"],
+            files=["collab/dashboard/app.js"],
         )
         is True
     )
@@ -232,6 +232,6 @@ def test_detect_changed_scopes_reason_paths(monkeypatch):
     assert scopes["full_suite"] is True
     assert "Infrastructure file changed" in (scopes["reason"] or "")
 
-    monkeypatch.setattr(validate_code, "_get_changed_files", lambda: ["src\\app.py"])
+    monkeypatch.setattr(validate_code, "_get_changed_files", lambda: ["collab\\app.py"])
     scopes = validate_code.detect_changed_scopes()
-    assert "src\\app.py" in scopes["changed_files"]
+    assert "collab\\app.py" in scopes["changed_files"]

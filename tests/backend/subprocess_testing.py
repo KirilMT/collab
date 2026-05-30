@@ -1,7 +1,7 @@
 """Helpers for tests that need to stub OS subprocess calls.
 
 Runtime code invokes subprocess only through ``safe_subprocess`` and ``platform_probe``,
-which call :func:`src.subprocess_bridge.get_subprocess`.
+which call :func:`collab.subprocess_bridge.get_subprocess`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any, Optional
 
-from src import subprocess_bridge
+from collab import subprocess_bridge
 
 
 def argv_executable_is(args: Sequence[str], name: str) -> bool:

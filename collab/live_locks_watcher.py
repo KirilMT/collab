@@ -5,7 +5,7 @@ collaborative file lock notifications. Uses plyer for cross-platform
 desktop notifications.
 
 Usage:
-    python -m src.live_locks_watcher [--interval 5] [--timeout 0]
+    python -m collab.live_locks_watcher [--interval 5] [--timeout 0]
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ from importlib import import_module
 from typing import Any, Callable, Optional, Protocol, cast
 
 from dotenv import load_dotenv
+
+from . import platform_probe, safe_subprocess
 
 # NOTE: do NOT import collab-local modules before the runtime root and sys.path
 # setup is complete. The import for `logging_config` is moved
@@ -87,11 +89,6 @@ os.makedirs(_COLLAB_ROOT, exist_ok=True)
 
 # Load environment before reading config variables
 load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
-
-try:
-    from . import platform_probe, safe_subprocess
-except ImportError:
-    from src import platform_probe, safe_subprocess
 
 _setup_collab_logging_obj: Any = None
 try:
@@ -1659,7 +1656,7 @@ def main() -> None:
                     # Prefer an explicit, familiar invocation instead of a short token
                     label = "python lock_client.py"
                 elif e == "pycharm-watcher":
-                    label = "python -m src.live_locks_watcher"
+                    label = "python -m collab.live_locks_watcher"
                 else:
                     label = _shorten_process_label(existing_entry)
             elif existing_cmd:
@@ -1836,7 +1833,7 @@ def main() -> None:
                             "edits:\n%s\n"
                             "    These files will remain locked until the "
                             "watcher is restarted.\n"
-                            "    Restart with: python -m src.live_locks_watcher",
+                            "    Restart with: python -m collab.live_locks_watcher",
                             args.timeout,
                             len(kept_locks),
                             "\n".join(f"      - {f}" for f in sorted(kept_locks)),

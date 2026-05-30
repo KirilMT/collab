@@ -33,7 +33,7 @@ const testMatch = ["tests/frontend/playwright/**/*.spec.js"];
 const testIgnore = [];
 
 if (!dashboardEnabled) {
-  testIgnore.push("**/src/dashboard/**");
+  testIgnore.push("**/collab/dashboard/**");
 }
 
 module.exports = defineConfig({
@@ -92,7 +92,7 @@ module.exports = defineConfig({
   webServer: {
     command:
       "node tests/frontend/playwright/pre-test-cleanup.js && " +
-      "python -m http.server 8000 --directory src/dashboard",
+      "python -m http.server 8000 --directory collab/dashboard",
     env: {
       E2E_TEST: "true",
       DASHBOARD_ENABLED: dashboardEnabled ? "true" : "false",

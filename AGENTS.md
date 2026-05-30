@@ -74,8 +74,7 @@ Collab Runtime is a standalone collaborative file-locking package that provides 
 
 ```text
 collab/
-├── src/                        # Python runtime implementation
-├── collab/                     # PyPI import shim (package name must stay collab)
+├── collab/                     # Sole Python package (CLI, lock client, watcher, dashboard)
 ├── scripts/
 │   ├── git-hooks/              # Collab hook templates (installed into .git/hooks)
 │   ├── install_hooks.sh
@@ -134,12 +133,12 @@ In **Cursor** or **VS Code**, use **Python: Select Interpreter** and point at th
 
 ## Key Scripts
 
-| Script                             | Purpose                                            | Usage                                         |
-| ---------------------------------- | -------------------------------------------------- | --------------------------------------------- |
-| `scripts/format_code.py`           | Auto-fix formatting for backend/frontend/docs/yaml | `python scripts/format_code.py`               |
-| `scripts/validate_code.py`         | Full CI simulation (lint + test + coverage)        | `python scripts/validate_code.py`             |
-| `scripts/validate_code.py --quick` | Smart targeted validation for changed files        | `python scripts/validate_code.py --quick`     |
-| `scripts/generate_tests.py`        | Generate test stubs for new Python modules         | `python scripts/generate_tests.py src/foo.py` |
+| Script                             | Purpose                                            | Usage                                            |
+| ---------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
+| `scripts/format_code.py`           | Auto-fix formatting for backend/frontend/docs/yaml | `python scripts/format_code.py`                  |
+| `scripts/validate_code.py`         | Full CI simulation (lint + test + coverage)        | `python scripts/validate_code.py`                |
+| `scripts/validate_code.py --quick` | Smart targeted validation for changed files        | `python scripts/validate_code.py --quick`        |
+| `scripts/generate_tests.py`        | Generate test stubs for new Python modules         | `python scripts/generate_tests.py collab/foo.py` |
 
 ---
 
@@ -150,7 +149,7 @@ In **Cursor** or **VS Code**, use **Python: Select Interpreter** and point at th
 ```bash
 # Backend
 pytest tests/backend
-pytest --cov=src --cov=scripts tests/backend
+pytest --cov=collab --cov=scripts tests/backend
 
 # Frontend placeholders (future-ready)
 npm test

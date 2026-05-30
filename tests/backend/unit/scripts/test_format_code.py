@@ -150,7 +150,7 @@ def test_format_frontend_docs_yaml(monkeypatch):
     monkeypatch.setattr(
         formatter,
         "_filter_glob_targets",
-        lambda _patterns: ["src/**/*.js", "docs/**/*.md"],
+        lambda _patterns: ["collab/**/*.js", "docs/**/*.md"],
     )
 
     assert formatter.format_frontend() is True
@@ -177,7 +177,7 @@ def test_format_yaml_with_files(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("djlint_version_ok", [False, True])
 def test_format_templates_paths(monkeypatch, djlint_version_ok):
-    formatter = format_code.CodeFormatter(files=["src/dashboard/index.html"])
+    formatter = format_code.CodeFormatter(files=["collab/dashboard/index.html"])
 
     exec_calls = {"n": 0}
 
@@ -194,7 +194,7 @@ def test_format_templates_paths(monkeypatch, djlint_version_ok):
 
 
 def test_format_templates_check_failure(monkeypatch):
-    formatter = format_code.CodeFormatter(files=["src/dashboard/index.html"])
+    formatter = format_code.CodeFormatter(files=["collab/dashboard/index.html"])
 
     exec_calls = {"n": 0}
 
@@ -248,7 +248,10 @@ def test_main_paths(monkeypatch):
 
 def test_get_targets_and_python_executable_paths(monkeypatch, tmp_path):
     formatter = format_code.CodeFormatter(files=None)
-    assert formatter._get_targets((".py",), ["src", "tests"]) == ["src", "tests"]
+    assert formatter._get_targets((".py",), ["collab", "tests"]) == [
+        "collab",
+        "tests",
+    ]
 
     monkeypatch.setattr(formatter, "root_dir", tmp_path)
     monkeypatch.setattr(format_code.sys, "platform", "win32")
@@ -276,11 +279,11 @@ def test_exec_resolves_known_tools_via_python_module(monkeypatch):
         return _mock_completed(0, "", "")
 
     monkeypatch.setattr(format_code.subprocess, "run", _run)
-    formatter._exec(["isort", "src"])
+    formatter._exec(["isort", "collab"])
     assert captured
     assert captured[0][0] == fake_python
     assert captured[0][1:3] == ["-m", "isort"]
-    assert captured[0][3:] == ["src"]
+    assert captured[0][3:] == ["collab"]
 
 
 def test_exec_stderr_and_git_lsfiles_failure(monkeypatch, capsys):
@@ -358,7 +361,9 @@ def test_prettier_and_target_early_returns(monkeypatch):
     assert formatter.format_docs() is True
 
     monkeypatch.setattr(formatter, "_check_prettier", lambda: False)
-    monkeypatch.setattr(formatter, "_filter_glob_targets", lambda _p: ["src/**/*.js"])
+    monkeypatch.setattr(
+        formatter, "_filter_glob_targets", lambda _p: ["collab/**/*.js"]
+    )
     monkeypatch.setattr(
         formatter,
         "_get_targets",

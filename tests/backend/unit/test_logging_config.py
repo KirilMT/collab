@@ -19,7 +19,7 @@ import pytest
 def _find_logging_config_path() -> Path:
     p = Path(__file__).resolve()
     for parent in p.parents:
-        candidate = parent / "src" / "logging_config.py"
+        candidate = parent / "collab" / "logging_config.py"
         if candidate.exists():
             return candidate
     raise FileNotFoundError("logging_config.py not found in repo")

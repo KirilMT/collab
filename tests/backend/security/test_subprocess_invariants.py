@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from src import safe_subprocess
-from src.errors import SubprocessSecurityError
+from collab import safe_subprocess
+from collab.errors import SubprocessSecurityError
 
 
 @pytest.mark.security
@@ -25,7 +25,7 @@ def test_watcher_spawn_requires_resolved_python_executable():
         [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--daemon",
             "--pid-file",

@@ -29,7 +29,7 @@ def make_sequential_mock(call_map):
         if "git" in cmd_str and "ls-files" in cmd_str:
             m = mock.Mock()
             m.returncode = 0
-            m.stdout = "src/main.py\n"
+            m.stdout = "collab/main.py\n"
             m.stderr = ""
             return m
         if "prettier" in cmd_str or "npm list" in cmd_str:
@@ -73,7 +73,7 @@ def test_scenario_clean(monkeypatch):
     monkeypatch.setattr(
         format_code.CodeFormatter,
         "_get_targets",
-        lambda self, ext, default: ["src/main.py"] if ".py" in ext else [],
+        lambda self, ext, default: ["collab/main.py"] if ".py" in ext else [],
     )
     call_map = {
         "ruff": [(0, "", "")],
@@ -97,7 +97,7 @@ def test_scenario_fixable(monkeypatch):
     monkeypatch.setattr(
         format_code.CodeFormatter,
         "_get_targets",
-        lambda self, ext, default: ["src/main.py"] if ".py" in ext else [],
+        lambda self, ext, default: ["collab/main.py"] if ".py" in ext else [],
     )
     call_map = {
         "ruff": [(1, "fixed", ""), (0, "", "")],
@@ -122,7 +122,7 @@ def test_scenario_unfixable(monkeypatch):
     monkeypatch.setattr(
         format_code.CodeFormatter,
         "_get_targets",
-        lambda self, ext, default: ["src/main.py"] if ".py" in ext else [],
+        lambda self, ext, default: ["collab/main.py"] if ".py" in ext else [],
     )
     call_map = {
         "ruff": [(1, "bad", ""), (1, "bad", "")],

@@ -365,8 +365,8 @@ def test_mark_missing_lines_coverage_helper():
     base = Path(__file__).resolve().parents[4]
     # Keep this lightweight helper deterministic across environments by
     # asserting the migrated runtime modules exist in the repository.
-    assert (base / "src" / "lock_client.py").exists()
-    assert (base / "src" / "live_locks_watcher.py").exists()
+    assert (base / "collab" / "lock_client.py").exists()
+    assert (base / "collab" / "live_locks_watcher.py").exists()
 
 
 def test_safe_now_returns_datetime(monkeypatch):

@@ -32,7 +32,7 @@ def test_cli_history_partial_match_hint(monkeypatch, capsys):
 
     rows = [
         {
-            "file_path": "src/other/app.py",
+            "file_path": "collab/other/app.py",
             "acquired_at": "2026-01-01T10:00:00+00:00",
             "released_at": "2026-01-01T11:00:00+00:00",
             "developer_id": "alice",
@@ -45,7 +45,7 @@ def test_cli_history_partial_match_hint(monkeypatch, capsys):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["lock_client.py", "history", "src/requested.py"],
+        ["lock_client.py", "history", "collab/requested.py"],
     )
 
     mod._run_cli()
@@ -56,7 +56,7 @@ def test_cli_history_partial_match_hint(monkeypatch, capsys):
 
 def test_main_unhandled_exception_exits_with_fatal(monkeypatch, capsys):
     """Cover main() unhandled-exception logging and fatal stderr message."""
-    import src.main as main_module
+    import collab.main as main_module
 
     monkeypatch.setattr(
         main_module, "_run_cli", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -71,7 +71,7 @@ def test_main_unhandled_exception_exits_with_fatal(monkeypatch, capsys):
 
 def test_cli_active_lock_service_unavailable(monkeypatch, capsys):
     """``collab active`` prints a clear message and exits when Supabase is down."""
-    from src.errors import LockServiceUnavailableError
+    from collab.errors import LockServiceUnavailableError
 
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
@@ -155,7 +155,7 @@ def test_cli_acquire(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    test_file = tmp_path / "src" / "app.py"
+    test_file = tmp_path / "collab" / "app.py"
     test_file.parent.mkdir(parents=True)
     test_file.write_text("# code")
 
@@ -176,9 +176,9 @@ def test_cli_release(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    response = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "release", "src/app.py"])
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "release", "collab/app.py"])
 
     mod._run_cli()
     captured = capsys.readouterr()
@@ -206,7 +206,7 @@ def test_cli_active_with_locks(monkeypatch, capsys):
         status=200,
         data=[
             {
-                "file_path": "src/app.py",
+                "file_path": "collab/app.py",
                 "developer_id": "user1",
                 "branch_name": "main",
                 "reason": "testing",
@@ -218,7 +218,7 @@ def test_cli_active_with_locks(monkeypatch, capsys):
 
     mod._run_cli()
     captured = capsys.readouterr()
-    assert "src/app.py" in captured.out
+    assert "collab/app.py" in captured.out
 
 
 def test_cli_status_locked(monkeypatch, capsys):
@@ -232,7 +232,7 @@ def test_cli_status_locked(monkeypatch, capsys):
         status=200,
         data=[
             {
-                "file_path": "src/app.py",
+                "file_path": "collab/app.py",
                 "developer_id": "user1",
                 "acquired_at": "2025-01-01T10:00:00+00:00",
                 "expires_at": future,
@@ -240,7 +240,7 @@ def test_cli_status_locked(monkeypatch, capsys):
         ],
     )
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "status", "src/app.py"])
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "status", "collab/app.py"])
 
     mod._run_cli()
     captured = capsys.readouterr()
@@ -253,7 +253,7 @@ def test_cli_status_unlocked(monkeypatch, capsys):
 
     response = FakeResponse(status=200, data=[])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "status", "src/app.py"])
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "status", "collab/app.py"])
 
     mod._run_cli()
     captured = capsys.readouterr()
@@ -277,9 +277,11 @@ def test_cli_force_release(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    response = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "force-release", "src/app.py"])
+    monkeypatch.setattr(
+        sys, "argv", ["lock_client.py", "force-release", "collab/app.py"]
+    )
 
     mod._run_cli()
     captured = capsys.readouterr()
@@ -309,8 +311,8 @@ def test_cli_acquire_batch(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    file1 = tmp_path / "src" / "a.py"
-    file2 = tmp_path / "src" / "b.py"
+    file1 = tmp_path / "collab" / "a.py"
+    file2 = tmp_path / "collab" / "b.py"
     file1.parent.mkdir(parents=True)
     file1.write_text("# a")
     file2.write_text("# b")
@@ -334,7 +336,7 @@ def test_cli_acquire_batch_conflict(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    file1 = tmp_path / "src" / "a.py"
+    file1 = tmp_path / "collab" / "a.py"
     file1.parent.mkdir(parents=True)
     file1.write_text("# a")
 
@@ -351,10 +353,10 @@ def test_cli_release_batch(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    response = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
     monkeypatch.setattr(
-        sys, "argv", ["lock_client.py", "release-batch", "src/a.py", "src/b.py"]
+        sys, "argv", ["lock_client.py", "release-batch", "collab/a.py", "collab/b.py"]
     )
 
     mod._run_cli()
@@ -473,7 +475,7 @@ def test_cli_history_json_flag(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    records = [{"id": 1, "file_path": "src/app.py", "developer_id": "alice"}]
+    records = [{"id": 1, "file_path": "collab/app.py", "developer_id": "alice"}]
     response = FakeResponse(status=200, data=records)
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "history", "--json"])
@@ -481,7 +483,7 @@ def test_cli_history_json_flag(monkeypatch, capsys):
     mod._run_cli()
     captured = capsys.readouterr()
     assert '"file_path"' in captured.out
-    assert '"src/app.py"' in captured.out
+    assert '"collab/app.py"' in captured.out
 
 
 def test_cli_history_no_match_with_file(monkeypatch, capsys):
@@ -505,7 +507,7 @@ def test_cli_history_formatted_output(monkeypatch, capsys):
     records = [
         {
             "id": 1,
-            "file_path": "src/app.py",
+            "file_path": "collab/app.py",
             "developer_id": "alice",
             "acquired_at": "2026-04-03T22:00:00+00:00",
             "released_at": "2026-04-03T22:30:00+00:00",
@@ -519,7 +521,7 @@ def test_cli_history_formatted_output(monkeypatch, capsys):
 
     mod._run_cli()
     captured = capsys.readouterr()
-    assert "src/app.py" in captured.out
+    assert "collab/app.py" in captured.out
     assert "@alice" in captured.out
     assert "released" in captured.out
     assert "branch:main" in captured.out

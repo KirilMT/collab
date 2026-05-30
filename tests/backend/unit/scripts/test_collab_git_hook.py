@@ -47,13 +47,13 @@ def test_get_staged_files(monkeypatch):
 
 def test_read_pid_file_missing(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr("src.lock_client.PID_FILE", str(pid_file))
+    monkeypatch.setattr("collab.lock_client.PID_FILE", str(pid_file))
     assert hook._read_pid_file() is None
 
 
 def test_read_pid_file_json_and_plain(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr("src.lock_client.PID_FILE", str(pid_file))
+    monkeypatch.setattr("collab.lock_client.PID_FILE", str(pid_file))
 
     pid_file.write_text(json.dumps({"pid": 123}), encoding="utf-8")
     assert hook._read_pid_file() == 123
@@ -67,7 +67,7 @@ def test_read_pid_file_json_and_plain(monkeypatch, tmp_path):
 
 def test_read_pid_file_empty_and_oserror(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr("src.lock_client.PID_FILE", str(pid_file))
+    monkeypatch.setattr("collab.lock_client.PID_FILE", str(pid_file))
 
     pid_file.write_text("\n", encoding="utf-8")
     assert hook._read_pid_file() is None
@@ -161,7 +161,7 @@ def test_acquire_staged_strict_failure(monkeypatch):
         def __init__(self):
             raise RuntimeError("lock backend down")
 
-    monkeypatch.setattr("src.lock_client.LockClient", _BrokenClient)
+    monkeypatch.setattr("collab.lock_client.LockClient", _BrokenClient)
     monkeypatch.setenv("LOCK_STRICT", "1")
     err = io.StringIO()
     with redirect_stderr(err):
@@ -181,7 +181,7 @@ def test_acquire_staged_conflict(monkeypatch):
         def get_lock_status(self, _f):
             return {"locked_by": "dev1"}
 
-    monkeypatch.setattr("src.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
 
     err = io.StringIO()
     with redirect_stderr(err):
@@ -202,7 +202,7 @@ def test_acquire_staged_conflict_status_exception(monkeypatch):
         def get_lock_status(self, _f):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr("src.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
 
     err = io.StringIO()
     with redirect_stderr(err):
@@ -219,7 +219,7 @@ def test_acquire_staged_success(monkeypatch):
         def acquire_multiple(self, *_a, **_k):
             return True, [], "ok"
 
-    monkeypatch.setattr("src.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
     err = io.StringIO()
     with redirect_stderr(err):
         rc = hook.acquire_staged()
@@ -232,7 +232,7 @@ def test_release_all_success_and_failure(monkeypatch):
         def release_all(self):
             return 3
 
-    monkeypatch.setattr("src.lock_client.LockClient", lambda: _ClientOk())
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _ClientOk())
     err = io.StringIO()
     with redirect_stderr(err):
         assert hook.release_all() == 0
@@ -242,7 +242,7 @@ def test_release_all_success_and_failure(monkeypatch):
         def __init__(self):
             raise RuntimeError("fail")
 
-    monkeypatch.setattr("src.lock_client.LockClient", _ClientBad)
+    monkeypatch.setattr("collab.lock_client.LockClient", _ClientBad)
     err = io.StringIO()
     with redirect_stderr(err):
         assert hook.release_all() == 0
