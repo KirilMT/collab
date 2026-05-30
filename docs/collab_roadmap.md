@@ -1,6 +1,6 @@
 # Collab Runtime Project Roadmap
 
-_Updated May 27, 2026_ (Phase 5.1–5.2 complete; Phase 6 next)
+_Updated May 27, 2026_ (Phase 5 complete; Phase 6 flat `collab/` in progress)
 
 ---
 
@@ -47,13 +47,13 @@ This roadmap is a living document that evolves with the project.
 
 ## 🔥 ACTIVE WORK
 
-**Current Phase:** Phase 6 — Package tree consolidation
-**Status:** 🔄 Planned (see `MIGRATION_PLAN.md` Phase 6)
+**Current Phase:** Phase 6 — Flat `collab/` package at repo root (Option A)
+**Status:** 🔄 In progress — branch `feat/phase6-flat-collab-package`
 **Started:** May 27, 2026
 **Target Completion:** TBD
 
 > [!NOTE]
-> Phases 1–4.7 and Phase 5 (5.0 foundation, 5.1 git/taskkill/errors, 5.2 platform_probe) are complete in the collab repository. Phase 6 will move `src/` implementation modules into the `collab/` package tree and remove the import shim.
+> Phases 1–4.7 and Phase 5 are complete. Phase 6 merges `src/` into root `collab/`, removes the `__path__` shim, and standardizes on `import collab` / `collab.*` everywhere. We are **not** using `src/collab/` (nested src layout).
 
 ---
 
@@ -101,39 +101,39 @@ This roadmap is a living document that evolves with the project.
 - [x] Add security regression tests
 - [x] Bandit `-ll` clean on runtime modules (ongoing burndown via wrapper adoption)
 
-### Phase 6 — Consolidate `src/` into `collab/`
+### Phase 6 — Flat `collab/` at repo root (Option A)
 
-- [ ] Move implementation modules under `collab/`
-- [ ] Update entry points and tests
-- [ ] Remove `collab` `__path__` shim to `src/`
+- [ ] Merge `src/*.py` and `src/dashboard/` into root `collab/`
+- [ ] Update `pyproject.toml` entry points to `collab.*` (drop `src` package)
+- [ ] Replace `from src.*` with `collab.*` in tests, scripts, and docs
+- [ ] Remove `__path__` shim; delete empty `src/` tree
+- [ ] Verify wheel contains only `collab/`; packaging smoke tests pass
 
 ---
 
 ## 📊 MILESTONES
 
-| Milestone                                               | Target Date  | Status |
-| ------------------------------------------------------- | ------------ | ------ |
-| Phase 0.5: Infrastructure complete                      | May 5, 2026  | ✅     |
-| Phase 0: Behavioral contract approved                   | May 5, 2026  | ✅     |
-| Phase 1: Package CLI parity verified                    | May 7, 2026  | ✅     |
-| Phase 2: Extension calls installed package              | May 7, 2026  | ✅     |
-| Phase 3: Setup scripts working                          | May 7, 2026  | ✅     |
-| Phase 4: Consumer apps decoupled from in-repo `.collab` | May 8, 2026  | ✅     |
-| Phase 4.5: Package published to TestPyPI                | May 12, 2026 | ✅     |
-| Phase 4.6: Legacy entrypoint removed                    | May 12, 2026 | ✅     |
-| Phase 4.7: Extension distribution                       | May 12, 2026 | ✅     |
-| Phase 5: Hardening complete                             | May 27, 2026 | ✅     |
-| Phase 6: `src/` merged into `collab/` package tree      | TBD          | 🔄     |
-| First stable release (v1.0.0)                           | TBD          | 🔄     |
+| Milestone                                                  | Target Date  | Status |
+| ---------------------------------------------------------- | ------------ | ------ |
+| Phase 0.5: Infrastructure complete                         | May 5, 2026  | ✅     |
+| Phase 0: Behavioral contract approved                      | May 5, 2026  | ✅     |
+| Phase 1: Package CLI parity verified                       | May 7, 2026  | ✅     |
+| Phase 2: Extension calls installed package                 | May 7, 2026  | ✅     |
+| Phase 3: Setup scripts working                             | May 7, 2026  | ✅     |
+| Phase 4: Consumer apps decoupled from in-repo `.collab`    | May 8, 2026  | ✅     |
+| Phase 4.5: Package published to TestPyPI                   | May 12, 2026 | ✅     |
+| Phase 4.6: Legacy entrypoint removed                       | May 12, 2026 | ✅     |
+| Phase 4.7: Extension distribution                          | May 12, 2026 | ✅     |
+| Phase 5: Hardening complete                                | May 27, 2026 | ✅     |
+| Phase 6: flat `collab/` package (Option A, no `src/` shim) | TBD          | 🔄     |
+| First stable release (v1.0.0)                              | TBD          | 🔄     |
 
 ---
 
 ## 🎯 KEY UNIMPLEMENTED FEATURES
 
-1. **Error Taxonomy** — Structured failure classification for daemon lifecycle
-2. **Subprocess Wrapper** — Central utility for safe process spawning
-3. **Security Regression Tests** — Automated validation of spawn invariants
-4. **Extension Refactor** — Thin client calling installed package
+1. **Phase 6 package consolidation** — Single flat `collab/` tree; remove `src/` shim
+2. **First stable release (v1.0.0)** — After Phase 6 and publish housekeeping
 
 ---
 

@@ -88,16 +88,19 @@ Source lives under `editors/vscode/collab-locks/`. PyCharm run-configuration tem
 
 ## Repository Layout (collab package)
 
-| Path                           | Purpose                                                      |
-| ------------------------------ | ------------------------------------------------------------ |
-| `src/`                         | Runtime implementation (`lock_client`, watcher, dashboard)   |
-| `collab/`                      | PyPI import shim (Phase 6 will colocate implementation here) |
-| `src/errors.py`                | Structured error taxonomy (Phase 5)                          |
-| `src/safe_subprocess.py`       | Validated git/taskkill/watcher subprocess wrapper (Phase 5)  |
-| `src/platform_probe.py`        | Validated tasklist/wmic/powershell/ps probes (Phase 5.2)     |
-| `scripts/git-hooks/`           | Tracked git hook templates                                   |
-| `scripts/install_hooks.sh`     | Copies templates into `.git/hooks`                           |
-| `supabase/schema.sql`          | Supabase schema for consumer projects                        |
-| `docs/pypi/README.md`          | PyPI package readme                                          |
-| `editors/vscode/collab-locks/` | VS Code / Cursor extension                                   |
-| `editors/pycharm/`             | IDE run-configuration template                               |
+Phase 6 (in progress on `feat/phase6-flat-collab-package`) consolidates to a **single flat package** at repo root. Target layout:
+
+| Path                        | Purpose                                                     |
+| --------------------------- | ----------------------------------------------------------- |
+| `collab/`                   | Sole Python package: CLI, lock client, watcher, dashboard   |
+| `collab/errors.py`          | Structured error taxonomy (Phase 5)                         |
+| `collab/safe_subprocess.py` | Validated git/taskkill/watcher subprocess wrapper (Phase 5) |
+| `collab/platform_probe.py`  | Validated tasklist/wmic/powershell/ps probes (Phase 5.2)    |
+
+Until Phase 6 merges, legacy `src/` plus a root `collab/` `__path__` shim may still exist on `main`; do not add new code under `src/`.
+| `scripts/git-hooks/` | Tracked git hook templates |
+| `scripts/install_hooks.sh` | Copies templates into `.git/hooks` |
+| `supabase/schema.sql` | Supabase schema for consumer projects |
+| `docs/pypi/README.md` | PyPI package readme |
+| `editors/vscode/collab-locks/` | VS Code / Cursor extension |
+| `editors/pycharm/` | IDE run-configuration template |
