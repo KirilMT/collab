@@ -25,6 +25,23 @@ os.environ["COLLAB_STATE_DIR"] = _session_temp_dir
 os.environ["COLLAB_PID_FILE"] = os.path.join(_session_temp_dir, "daemon.pid")
 os.environ["COLLAB_TEST_MODE"] = "1"
 
+# Neutralize ambient agent-mode markers so the suite is deterministic regardless of
+# the host environment (e.g. running inside Cursor/Claude Code/Copilot, which export
+# runtime markers). Tests that exercise agent identity opt in explicitly via the
+# ``agent_id=`` constructor argument or by setting ``COLLAB_AGENT_ID`` with monkeypatch.
+for _agent_env in (
+    "COLLAB_AGENT_ID",
+    "COLLAB_AGENT_MODE",
+    "CURSOR_TRACE_ID",
+    "CURSOR_SESSION_ID",
+    "CURSOR_AGENT",
+    "COMPOSER_SESSION_ID",
+    "CLAUDE_CODE",
+    "CLAUDE_CODE_SESSION",
+    "GITHUB_COPILOT_AGENT_ID",
+):
+    os.environ.pop(_agent_env, None)
+
 # We forcibly mock these for ALL tests to prevent accidental production leakage.
 # Individual tests can still use monkeypatch if they need specific dummy values.
 os.environ["SUPABASE_URL"] = "http://localhost:54321"
