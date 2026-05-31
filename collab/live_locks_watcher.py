@@ -752,15 +752,44 @@ def _start_dashboard_server() -> str | None:
     return url
 
 
+def _resolve_lock_diff_base_ref() -> str | None:
+    """Return the git ref to diff against for committed-but-not-on-remote work.
+
+    Precedence mirrors ``LockClient._resolve_lock_diff_base_ref``: upstream ``@{u}``,
+    then ``COLLAB_LOCK_BASE_REF``, then ``origin/<branch>``, then origin/main|master.
+    Returns ``None`` when no suitable base ref exists.
+    """
+    if _git_capture_text(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+    ):
+        return "@{u}"
+
+    override = os.getenv("COLLAB_LOCK_BASE_REF", "").strip()
+    if override and _git_capture_text(["git", "rev-parse", "--verify", override]):
+        return override
+
+    branch = _git_capture_text(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch and branch != "HEAD":
+        remote_branch = f"origin/{branch}"
+        if _git_capture_text(["git", "rev-parse", "--verify", remote_branch]):
+            return remote_branch
+
+    for candidate in ("origin/main", "origin/master"):
+        if _git_capture_text(["git", "rev-parse", "--verify", candidate]):
+            return candidate
+    return None
+
+
 def _get_modified_and_unpushed_files() -> set[str]:
     """Return the set of files that are 'in progress' for this developer.
 
     Includes both:
     - Dirty/staged files (git status --porcelain)
-    - Committed but not yet pushed files (git diff @{u}..HEAD)
+    - Committed but not yet on the remote base (git diff <base>..HEAD), where the base
+      is the upstream when configured, otherwise origin/<branch> or origin/main.
 
-    This matches the definition used by lock_client.py to ensure both watchers
-    agree on which files should be locked.
+    This matches the definition used by lock_client.py to ensure both watchers agree on
+    which files should be locked.
     """
     result: set[str] = set()
 
@@ -776,22 +805,20 @@ def _get_modified_and_unpushed_files() -> set[str]:
     except Exception as exc:
         logger.warning("git status failed in file-change detection: %s", exc)
 
-    # Part 2: committed but unpushed files
+    # Part 2: committed but not on remote (upstream, origin/<branch>, or origin/main)
     try:
-        if not _git_capture_text(
-            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
-        ):
-            raise RuntimeError("no upstream")
-        diff_out = _git_capture_text(["git", "diff", "--name-only", "@{u}..HEAD"])
-        if diff_out:
-            for line in diff_out.splitlines():
-                p = _normalize_path(line.strip(), _PROJECT_ROOT)
-                if p and not _should_ignore_path(p):
-                    result.add(p)
+        base_ref = _resolve_lock_diff_base_ref()
+        if base_ref:
+            range_spec = "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
+            diff_out = _git_capture_text(["git", "diff", "--name-only", range_spec])
+            if diff_out:
+                for line in diff_out.splitlines():
+                    p = _normalize_path(line.strip(), _PROJECT_ROOT)
+                    if p and not _should_ignore_path(p):
+                        result.add(p)
     except Exception:
-        # No upstream configured or diff failed — silently fall back to
-        # status-only. This is safe: we just won't lock unpushed files,
-        # which is better than crashing.
+        # No base ref or diff failed — fall back to status-only. This is safe: we
+        # just won't lock committed-but-unpushed files, which beats crashing.
         pass
 
     return result
