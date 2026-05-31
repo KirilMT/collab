@@ -1160,7 +1160,7 @@ def validate_javascript_frontend(
     checks: List[Tuple[str, ValidationStatus | bool]] = []
     success: ValidationStatus | bool = True
 
-    # Step 1: ESLint (or skip if not configured)
+    # Step 1: ESLint (required when frontend validation runs)
     print_section("Step 1/3: JavaScript Linting (eslint)")
     if files and eslint_targets:
         success, _ = run_command(
@@ -1181,9 +1181,6 @@ def validate_javascript_frontend(
             force_all_apps=force_all_apps,
             check=False,
         )
-    if not success:
-        print_warning("ESLint unavailable or not configured - skipping strict failure.")
-        success = "skipped"
     checks.append(("ESLint", success))
 
     # Step 2: Jest (or skip if test script is missing)
@@ -1209,9 +1206,6 @@ def validate_javascript_frontend(
                 force_all_apps=force_all_apps,
                 check=False,
             )
-            if not success:
-                print_warning("Jest tests failed; skipping strict frontend failure.")
-                success = "skipped"
     checks.append(("Jest Tests", success))
 
     # Step 3: Playwright (non-quick mode only)
@@ -1233,11 +1227,6 @@ def validate_javascript_frontend(
                 force_all_apps=force_all_apps,
                 check=False,
             )
-            if not success:
-                print_warning(
-                    "Playwright tests failed; skipping strict frontend failure."
-                )
-                success = "skipped"
     checks.append(("E2E Tests", success))
 
     print_section("Frontend Validation Summary")

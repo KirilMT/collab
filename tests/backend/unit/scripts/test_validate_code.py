@@ -548,13 +548,12 @@ def test_validate_frontend_glob_empty_and_failure(monkeypatch):
     assert validate_code.validate_javascript_frontend(quick=False, files=[]) is True
 
     monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (False, "bad"))
-    # Frontend validation now soft-skips strict failure when tooling is missing.
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
             files=["collab/dashboard/app.js"],
         )
-        is True
+        is False
     )
 
 
@@ -662,7 +661,28 @@ def test_has_playwright_test_files_handles_missing_and_present(tmp_path):
         validate_code.os.chdir(current_dir)
 
 
-def test_validate_frontend_soft_skips_when_jest_command_fails(monkeypatch, capsys):
+def test_validate_frontend_fails_when_eslint_command_fails(monkeypatch, capsys):
+    calls = []
+
+    def _cmd(cmd, *_a, **_k):
+        calls.append(cmd)
+        if cmd[:2] == ["npx", "eslint"]:
+            return False, "eslint failed"
+        return True, ""
+
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
+
+    out = capsys.readouterr().out
+    assert "[FAIL] ESLint" in out
+    assert any(cmd[:2] == ["npx", "eslint"] for cmd in calls)
+
+
+def test_validate_frontend_fails_when_jest_command_fails(monkeypatch, capsys):
     calls = []
 
     def _cmd(cmd, *_a, **_k):
@@ -680,16 +700,14 @@ def test_validate_frontend_soft_skips_when_jest_command_fails(monkeypatch, capsy
     )
     monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
 
-    assert validate_code.validate_javascript_frontend(quick=False, files=None) is True
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
 
     out = capsys.readouterr().out
-    assert "Jest tests failed; skipping strict frontend failure." in out
+    assert "[FAIL] Jest Tests" in out
     assert any(cmd[:3] == ["npm", "run", "test"] for cmd in calls)
 
 
-def test_validate_frontend_soft_skips_when_playwright_command_fails(
-    monkeypatch, capsys
-):
+def test_validate_frontend_fails_when_playwright_command_fails(monkeypatch, capsys):
     calls = []
 
     def _cmd(cmd, *_a, **_k):
@@ -703,10 +721,10 @@ def test_validate_frontend_soft_skips_when_playwright_command_fails(
     monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
     monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
 
-    assert validate_code.validate_javascript_frontend(quick=False, files=None) is True
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
 
     out = capsys.readouterr().out
-    assert "Playwright tests failed; skipping strict frontend failure." in out
+    assert "[FAIL] E2E Tests" in out
     assert any(cmd[:3] == ["npx", "playwright", "test"] for cmd in calls)
 
 
