@@ -223,7 +223,7 @@ jobs:
           } > .env
 
       - name: Run Playwright E2E tests
-        run: npx playwright test --project=chromium
+        run: npm run test:frontend:e2e:ci
         env:
           CI: true
           E2E_TEST: true

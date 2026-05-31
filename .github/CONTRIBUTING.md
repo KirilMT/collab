@@ -240,7 +240,10 @@ The dashboard has a full automated frontend stack. Run locally before PRs:
 
 ```bash
 npm test                                    # Jest — dashboard-format.js
-npx playwright test --project=chromium      # mock E2E + visual + live + contract
+npm run test:frontend:e2e:fast              # mock + contract (~12s; validate --quick)
+npm run test:frontend:e2e:ci                # CI + validate full (chromium + live)
+npm run test:frontend:e2e:live              # live Supabase smoke only
+npm run test:frontend:e2e:firefox           # optional firefox snapshots
 ```
 
 | Layer           | Location                                              | Purpose                                                              |

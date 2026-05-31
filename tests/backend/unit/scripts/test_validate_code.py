@@ -385,14 +385,24 @@ def test_validate_frontend_branches(monkeypatch):
         return True, ""
 
     monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {
+            "test": "jest",
+            "test:frontend:e2e:ci": "playwright test",
+        },
+    )
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: True)
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
-            files=["collab/dashboard/app.js"],
+            files=["collab/dashboard/dashboard-format.js"],
         )
         is True
     )
-    assert any(cmd and cmd[0] == "npx" for cmd in calls)
+    assert any(cmd[:3] == ["npm", "run", "test:frontend:e2e:ci"] for cmd in calls)
 
 
 def test_main_exit_codes(monkeypatch):
@@ -541,17 +551,255 @@ def test_validate_others_early_return_and_exception(monkeypatch):
     assert validate_code.validate_others(files=["docs/readme.md"]) is True
 
 
+def test_frontend_validation_plan_quick_skips_without_frontend_diff():
+    scopes = {
+        "full_suite": False,
+        "backend": ["tests/backend/unit/"],
+        "frontend": [],
+        "reason": None,
+        "changed_files": ["collab/lock_client.py"],
+    }
+    plan = validate_code._frontend_validation_plan(
+        quick=True, files=None, scopes=scopes
+    )
+    assert plan["run_block"] is False
+    assert "skipping frontend" in (plan["skip_reason"] or "").lower()
+
+
+def test_frontend_validation_plan_quick_runs_playwright_for_dashboard_html():
+    scopes = {
+        "full_suite": False,
+        "backend": [],
+        "frontend": ["tests/frontend/"],
+        "reason": None,
+        "changed_files": ["collab/dashboard/index.html"],
+    }
+    plan = validate_code._frontend_validation_plan(
+        quick=True, files=None, scopes=scopes
+    )
+    assert plan["run_block"] is True
+    assert plan["run_playwright"] is True
+    assert plan["playwright_script"] == "test:frontend:e2e:fast"
+    assert plan["run_jest"] is False
+
+
+def test_frontend_validation_plan_full_requires_ci_script_and_supabase():
+    scopes = validate_code.detect_changed_scopes(["collab/dashboard/index.html"])
+    plan = validate_code._frontend_validation_plan(
+        quick=False, files=None, scopes=scopes
+    )
+    assert plan["playwright_script"] == "test:frontend:e2e:ci"
+    assert plan["require_supabase_for_playwright"] is True
+
+
+def test_frontend_validation_plan_explicit_files_uses_fast_without_supabase(
+    monkeypatch,
+):
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: False)
+    plan = validate_code._frontend_validation_plan(
+        quick=False,
+        files=["collab/dashboard/dashboard-format.js"],
+        scopes={},
+    )
+    assert plan["playwright_script"] == "test:frontend:e2e:fast"
+    assert plan["require_supabase_for_playwright"] is True
+
+
+def test_quick_frontend_needs_jest_and_playwright_helpers():
+    assert validate_code._quick_frontend_needs_jest(["jest.config.cjs"], False) is True
+    assert (
+        validate_code._quick_frontend_needs_jest(["collab/lock_client.py"], False)
+        is False
+    )
+    assert validate_code._quick_frontend_needs_jest([], True) is True
+    assert (
+        validate_code._quick_frontend_needs_playwright(["package.json"], False) is True
+    )
+    assert (
+        validate_code._quick_frontend_needs_playwright(["docs/readme.md"], False)
+        is False
+    )
+
+
+def test_validate_frontend_quick_scopes_skip_eslint_jest(monkeypatch, capsys):
+    """Quick mode: HTML-only dashboard change runs Playwright fast, skips
+    ESLint/Jest."""
+    calls = []
+
+    def _cmd(cmd, *_a, **_k):
+        calls.append(cmd)
+        return True, ""
+
+    scopes = {
+        "full_suite": False,
+        "backend": [],
+        "frontend": ["tests/frontend/"],
+        "reason": None,
+        "changed_files": ["collab/dashboard/index.html"],
+    }
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {
+            "test": "jest",
+            "test:frontend:e2e:fast": "playwright test --project=chromium",
+        },
+    )
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=True, files=None, scopes=scopes
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "skipping ESLint" in out
+    assert "skipping Jest" in out
+    assert any(cmd[:3] == ["npm", "run", "test:frontend:e2e:fast"] for cmd in calls)
+
+
+def test_validate_frontend_quick_scopes_skip_playwright(monkeypatch, capsys):
+    """Quick mode: Jest-only unit change skips Playwright."""
+    calls = []
+
+    def _cmd(cmd, *_a, **_k):
+        calls.append(cmd)
+        return True, ""
+
+    scopes = {
+        "full_suite": False,
+        "backend": [],
+        "frontend": ["tests/frontend/"],
+        "reason": None,
+        "changed_files": ["tests/frontend/unit/dashboard-format.test.js"],
+    }
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", _cmd)
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {"test": "jest"},
+    )
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=True, files=None, scopes=scopes
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "skipping Playwright" in out
+    assert ["npm", "run", "test:frontend:e2e:fast"] not in calls
+    assert ["npm", "run", "test:frontend:e2e:ci"] not in calls
+
+
+def test_validate_frontend_fails_without_supabase_credentials(monkeypatch, capsys):
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {
+            "test": "jest",
+            "test:frontend:e2e:ci": "playwright test",
+        },
+    )
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: False)
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+    monkeypatch.setattr(
+        validate_code,
+        "detect_changed_scopes",
+        lambda *a, **k: {
+            "full_suite": False,
+            "backend": [],
+            "frontend": ["tests/frontend/"],
+            "reason": None,
+            "changed_files": ["collab/dashboard/index.html"],
+        },
+    )
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
+    out = capsys.readouterr().out
+    assert "SUPABASE_URL" in out
+    assert "[FAIL] E2E Tests" in out
+
+
+def test_validate_frontend_fails_missing_playwright_script(monkeypatch, capsys):
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {"test": "jest"},
+    )
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: True)
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+    monkeypatch.setattr(
+        validate_code,
+        "detect_changed_scopes",
+        lambda *a, **k: {
+            "full_suite": False,
+            "backend": [],
+            "frontend": ["tests/frontend/"],
+            "reason": None,
+            "changed_files": ["collab/dashboard/index.html"],
+        },
+    )
+
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
+    out = capsys.readouterr().out
+    assert "package.json missing" in out
+
+
+def test_validate_frontend_quick_skips_entire_block(monkeypatch, capsys):
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    scopes = {
+        "full_suite": False,
+        "backend": ["tests/backend/"],
+        "frontend": [],
+        "reason": None,
+        "changed_files": ["collab/foo.py"],
+    }
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=True, files=None, scopes=scopes
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "skipping frontend" in out.lower()
+
+
 def test_validate_frontend_glob_empty_and_failure(monkeypatch):
     monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
 
-    # No frontend files provided should short-circuit successfully.
-    assert validate_code.validate_javascript_frontend(quick=False, files=[]) is True
+    # Non-frontend path in explicit file list short-circuits before any npm commands.
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=False, files=["collab/main.py"]
+        )
+        is True
+    )
 
     monkeypatch.setattr(validate_code, "run_command", lambda *_a, **_k: (False, "bad"))
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {
+            "test": "jest",
+            "test:frontend:e2e:ci": "playwright test",
+        },
+    )
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: True)
+    monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
     assert (
         validate_code.validate_javascript_frontend(
             quick=False,
-            files=["collab/dashboard/app.js"],
+            files=["collab/dashboard/dashboard-format.js"],
         )
         is False
     )
@@ -712,20 +960,39 @@ def test_validate_frontend_fails_when_playwright_command_fails(monkeypatch, caps
 
     def _cmd(cmd, *_a, **_k):
         calls.append(cmd)
-        if cmd[:3] == ["npx", "playwright", "test"]:
+        if cmd[:3] == ["npm", "run", "test:frontend:e2e:ci"]:
             return False, "playwright failed"
         return True, ""
 
     monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
     monkeypatch.setattr(validate_code, "run_command", _cmd)
-    monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
+    monkeypatch.setattr(
+        validate_code,
+        "_load_package_json_scripts",
+        lambda: {
+            "test": "jest",
+            "test:frontend:e2e:ci": "playwright test",
+        },
+    )
+    monkeypatch.setattr(validate_code, "_has_supabase_credentials", lambda: True)
     monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: True)
+    monkeypatch.setattr(
+        validate_code,
+        "detect_changed_scopes",
+        lambda *a, **k: {
+            "full_suite": True,
+            "backend": [],
+            "frontend": ["tests/frontend/"],
+            "reason": None,
+            "changed_files": ["package.json"],
+        },
+    )
 
     assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
 
     out = capsys.readouterr().out
     assert "[FAIL] E2E Tests" in out
-    assert any(cmd[:3] == ["npx", "playwright", "test"] for cmd in calls)
+    assert any(cmd[:3] == ["npm", "run", "test:frontend:e2e:ci"] for cmd in calls)
 
 
 def test_summary_helper_prints_skipped(capsys):

@@ -22,8 +22,10 @@
  * fullPage snapshots with animations disabled, data-testid selectors.
  *
  * Run locally (after `npm install` in repo root):
- *   npx playwright test --project=chromium
- *   npx playwright test --project=firefox
+ *   npm run test:frontend:e2e:fast     # mock + contract (parallel, no network)
+ *   npm run test:frontend:e2e:ci       # CI parity (chromium + @live)
+ *   npm run test:frontend:e2e:live     # live Supabase smoke only
+ *   npm run test:frontend:e2e:firefox  # optional firefox visual baselines
  *
  * Snapshots live next to this file in the -snapshots/ directory.
  */
@@ -493,7 +495,7 @@ test.describe("Collaborative Lock Dashboard — admin force release (seeded)", (
 // `collab dashboard`; skipped only when credentials or generated HTML missing)
 // ===========================================================================
 test.describe("Collaborative Lock Dashboard — live Supabase smoke", () => {
-  test.describe.configure({ timeout: 90000 });
+  test.describe.configure({ tag: "@live", mode: "serial", timeout: 90_000 });
 
   test.beforeEach(async ({ page }) => {
     test.skip(
@@ -591,9 +593,6 @@ test.describe("Collaborative Lock Dashboard — live Supabase smoke", () => {
 test.describe("Collaborative Lock Dashboard — first-run (no credentials)", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page
-      .waitForLoadState("networkidle", { timeout: 8000 })
-      .catch(() => {});
   });
 
   test("shows the setup view and disables main controls", async ({ page }) => {

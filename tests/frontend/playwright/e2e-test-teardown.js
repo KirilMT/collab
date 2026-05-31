@@ -117,7 +117,7 @@ async function globalTeardown() {
   killProcessOnPort(TEST_PORT);
 
   // Wait for process to fully release handles
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 250));
 
   // Clean up any lock artifacts left by E2E tests
   cleanupCollabTestArtifacts();

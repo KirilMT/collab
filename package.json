@@ -12,8 +12,12 @@
     "lint:frontend:fix": "eslint tests/frontend/playwright --fix",
     "test": "jest --coverage",
     "test:frontend:unit": "jest",
-    "test:frontend:e2e": "playwright test",
-    "test:frontend:e2e:chromium": "playwright test --project=chromium"
+    "test:frontend:e2e": "playwright test --project=chromium --project=chromium-live",
+    "test:frontend:e2e:ci": "playwright test --project=chromium --project=chromium-live",
+    "test:frontend:e2e:fast": "playwright test --project=chromium",
+    "test:frontend:e2e:live": "playwright test --project=chromium-live",
+    "test:frontend:e2e:chromium": "playwright test --project=chromium",
+    "test:frontend:e2e:firefox": "playwright test --project=firefox"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

@@ -153,7 +153,9 @@ pytest --cov=collab --cov=scripts tests/backend
 
 # Frontend placeholders (future-ready)
 npm test
-npx playwright test --project=chromium
+npm run test:frontend:e2e:fast   # quick validate / local mock + contract
+npm run test:frontend:e2e:ci     # full validate_code + CI (chromium + live)
+npm run test:frontend:e2e:firefox  # optional cross-browser snapshots
 
 # Full validation
 python scripts/validate_code.py

@@ -7,6 +7,19 @@ module.exports = [
     ignores: ["node_modules/**", ".venv/**", "htmlcov/**", "coverage/**"],
   },
   {
+    files: ["playwright.config.js", "jest.config.cjs", "eslint.config.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",
+      globals: globals.node,
+    },
+    rules: {
+      "no-unused-vars": "warn",
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-undef": "error",
+    },
+  },
+  {
     // collab/dashboard/**/*.js is included here for when JS files are extracted from index.html
     files: ["collab/dashboard/**/*.js", "tests/frontend/playwright/**/*.js"],
     languageOptions: {
@@ -19,7 +32,14 @@ module.exports = [
       },
     },
     rules: {
-      "no-unused-vars": "warn",
+      "no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       "no-console": ["warn", { allow: ["warn", "error"] }],
       "no-undef": "error",
     },
@@ -49,7 +69,10 @@ module.exports = [
       globals: globals.node,
     },
     rules: {
-      "no-unused-vars": ["error", { argsIgnorePattern: "^_|^e$", varsIgnorePattern: "^_|^e$" }],
+      "no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_|^e$", varsIgnorePattern: "^_|^e$" },
+      ],
     },
   },
 ];
