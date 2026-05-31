@@ -1,0 +1,46 @@
+---
+# Supabase Free tier: auto-pause after ~7 days without API/DB activity.
+# This workflow performs a minimal REST read twice weekly to reset the timer.
+# Secrets: SUPABASE_URL, SUPABASE_ANON_KEY (optional SUPABASE_SERVICE_ROLE_KEY).
+
+name: Supabase Keep-Alive
+
+"on":
+  schedule:
+    - cron: "0 12 * * 1,4"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase (file_locks read)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::warning::SUPABASE_URL or SUPABASE_ANON_KEY secret missing."
+            echo "Add secrets under Settings → Secrets → Actions."
+            exit 0
+          fi
+          KEY="${SUPABASE_SERVICE_ROLE_KEY:-$SUPABASE_ANON_KEY}"
+          BASE="${SUPABASE_URL%/}"
+          URL="${BASE}/rest/v1/file_locks?select=file_path&limit=1"
+          echo "Pinging ${BASE} ..."
+          HTTP_CODE=$(curl -sS -o /tmp/supabase_keepalive.json \
+            -w "%{http_code}" \
+            -H "apikey: ${KEY}" \
+            -H "Authorization: Bearer ${KEY}" \
+            -H "Accept: application/json" \
+            "${URL}")
+          echo "Response HTTP ${HTTP_CODE}"
+          head -c 500 /tmp/supabase_keepalive.json || true
+          echo ""
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "::error::Keep-alive failed: HTTP ${HTTP_CODE}"
+            exit 1
+          fi
+          echo "Keep-alive OK — inactivity timer reset."
