@@ -11,6 +11,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const { writePlaywrightLiveDashboardHtml } = require("./test-utils");
 
 // Configuration
 const TEST_PORT = 8000;
@@ -62,6 +63,12 @@ async function globalSetup() {
     );
   } else {
     console.warn("✅ Supabase credentials detected.");
+    if (writePlaywrightLiveDashboardHtml()) {
+      console.warn(
+        "✅ Wrote live dashboard HTML with injected .env config " +
+          "(same as `collab dashboard`).",
+      );
+    }
   }
 
   console.warn(`📝 Dashboard will be served on: ${TEST_HOST}:${TEST_PORT}`);

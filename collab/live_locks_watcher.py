@@ -20,7 +20,6 @@ import signal
 import socket
 import sys
 import tempfile
-import threading
 import time
 import traceback
 import webbrowser
@@ -697,22 +696,7 @@ def _start_dashboard_server() -> str | None:
     Returns the ``http://127.0.0.1:<port>/...`` URL that terminals render
     as a clickable link, or *None* on failure.
     """
-    import http.server
-    import json as _json
-    import tempfile
-    from functools import partial
-
-    html_path = os.path.join(_RESOURCE_ROOT, "dashboard", "index.html")
-    if not os.path.exists(html_path):
-        logger.warning("Dashboard HTML not found at %s", html_path)
-        return None
-
-    try:
-        with open(html_path, "r", encoding="utf-8") as fh:
-            content = fh.read()
-    except Exception as exc:
-        logger.warning("Failed to read dashboard template: %s", exc)
-        return None
+    from collab.dashboard_server import prepare_dashboard_server
 
     injected = {
         "url": SUPABASE_URL or "",
@@ -720,46 +704,13 @@ def _start_dashboard_server() -> str | None:
         "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
         "user": DEVELOPER_ID or "",
     }
-    inject_script = (
-        f"<script>window.__SUPABASE_CONFIG__ = {_json.dumps(injected)};</script>\n"
+    url, _html_path = prepare_dashboard_server(
+        _RESOURCE_ROOT,
+        injected,
+        log_error=logger.warning,
+        log_warning=logger.debug,
     )
-
-    try:
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", delete=False, suffix=".html", encoding="utf-8"
-        )
-        tmp.write(inject_script)
-        tmp.write(content)
-        tmp.flush()
-        tmp.close()
-    except Exception as exc:
-        logger.warning("Failed to create temp dashboard: %s", exc)
-        return None
-
-    try:
-        tmp_dir = os.path.dirname(tmp.name)
-        filename = os.path.basename(tmp.name)
-
-        handler = partial(http.server.SimpleHTTPRequestHandler, directory=tmp_dir)
-        # Silence per-request log noise
-        handler_cls = http.server.SimpleHTTPRequestHandler
-        handler_cls.log_message = lambda *_a, **_k: None  # type: ignore[method-assign]
-
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        port = server.server_address[1]
-
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        atexit.register(server.shutdown)
-
-        return f"http://127.0.0.1:{port}/{filename}"
-    except Exception as exc:
-        logger.warning("Failed to start dashboard server: %s", exc)
-        try:
-            os.unlink(tmp.name)
-        except Exception as cleanup_exc:
-            logger.debug("Dashboard temp-file cleanup failed: %s", cleanup_exc)
-        return None
+    return url
 
 
 def _get_modified_and_unpushed_files() -> set[str]:

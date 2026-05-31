@@ -214,14 +214,13 @@ def _get_state_dir() -> str:
 
     try:
         import hashlib as _hashlib
-        import tempfile as _tempfile
 
         # Normalize slashes and case for cross-runtime consistency (CLI vs Extension)
         norm_root = _PROJECT_ROOT.replace("/", "\\").lower().rstrip("\\")
         h = _hashlib.sha1(norm_root.encode("utf-8"), usedforsecurity=False).hexdigest()[
             :8
         ]
-        base_tmp = _tempfile.gettempdir()
+        base_tmp = tempfile.gettempdir()
         # Use a collab-specific namespace for runtime state dirs.
         current_prefix = "collab_runtime"
         if _is_test_mode():
@@ -2078,19 +2077,12 @@ class LockClient:
     def _prepare_dashboard_server(self) -> Tuple[Optional[str], Optional[str]]:
         """Create temp HTML with injected config, start local HTTP server.
 
+        Serves the full ``collab/dashboard`` directory so sibling assets (``dashboard-
+        format.js``, etc.) resolve correctly.
+
         Returns (url, tmp_path) or (None, None) on error.
         """
-        html_path = os.path.join(_RESOURCE_ROOT, "dashboard", "index.html")
-        if not os.path.exists(html_path):
-            logger.error("Dashboard file not found at %s", html_path)
-            return None, None
-
-        try:
-            with open(html_path, "r", encoding="utf-8") as fh:
-                content = fh.read()
-        except Exception as e:
-            logger.error("Error reading dashboard template: %s", e)
-            return None, None
+        from collab.dashboard_server import prepare_dashboard_server
 
         injected = {
             "url": SUPABASE_URL or "",
@@ -2098,74 +2090,7 @@ class LockClient:
             "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
             "user": self.developer_id or "",
         }
-        inject_script = (
-            f"<script>window.__SUPABASE_CONFIG__ = {json.dumps(injected)};</script>\n"
-        )
-
-        try:
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", delete=False, suffix=".html", encoding="utf-8"
-            )
-            tmp.write(inject_script)
-            tmp.write(content)
-            tmp.flush()
-            tmp.close()
-        except Exception as e:
-            logger.error("Error creating temp dashboard file: %s", e)
-            return None, None
-
-        try:
-            import http.server
-            from functools import partial
-
-            tmp_dir = os.path.dirname(tmp.name)
-            filename = os.path.basename(tmp.name)
-
-            Handler = partial(http.server.SimpleHTTPRequestHandler, directory=tmp_dir)
-
-            # Silence request logging
-            RequestHandler = http.server.SimpleHTTPRequestHandler
-            RequestHandler.log_message = lambda *a, **k: None  # type: ignore  # noqa
-
-            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-            port = server.server_address[1]
-
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-
-            def _safe_shutdown() -> None:
-                """Best-effort dashboard server shutdown for process exit."""
-                try:
-                    server.shutdown()
-                except BaseException:
-                    pass
-                try:
-                    server.server_close()
-                except Exception:
-                    pass
-
-            atexit.register(_safe_shutdown)
-
-            url = f"http://127.0.0.1:{port}/{filename}"
-
-            # Probe until ready
-            import socket as _socket
-
-            for _ in range(20):
-                try:
-                    with _socket.create_connection(("127.0.0.1", port), timeout=0.3):
-                        break
-                except Exception:
-                    time.sleep(0.05)
-
-            return url, tmp.name
-        except Exception as e:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
-            logger.error("Failed to start local dashboard server: %s", e)
-            return None, None
+        return prepare_dashboard_server(_RESOURCE_ROOT, injected)
 
     # ------------------------------------------------------------------
     # Watcher (foreground process)

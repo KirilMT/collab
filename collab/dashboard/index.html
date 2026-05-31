@@ -489,53 +489,71 @@
                 <span>Collaborative Explorer</span>
             </div>
             <div class="nav-right">
-                <span id="last-update" class="chip">Not synced yet</span>
-                <span id="user-info" class="chip hidden"></span>
-                <button id="nav-locks" class="btn btn-sm btn-primary" type="button">Active Locks</button>
-                <button id="nav-history" class="btn btn-sm btn-outline-primary" type="button">History Locks</button>
-                <button id="sync-btn" class="btn btn-sm btn-outline-secondary" type="button">
+                <span id="last-update" class="chip" data-testid="last-update">Not synced yet</span>
+                <span id="user-info" class="chip hidden" data-testid="user-info"></span>
+                <button id="nav-locks"
+                        class="btn btn-sm btn-primary"
+                        type="button"
+                        data-testid="nav-locks">Active Locks</button>
+                <button id="nav-history"
+                        class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        data-testid="nav-history">History Locks</button>
+                <button id="sync-btn"
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-testid="sync-btn">
                     <i class="fas fa-sync-alt me-1"></i>Sync
                 </button>
             </div>
         </header>
         <main class="app-main">
-            <section id="setup-view" class="setup-view hidden">
+            <section id="setup-view" class="setup-view hidden" data-testid="setup-view">
                 <h4 class="mb-2">Connect To Supabase</h4>
                 <p class="text-muted mb-3">Configure credentials in .env and restart the dashboard server.</p>
                 <pre class="bg-light border rounded p-3 mb-0">SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_anon_key</pre>
             </section>
-            <section id="locks-page" class="page-view hidden" aria-label="locks view">
+            <section id="locks-page"
+                     class="page-view hidden"
+                     aria-label="locks view"
+                     data-testid="locks-page">
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-lock"></i>Active Locks
                     </h2>
                 </div>
-                <div class="stats-grid" aria-label="dashboard stats">
-                    <article class="stat-card">
+                <div class="stats-grid"
+                     aria-label="dashboard stats"
+                     data-testid="stats-grid">
+                    <article class="stat-card" data-testid="stat-card-active">
                         <div class="stat-shell">
                             <span class="stat-icon stat-icon-lock"><i class="fas fa-lock"></i></span>
                             <div>
                                 <p class="stat-label">Active Locks</p>
-                                <p class="stat-value" id="stat-active">0</p>
+                                <p class="stat-value" id="stat-active" data-testid="stat-active">0</p>
                             </div>
                         </div>
                     </article>
-                    <article class="stat-card">
+                    <article class="stat-card" data-testid="stat-card-releases">
                         <div class="stat-shell">
                             <span class="stat-icon stat-icon-release"><i class="fas fa-check-double"></i></span>
                             <div>
                                 <p class="stat-label">Releases Today</p>
-                                <p class="stat-value stat-value-success" id="stat-releases">0</p>
+                                <p class="stat-value stat-value-success"
+                                   id="stat-releases"
+                                   data-testid="stat-releases">0</p>
                             </div>
                         </div>
                     </article>
-                    <article class="stat-card">
+                    <article class="stat-card" data-testid="stat-card-avg">
                         <div class="stat-shell">
                             <span class="stat-icon stat-icon-avg"><i class="fas fa-bolt"></i></span>
                             <div>
                                 <p class="stat-label">Avg Hold Time</p>
-                                <p class="stat-value stat-value-info" id="stat-avg">0m</p>
+                                <p class="stat-value stat-value-info"
+                                   id="stat-avg"
+                                   data-testid="stat-avg">0m</p>
                             </div>
                         </div>
                     </article>
@@ -553,7 +571,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                                     <th class="text-end">Action</th>
                                 </tr>
                             </thead>
-                            <tbody id="active-locks-body">
+                            <tbody id="active-locks-body" data-testid="active-locks-body">
                                 <tr>
                                     <td colspan="6" class="text-center py-4 text-muted">Connecting...</td>
                                 </tr>
@@ -562,7 +580,10 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     </div>
                 </div>
             </section>
-            <section id="history-page" class="page-view hidden" aria-label="history view">
+            <section id="history-page"
+                     class="page-view hidden"
+                     aria-label="history view"
+                     data-testid="history-page">
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-clock-rotate-left"></i>Lock History
@@ -583,7 +604,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                                     <th>Outcome</th>
                                 </tr>
                             </thead>
-                            <tbody id="history-body">
+                            <tbody id="history-body" data-testid="history-body">
                                 <tr>
                                     <td colspan="8" class="text-center py-4 text-muted">Loading history...</td>
                                 </tr>
@@ -626,6 +647,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             </div>
         </div>
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="dashboard-format.js"></script>
         <script>
         const serverCfg = window.__SUPABASE_CONFIG__ || {};
         const SUPABASE_URL = serverCfg.url || "";
@@ -665,56 +687,14 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             }
         }
 
-        function formatDateLong(dt) {
-            return dt.toLocaleDateString([], {
-                year: "numeric",
-                month: "long",
-                day: "numeric"
-            });
-        }
-
-        function formatTime24(dt) {
-            return dt.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false
-            });
-        }
-
-        function formatDateTime24(dt) {
-            return formatDateLong(dt) + " " + formatTime24(dt);
-        }
-
-        function formatDurationMinutes(totalMinutes) {
-            const rounded = Math.max(0, Math.round(Number(totalMinutes) || 0));
-            if (!Number.isFinite(rounded) || rounded <= 0) {
-                return "0m";
-            }
-
-            const units = [
-                { label: "mo", minutes: 30 * 24 * 60 },
-                { label: "d", minutes: 24 * 60 },
-                { label: "h", minutes: 60 },
-                { label: "m", minutes: 1 }
-            ];
-
-            let remaining = rounded;
-            const parts = [];
-
-            units.forEach((unit) => {
-                if (remaining >= unit.minutes) {
-                    const value = Math.floor(remaining / unit.minutes);
-                    remaining -= value * unit.minutes;
-                    parts.push(String(value) + unit.label);
-                }
-            });
-
-            return parts.length ? parts.join(" ") : "0m";
-        }
+        const fmt = window.DashboardFormat;
+        const formatDateLong = fmt.formatDateLong;
+        const formatTime24 = fmt.formatTime24;
+        const formatDateTime24 = fmt.formatDateTime24;
+        const formatDurationMinutes = fmt.formatDurationMinutes;
 
         function routeFromHash() {
-            const h = window.location.hash.replace("#", "").toLowerCase();
-            return h === "history" ? "history" : "locks";
+            return fmt.routeFromHash(window.location.hash);
         }
 
         function navigate(page) {
