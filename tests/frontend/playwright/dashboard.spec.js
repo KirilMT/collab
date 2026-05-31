@@ -94,6 +94,14 @@ function injectSupabaseSeed(payload) {
             ) {
               return true;
             }
+            if (
+              Object.prototype.hasOwnProperty.call(state.filters, "agent_id")
+            ) {
+              const lockAgent = lock.agent_id || null;
+              if (state.filters.agent_id !== lockAgent) {
+                return true;
+              }
+            }
             return false;
           });
         }
@@ -125,6 +133,12 @@ function injectSupabaseSeed(payload) {
       eq: function (column, value) {
         if (state.isDelete) {
           state.filters[column] = value;
+        }
+        return builder;
+      },
+      is: function (column, value) {
+        if (state.isDelete && value === "null") {
+          state.filters[column] = null;
         }
         return builder;
       },
