@@ -15,19 +15,87 @@ import os
 import tempfile
 import threading
 import time
-from functools import partial
+import urllib.parse
 from typing import Any, Callable, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 DASHBOARD_TEMP_PREFIX = ".collab-dashboard-"
+RUNTIME_CONFIG_PATH = "/collab-runtime-config.json"
 
 
-class _QuietDashboardHandler(http.server.SimpleHTTPRequestHandler):
-    """Serve dashboard static files without per-request stderr logging."""
+def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
+    """Read ``.env`` from *project_root* and return dashboard Supabase settings.
 
-    def log_message(self, format: str, *args: Any) -> None:
-        """Suppress default SimpleHTTPRequestHandler request log lines."""
+    The local dashboard fetches this on each sync so credential changes take effect
+    without restarting the watcher or reopening a stale browser tab. The project
+    ``.env`` is read directly (not via ``load_dotenv``) so polling never mutates the
+    running watcher's process environment.
+    """
+    from dotenv import dotenv_values
+
+    env_path = os.path.join(project_root, ".env")
+    file_vals: dict[str, Any] = {}
+    if os.path.isfile(env_path):
+        try:
+            file_vals = dict(dotenv_values(env_path))
+        except OSError as exc:
+            logger.debug("Could not read %s for runtime config: %s", env_path, exc)
+
+    def pick(name: str) -> Optional[str]:
+        val = file_vals.get(name)
+        if not val:
+            val = os.getenv(name)
+        return val
+
+    url = pick("SUPABASE_URL") or ""
+    anon = pick("SUPABASE_ANON_KEY") or ""
+    service = pick("SUPABASE_SERVICE_ROLE_KEY") or None
+    user = (
+        pick("COLLAB_DEVELOPER_ID")
+        or pick("DEVELOPER_ID")
+        or os.getenv("USERNAME")
+        or os.getenv("USER")
+        or ""
+    )
+    return {
+        "url": url,
+        "anonKey": anon,
+        "serviceKey": service,
+        "user": user,
+    }
+
+
+def create_dashboard_handler(project_root: str, directory: str) -> type:
+    """Build a request handler that serves static assets and live runtime config."""
+
+    class DashboardHandler(http.server.SimpleHTTPRequestHandler):
+        """Serve dashboard static files without per-request stderr logging."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, directory=directory, **kwargs)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            """Suppress default SimpleHTTPRequestHandler request log lines."""
+
+        def do_GET(self) -> None:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == RUNTIME_CONFIG_PATH:
+                self._serve_runtime_config()
+                return
+            super().do_GET()
+
+        def _serve_runtime_config(self) -> None:
+            payload = load_runtime_supabase_config(project_root)
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+    return DashboardHandler
 
 
 def dashboard_directory(resource_root: str) -> str:
@@ -96,17 +164,18 @@ def start_dashboard_http_server(
     resource_root: str,
     injected_html_path: str,
     *,
+    project_root: Optional[str] = None,
     log_error: Callable[[str, Any], None] = logger.error,
     log_warning: Callable[[str, Any], None] = logger.warning,
 ) -> Optional[str]:
     """Serve ``collab/dashboard`` and return the URL to the injected HTML file."""
     dash_dir = dashboard_directory(resource_root)
     filename = os.path.basename(injected_html_path)
+    env_root = project_root or resource_root
 
     try:
-        handler = partial(_QuietDashboardHandler, directory=dash_dir)
-
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        handler_cls = create_dashboard_handler(env_root, dash_dir)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
         port = server.server_address[1]
 
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -152,6 +221,7 @@ def prepare_dashboard_server(
     resource_root: str,
     injected: dict[str, Any],
     *,
+    project_root: Optional[str] = None,
     log_error: Callable[[str, Any], None] = logger.error,
     log_warning: Callable[[str, Any], None] = logger.warning,
 ) -> Tuple[Optional[str], Optional[str]]:
@@ -163,6 +233,7 @@ def prepare_dashboard_server(
     url = start_dashboard_http_server(
         resource_root,
         html_path,
+        project_root=project_root,
         log_error=log_error,
         log_warning=log_warning,
     )

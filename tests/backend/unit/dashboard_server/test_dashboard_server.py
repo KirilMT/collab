@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import http.server
+import json
 import os
 import threading
 import urllib.request
@@ -46,6 +47,50 @@ def test_prepare_dashboard_server_serves_sibling_static_assets(monkeypatch, tmp_
             os.unlink(html_path)
         except OSError:
             pass
+
+
+def test_runtime_config_endpoint_serves_fresh_env(monkeypatch, tmp_path):
+    """Dashboard sync can reload Supabase credentials from project .env."""
+    dash_dir = tmp_path / "dashboard"
+    dash_dir.mkdir()
+    (dash_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "SUPABASE_URL=https://fresh.supabase.co\n"
+        "SUPABASE_ANON_KEY=anon-fresh\n"
+        "COLLAB_DEVELOPER_ID=tester\n",
+        encoding="utf-8",
+    )
+
+    html = mod.write_injected_dashboard_html(
+        str(tmp_path),
+        {
+            "url": "https://stale.supabase.co",
+            "anonKey": "old",
+            "serviceKey": None,
+            "user": "x",
+        },
+    )
+    assert html is not None
+
+    url = mod.start_dashboard_http_server(
+        str(tmp_path), html, project_root=str(tmp_path)
+    )
+    assert url is not None
+
+    base = url.rsplit("/", 1)[0]
+    cfg_resp = urllib.request.urlopen(
+        f"{base}{mod.RUNTIME_CONFIG_PATH}",
+        timeout=2,
+    )
+    assert cfg_resp.status == 200
+    payload = json.loads(cfg_resp.read().decode("utf-8"))
+    assert payload["url"] == "https://fresh.supabase.co"
+    assert payload["anonKey"] == "anon-fresh"
+    assert payload["user"] == "tester"
+
+    os.unlink(html)
 
 
 def test_prepare_dashboard_server_missing_template(tmp_path):

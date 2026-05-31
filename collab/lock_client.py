@@ -2090,7 +2090,9 @@ class LockClient:
             "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
             "user": self.developer_id or "",
         }
-        return prepare_dashboard_server(_RESOURCE_ROOT, injected)
+        return prepare_dashboard_server(
+            _RESOURCE_ROOT, injected, project_root=_PROJECT_ROOT
+        )
 
     # ------------------------------------------------------------------
     # Watcher (foreground process)
