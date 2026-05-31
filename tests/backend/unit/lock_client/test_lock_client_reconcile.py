@@ -448,6 +448,138 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
     assert "new/name.py" in out
 
 
+class _Cap:
+    def __init__(self, stdout=b"", ok=True, timed_out=False):
+        self.stdout = stdout
+        self.ok = ok
+        self.timed_out = timed_out
+
+
+def test_resolve_lock_diff_base_ref_uses_env_override(monkeypatch):
+    """COLLAB_LOCK_BASE_REF wins when @{u} is unset and the ref exists."""
+    monkeypatch.setenv("COLLAB_LOCK_BASE_REF", "origin/develop")
+
+    def fake_capture(args, **_k):
+        joined = " ".join(args)
+        if "symbolic-full-name" in joined:
+            return _Cap(b"")  # no upstream
+        if "--verify" in joined and "origin/develop" in joined:
+            return _Cap(b"sha")
+        return _Cap(b"", ok=False)
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", fake_capture)
+    monkeypatch.setattr(mod.safe_subprocess, "decode_output", lambda b: b.decode())
+    assert mod.LockClient._resolve_lock_diff_base_ref() == "origin/develop"
+
+
+def test_resolve_lock_diff_base_ref_uses_origin_branch(monkeypatch):
+    """Origin/<branch> is used when it exists and there is no upstream/override."""
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+
+    def fake_capture(args, **_k):
+        joined = " ".join(args)
+        if "symbolic-full-name" in joined:
+            return _Cap(b"")
+        if args[1:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _Cap(b"feat/x")
+        if "--verify" in joined and "origin/feat/x" in joined:
+            return _Cap(b"sha")
+        return _Cap(b"", ok=False)
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", fake_capture)
+    monkeypatch.setattr(mod.safe_subprocess, "decode_output", lambda b: b.decode())
+    assert mod.LockClient._resolve_lock_diff_base_ref() == "origin/feat/x"
+
+
+def test_resolve_lock_diff_base_ref_returns_none(monkeypatch):
+    """No upstream, override, or remote base -> None (status-only locking)."""
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "capture", lambda *a, **k: _Cap(b"", ok=False)
+    )
+    monkeypatch.setattr(mod.safe_subprocess, "decode_output", lambda b: b.decode())
+    assert mod.LockClient._resolve_lock_diff_base_ref() is None
+
+
+def test_paths_from_git_diff_name_status_parsing(monkeypatch):
+    """Parse handles blank lines, malformed rows, renames, and directories."""
+    payload = (
+        b"M\tcollab/a.py\n"
+        b"\n"
+        b"BADLINE\n"
+        b"R100\told/b.py -> collab/b.py\n"
+        b"A\tsome/dir/\n"
+    )
+    monkeypatch.setattr(mod.safe_subprocess, "capture", lambda *a, **k: _Cap(payload))
+    monkeypatch.setattr(mod.safe_subprocess, "decode_output", lambda b: b.decode())
+    out = mod.LockClient._paths_from_git_diff_name_status("origin/main...HEAD")
+    assert "collab/a.py" in out
+    assert "collab/b.py" in out
+    assert all(not p.endswith("/") for p in out)
+
+
+def test_paths_from_git_diff_name_status_capture_failure(monkeypatch):
+    """A failed diff capture yields an empty list."""
+    monkeypatch.setattr(
+        mod.safe_subprocess, "capture", lambda *a, **k: _Cap(b"", ok=False)
+    )
+    assert mod.LockClient._paths_from_git_diff_name_status("@{u}..HEAD") == []
+
+
+def test_format_acquire_failure_pgrst202_adds_schema_hint():
+    """PGRST202 on acquire_lock gets an actionable schema-reload hint."""
+    msg = "API Error: {'code': 'PGRST202'} for acquire_lock"
+    out = mod.LockClient._format_acquire_failure(msg)
+    assert "reload" in out.lower()
+    assert "schema.sql" in out
+
+
+def test_format_acquire_failure_passthrough():
+    """Unrelated failures are returned unchanged."""
+    assert mod.LockClient._format_acquire_failure("boom") == "boom"
+    assert mod.LockClient._format_acquire_failure("") == ""
+
+
+def test_get_modified_and_unpushed_files_falls_back_to_origin_main(monkeypatch):
+    """When @{u} is unset, diff against origin/main...HEAD for branch-only commits."""
+    c = mod.LockClient(local_only=True)
+
+    def fake_capture(args, **_kwargs):
+        joined = " ".join(args)
+
+        class R:
+            ok = False
+            timed_out = False
+            stdout = b""
+
+        if "symbolic-full-name" in joined and "@{u}" in joined:
+            return R
+        if joined.endswith("HEAD") and "abbrev-ref" in joined:
+            R.ok = True
+            R.stdout = b"feat/no-upstream"
+            return R
+        if "--verify" in joined and "origin/main" in joined:
+            R.ok = True
+            return R
+        if "--verify" in joined:
+            return R
+        if "diff" in joined and "--name-status" in joined:
+            R.ok = True
+            R.stdout = b"M\tcollab/lock_client.py\n"
+            return R
+        if "status" in joined and "porcelain" in joined:
+            R.ok = True
+            return R
+        return R
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", fake_capture)
+    monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
+    monkeypatch.setattr(c, "_should_ignore_path", lambda _p: False)
+
+    out = set(c._get_modified_and_unpushed_files())
+    assert "collab/lock_client.py" in out
+
+
 def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     """Directory-like status entries ending in '/' are ignored."""
     from tests.backend.subprocess_testing import argv_subcommand

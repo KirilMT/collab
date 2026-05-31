@@ -1040,7 +1040,7 @@ class LockClient:
                 lambda: client.rpc("acquire_lock", rpc_params).execute()
             )
         except Exception as e:
-            return False, f"API Error: {e}"
+            return False, self._format_acquire_failure(f"API Error: {e}")
 
         status, data, error = self._parse_response(res)
 
@@ -1050,7 +1050,7 @@ class LockClient:
                 if isinstance(error, dict)
                 else str(error)
             )
-            return False, f"API Error: {msg}"
+            return False, self._format_acquire_failure(f"API Error: {msg}")
 
         # Parse RPC result
         if isinstance(data, list) and len(data) > 0:
@@ -1330,6 +1330,19 @@ class LockClient:
             logger.error("Failed to force_release_all: %s", e)
             return 0
 
+    @staticmethod
+    def _format_acquire_failure(message: str) -> str:
+        """Add actionable context for common Supabase RPC / schema failures."""
+        text = message or ""
+        if "PGRST202" in text and "acquire_lock" in text:
+            return (
+                f"{text} — PostgREST does not see the agent-aware acquire_lock RPC. "
+                "Re-run the full supabase/schema.sql in the Supabase SQL Editor "
+                "(including CREATE OR REPLACE FUNCTION acquire_lock), then reload "
+                "the API schema cache (Project Settings → API → Reload schema)."
+            )
+        return text
+
     def acquire_multiple(
         self,
         file_paths: List[str],
@@ -1345,7 +1358,12 @@ class LockClient:
             ok, msg = self.acquire(fp, reason=reason, branch_name=branch_name)
             if not ok:
                 failed.append(fp)
-                logger.warning("Lock conflict: %s — %s", fp, msg)
+                level = (
+                    "Lock acquire failed"
+                    if str(msg).startswith("API Error")
+                    else "Lock conflict"
+                )
+                logger.warning("%s: %s — %s", level, fp, msg)
         if failed:
             return False, failed, "Conflicts or errors"
         return True, [], "Success"
@@ -3319,6 +3337,88 @@ class LockClient:
             return ""
         return safe_subprocess.decode_output(captured.stdout).strip()
 
+    @staticmethod
+    def _git_ref_exists(ref: str) -> bool:
+        """Return True when *ref* resolves in the project repository."""
+        captured = safe_subprocess.capture(
+            ["git", "rev-parse", "--verify", ref],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        return captured.ok and not captured.timed_out
+
+    @classmethod
+    def _resolve_lock_diff_base_ref(cls) -> Optional[str]:
+        """Return git ref for unpushed work: @{u}, env override, or origin/main."""
+        upstream = safe_subprocess.capture(
+            [
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{u}",
+            ],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if upstream.ok and not upstream.timed_out:
+            if safe_subprocess.decode_output(upstream.stdout).strip():
+                return "@{u}"
+
+        override = os.getenv("COLLAB_LOCK_BASE_REF", "").strip()
+        if override and cls._git_ref_exists(override):
+            return override
+
+        branch_capture = safe_subprocess.capture(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if branch_capture.ok and not branch_capture.timed_out:
+            branch = safe_subprocess.decode_output(branch_capture.stdout).strip()
+            if branch and branch != "HEAD":
+                remote_branch = f"origin/{branch}"
+                if cls._git_ref_exists(remote_branch):
+                    return remote_branch
+
+        for candidate in ("origin/main", "origin/master"):
+            if cls._git_ref_exists(candidate):
+                return candidate
+        return None
+
+    @staticmethod
+    def _paths_from_git_diff_name_status(range_spec: str) -> List[str]:
+        """Parse ``git diff --name-status`` output into normalized path strings."""
+        diff_capture = safe_subprocess.capture(
+            ["git", "diff", "--name-status", range_spec],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if not diff_capture.ok or diff_capture.timed_out:
+            return []
+
+        paths: List[str] = []
+        diff_out = safe_subprocess.decode_output(diff_capture.stdout).strip()
+        for line in diff_out.splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            parts = raw.split(None, 1)
+            if len(parts) != 2:
+                continue
+            payload = parts[1].strip()
+            if "\t" in payload:
+                payload = payload.split("\t")[-1].strip()
+            if " -> " in payload:
+                payload = payload.split(" -> ")[-1].strip()
+            if payload and not payload.endswith("/"):
+                paths.append(payload)
+        return paths
+
     def _get_modified_and_unpushed_files(self) -> List[str]:
         """Return files that are either dirty (status) or have unpushed commits
         (diff)."""
@@ -3338,63 +3438,24 @@ class LockClient:
         except Exception as e:
             logger.debug("Git status failed: %s", e)
 
-        # 2. Get Unpushed Files (diff against upstream)
+        # 2. Committed-but-not-on-remote (upstream, origin/main, or base-ref override)
         try:
-            # Check if upstream exists
-            args_rev = [
-                "git",
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                "@{u}",
-            ]
-            upstream = safe_subprocess.capture(
-                args_rev,
-                policy="git",
-                cwd=_PROJECT_ROOT,
-                timeout=_GIT_REF_TIMEOUT_S,
-            )
-            if upstream.timed_out or not upstream.ok:
-                return sorted(modified)
-
-            # If upstream exists, get names/statuses of files that differ from it.
-            # Keep deleted paths as "in progress" so lock ownership remains
-            # visible in the dashboard until explicit release.
-            args_diff = ["git", "diff", "--name-status", "@{u}..HEAD"]
-            diff_capture = safe_subprocess.capture(
-                args_diff,
-                policy="git",
-                cwd=_PROJECT_ROOT,
-                timeout=_GIT_REF_TIMEOUT_S,
-            )
-            diff_out = (
-                safe_subprocess.decode_output(diff_capture.stdout).strip()
-                if diff_capture.ok
-                else ""
-            )
-
-            if diff_out:
-                for line in diff_out.splitlines():
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    parts = raw.split(None, 1)
-                    if len(parts) != 2:
-                        continue
-                    status, payload = parts
-                    payload = payload.strip()
-                    if "\t" in payload:
-                        payload = payload.split("\t")[-1].strip()
-                    if " -> " in payload:
-                        payload = payload.split(" -> ")[-1].strip()
-                    path = self._normalize_file_path(payload)
-                    if path.endswith("/"):
-                        continue
-                    if path and not self._should_ignore_path(path):
-                        modified.add(path)
-        except Exception:
-            # No upstream or command failed - fallback to status-only
-            pass
+            base_ref = self._resolve_lock_diff_base_ref()
+            if base_ref:
+                if base_ref != "@{u}":
+                    logger.info(
+                        "No upstream (@{u}); locking in-progress files vs %s",
+                        base_ref,
+                    )
+                range_spec = (
+                    "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
+                )
+                for path in self._paths_from_git_diff_name_status(range_spec):
+                    norm = self._normalize_file_path(path)
+                    if norm and not self._should_ignore_path(norm):
+                        modified.add(norm)
+        except Exception as exc:
+            logger.debug("Git diff for in-progress files failed: %s", exc)
 
         return list(modified)
 
