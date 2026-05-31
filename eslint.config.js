@@ -25,6 +25,22 @@ module.exports = [
     },
   },
   {
+    files: ["tests/frontend/unit/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+      },
+    },
+    rules: {
+      "no-unused-vars": "warn",
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-undef": "error",
+    },
+  },
+  {
     // VS Code extension — Node.js runtime, allow unused variables prefixed with underscore
     files: ["editors/vscode/collab-locks/**/*.js"],
     languageOptions: {
