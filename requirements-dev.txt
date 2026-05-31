@@ -4,13 +4,13 @@
 
 # Code Formatting (ESSENTIAL - Run always)
 autopep8==2.3.2
-black==26.3.1
+black==26.5.1
 isort==5.13.2           # Import sorting (PEP 8 compliant)
 docformatter==1.7.8     # Docstring formatting (PEP 257 compliant)
 
 # Linting (ESSENTIAL - Run always)
 flake8==7.3.0
-ruff==0.15.12
+ruff==0.15.15
 pylint==3.3.9
 
 # Type Checking (OPTIONAL - Run periodically)
