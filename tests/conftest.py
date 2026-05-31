@@ -146,6 +146,16 @@ def _close_collab_logging_after_each_test():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _reset_subprocess_bridge_override():
+    """Ensure subprocess test doubles do not leak across tests."""
+    from collab import subprocess_bridge
+
+    subprocess_bridge.set_test_override(None)
+    yield
+    subprocess_bridge.set_test_override(None)
+
+
 # ============================================================================
 # MOCKS & FIXTURES
 # ============================================================================

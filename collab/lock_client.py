@@ -15,7 +15,6 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -24,12 +23,26 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-# CLI entrypoint (collab = "src.lock_client:main" in pyproject.toml).
-# Main orchestration is in src/main.py; import here for backward compatibility.
-from .main import _run_cli, main  # noqa: F401
+from . import platform_probe, safe_subprocess
+from .errors import (
+    ConfigurationError,
+    DaemonStartError,
+    LockServiceUnavailableError,
+    ParentMonitorError,
+    PidParseError,
+    SubprocessSecurityError,
+    WatcherDiscoveryError,
+)
+
+# CLI entrypoint (collab = "collab.lock_client:main" in pyproject.toml).
+# Main orchestration lives in collab/main.py; re-exported here for console scripts.
+from .main import _run_cli, main
+
+__all__ = ["LockClient", "main", "_run_cli"]
 
 
 def _safe_now() -> datetime:
@@ -201,14 +214,13 @@ def _get_state_dir() -> str:
 
     try:
         import hashlib as _hashlib
-        import tempfile as _tempfile
 
         # Normalize slashes and case for cross-runtime consistency (CLI vs Extension)
         norm_root = _PROJECT_ROOT.replace("/", "\\").lower().rstrip("\\")
         h = _hashlib.sha1(norm_root.encode("utf-8"), usedforsecurity=False).hexdigest()[
             :8
         ]
-        base_tmp = _tempfile.gettempdir()
+        base_tmp = tempfile.gettempdir()
         # Use a collab-specific namespace for runtime state dirs.
         current_prefix = "collab_runtime"
         if _is_test_mode():
@@ -267,28 +279,8 @@ def _state_path(name: str) -> str:
 
 
 def _resolve_executable_path(name: str) -> Optional[str]:
-    """Return an absolute executable path from PATH.
-
-    In explicit test mode only, fall back to the command name so unit tests can
-    monkeypatch subprocess calls without depending on host PATH contents.
-
-    Note: On Windows/Linux platform mismatches (e.g., running tests on Linux
-    that test Windows executables), shutil.which() may fail trying to check
-    Windows-specific APIs. We catch and gracefully degrade in that case.
-    """
-    try:
-        resolved = shutil.which(name)
-    except (AttributeError, OSError, ValueError):
-        # Platform mismatch (e.g., testing Windows code on Linux).
-        # shutil.which() tried to call _winapi functions that don't exist.
-        # Fall back as if the executable wasn't found.
-        resolved = None
-
-    if not resolved:
-        if _is_test_mode():
-            return name
-        return None
-    return os.path.abspath(resolved)
+    """Return an absolute executable path from PATH (delegates to safe_subprocess)."""
+    return safe_subprocess.resolve_executable(name)
 
 
 # Load .env from the project root (never modify .env)
@@ -524,7 +516,15 @@ def _retry_on_network_error(func, *args, **kwargs) -> Any:
             # Only retry on network-related errors
             if any(
                 kw in err_str
-                for kw in ("timeout", "connection", "network", "unreachable")
+                for kw in (
+                    "timeout",
+                    "connection",
+                    "connect",
+                    "network",
+                    "unreachable",
+                    "refused",
+                    "getaddrinfo",
+                )
             ):
                 wait = 2**attempt
                 logger.debug(
@@ -541,6 +541,100 @@ def _retry_on_network_error(func, *args, **kwargs) -> Any:
     # why retries exhausted (e.g. DNS resolution errors).
     logger.exception("Permanent network failure after %d attempts", MAX_RETRIES)
     raise last_error  # type: ignore[misc]
+
+
+# Lock service: short TCP probe so CLI/watcher fail fast when Supabase is down.
+_LOCK_SERVICE_PROBE_TIMEOUT_S = 5.0
+
+# Git discovery (per watcher tick): default 30s balances responsiveness with large
+# Windows repos (logs showed 30s was tight). Override for slow disks:
+#   COLLAB_GIT_CAPTURE_TIMEOUT_S=45
+_GIT_STATUS_TIMEOUT_S = float(os.getenv("COLLAB_GIT_CAPTURE_TIMEOUT_S", "30"))
+_GIT_REF_TIMEOUT_S = min(_GIT_STATUS_TIMEOUT_S, 15.0)
+
+
+def _current_supabase_url() -> str:
+    """Return the active Supabase URL (env at call time, not import time)."""
+    return os.getenv("SUPABASE_URL") or SUPABASE_URL or ""
+
+
+def _lock_service_hostname() -> str:
+    """Return the hostname from SUPABASE_URL, or empty when unset/invalid."""
+    url = _current_supabase_url()
+    if not url:
+        return ""
+    try:
+        return urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+def _ensure_lock_service_reachable() -> None:
+    """Raise when the configured Supabase host cannot be resolved or is missing."""
+    # Unit/integration tests use fake hosts and mock RPC; connectivity is not real.
+    if os.getenv("COLLAB_TEST_MODE") == "1":
+        return
+
+    url = _current_supabase_url()
+    anon = os.getenv("SUPABASE_ANON_KEY") or SUPABASE_ANON_KEY
+    if not url or not anon:
+        raise ConfigurationError(
+            "Supabase credentials are not configured",
+            detail="Set SUPABASE_URL and SUPABASE_ANON_KEY in .env",
+        )
+    host = _lock_service_hostname()
+    if not host:
+        raise ConfigurationError(
+            "SUPABASE_URL is invalid",
+            detail=f"Could not parse hostname from {url!r}",
+        )
+    try:
+        with socket.create_connection(
+            (host, 443),
+            timeout=_LOCK_SERVICE_PROBE_TIMEOUT_S,
+        ):
+            pass
+    except OSError as exc:
+        raise LockServiceUnavailableError(
+            f"Cannot reach lock service host {host!r}",
+            detail=(
+                f"{exc}. Verify SUPABASE_URL, network/VPN, and that the Supabase "
+                "project is active."
+            ),
+        ) from exc
+
+
+def _is_sandbox_lock_service() -> bool:
+    """True when CLI runs against the integration-test localhost Supabase stub."""
+    if os.getenv("COLLAB_TEST_MODE") != "1":
+        return False
+    return _lock_service_hostname() in {"localhost", "127.0.0.1"}
+
+
+def _is_lock_service_error(exc: BaseException) -> bool:
+    """Return True when an exception indicates the remote lock service is
+    unreachable."""
+    if isinstance(exc, LockServiceUnavailableError):
+        return True
+    text = str(exc).lower()
+    return any(
+        token in text
+        for token in (
+            "getaddrinfo",
+            "gaierror",
+            "name or service not known",
+            "network is unreachable",
+            "network error",
+            "connection refused",
+            "connection error",
+            "connecterror",
+            "failed to establish",
+            "actively refused",
+            "temporary failure in name resolution",
+            "11001",
+            "10061",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +719,13 @@ class LockClient:
         """Return True if this client has admin privileges (service role key)."""
         return self._is_admin
 
+    def _require_client(self) -> Any:
+        """Return the Supabase client or raise ConfigurationError."""
+        client = self._client
+        if client is None:
+            raise ConfigurationError("Supabase client not initialized")
+        return client
+
     def _get_session_token(self) -> str:
         """Return a stable session token for this machine, project and user.
 
@@ -672,18 +773,16 @@ class LockClient:
 
         # Also try git config user.name directly from the current environment
         try:
-            git_name = (
-                subprocess.check_output(
-                    ["git", "config", "user.name"],
-                    stderr=subprocess.DEVNULL,
-                )
-                .decode()
-                .strip()
-                .lower()
+            git_capture = safe_subprocess.capture(
+                ["git", "config", "user.name"], policy="git"
             )
-            if git_name:
-                candidates.append(git_name)
-        except Exception:
+            if git_capture.ok:
+                git_name = (
+                    safe_subprocess.decode_output(git_capture.stdout).strip().lower()
+                )
+                if git_name:
+                    candidates.append(git_name)
+        except (SubprocessSecurityError, Exception):
             pass
 
         # Also try the system username as fallback
@@ -719,16 +818,14 @@ class LockClient:
     def _get_git_username() -> str:
         """Derive developer identity from git config or environment."""
         try:
-            name = (
-                subprocess.check_output(
-                    ["git", "config", "user.name"], stderr=subprocess.DEVNULL
-                )
-                .decode()
-                .strip()
+            captured = safe_subprocess.capture(
+                ["git", "config", "user.name"], policy="git"
             )
-            if name:
-                return name
-        except Exception:
+            if captured.ok:
+                name = safe_subprocess.decode_output(captured.stdout).strip()
+                if name:
+                    return name
+        except (SubprocessSecurityError, Exception):
             pass
         return os.getenv("USERNAME") or os.getenv("USER") or "unknown_user"
 
@@ -736,29 +833,17 @@ class LockClient:
     def _get_current_branch() -> Optional[str]:
         """Return the current git branch name, or None."""
         try:
-            if sys.platform == "win32":
-                return (
-                    subprocess.check_output(
-                        ["git", "branch", "--show-current"],
-                        stderr=subprocess.DEVNULL,
-                        cwd=_PROJECT_ROOT,
-                        creationflags=0x08000000,
-                    )
-                    .decode()
-                    .strip()
-                )
-            else:
-                return (
-                    subprocess.check_output(
-                        ["git", "branch", "--show-current"],
-                        stderr=subprocess.DEVNULL,
-                        cwd=_PROJECT_ROOT,
-                    )
-                    .decode()
-                    .strip()
-                )
-        except Exception:
-            return None
+            captured = safe_subprocess.capture(
+                ["git", "branch", "--show-current"],
+                policy="git",
+                cwd=_PROJECT_ROOT,
+            )
+            if captured.ok:
+                branch = safe_subprocess.decode_output(captured.stdout).strip()
+                return branch or None
+        except (SubprocessSecurityError, Exception):
+            pass
+        return None
 
     # ------------------------------------------------------------------
     # Response parsing (handles varying supabase-py response shapes)
@@ -785,8 +870,7 @@ class LockClient:
         locks, matching pycharm_watcher behavior.
         """
         try:
-            client = self._client
-            assert client is not None
+            client = self._require_client()
             res = _retry_on_network_error(
                 lambda: client.table("file_locks").select("*").execute()
             )
@@ -872,6 +956,12 @@ class LockClient:
             )
             return True, token
 
+        try:
+            _ensure_lock_service_reachable()
+        except (ConfigurationError, LockServiceUnavailableError) as exc:
+            detail = f" ({exc.detail})" if exc.detail else ""
+            return False, f"{exc.message}{detail}"
+
         branch = branch_name or self._get_current_branch()
         token = self._get_session_token()
 
@@ -889,8 +979,7 @@ class LockClient:
             "p_is_ephemeral": bool(getattr(self, "_is_ephemeral", False)),
         }
 
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
         try:
             res = _retry_on_network_error(
                 lambda: client.rpc("acquire_lock", rpc_params).execute()
@@ -958,8 +1047,7 @@ class LockClient:
             )
             return True, "ephemeral-released"
 
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
         try:
             norm = self._normalize_file_path(file_path)
             res = _retry_on_network_error(
@@ -985,26 +1073,44 @@ class LockClient:
         return False, "No lock released (not owner or lock does not exist)"
 
     def active(self) -> List[Dict]:
-        """Return all currently active locks."""
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        """Return all currently active locks.
+
+        Raises :class:`LockServiceUnavailableError` when the lock service cannot be
+        reached. Callers that must degrade gracefully (for example reconcile during a
+        transient outage) should catch that exception explicitly.
+        """
+        if not _is_sandbox_lock_service():
+            _ensure_lock_service_reachable()
+        client = self._require_client()
         try:
             res = _retry_on_network_error(
                 lambda: client.table("file_locks").select("*").execute()
             )
         except Exception as e:
             logger.error("Exception in active() Supabase query: %s", e)
-            return []
+            if _is_lock_service_error(e):
+                if _is_sandbox_lock_service():
+                    logger.debug("active() sandbox: treating unreachable stub as empty")
+                    return []
+                raise LockServiceUnavailableError(
+                    "Lock service query failed",
+                    detail=str(e),
+                ) from e
+            raise
         _, data, error = self._parse_response(res)
         if error:
             logger.error("Supabase error in active(): %s", error)
-            return []
+            if _is_sandbox_lock_service():
+                return []
+            raise LockServiceUnavailableError(
+                "Lock service returned an error",
+                detail=str(error),
+            )
         return data or []
 
     def get_lock_status(self, file_path: str) -> Dict:
         """Return the lock status for a specific file."""
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
         try:
             norm = self._normalize_file_path(file_path)
             res = _retry_on_network_error(
@@ -1044,7 +1150,11 @@ class LockClient:
 
         Returns count released.
         """
-        locks = self.active()
+        try:
+            locks = self.active()
+        except LockServiceUnavailableError as exc:
+            logger.error("release_all skipped — lock service unavailable: %s", exc)
+            return 0
         my_locks = [lk for lk in locks if lk.get("developer_id") == self.developer_id]
         count = 0
         for lk in my_locks:
@@ -1074,8 +1184,7 @@ class LockClient:
                     "Only admins can force-release other developers' locks."
                 )
 
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
         try:
             query = client.table("file_locks").delete().eq("file_path", file_path)
             if not self._is_admin:
@@ -1115,8 +1224,7 @@ class LockClient:
             if count == 0:
                 return 0
 
-            client = self._client
-            assert client is not None, "Supabase client not initialized"
+            client = self._require_client()
 
             # PostgREST forbids DELETE without a WHERE clause. Delete by
             # file_path IN (<paths>) in reasonably-sized chunks to avoid URL
@@ -1195,8 +1303,7 @@ class LockClient:
         nothing, a ``LIKE %<basename>%`` fallback query runs so the user does not have
         to remember the full stored path.
         """
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
         try:
             q = client.table("file_locks_history").select("*")
             if file_path:
@@ -1241,8 +1348,7 @@ class LockClient:
         if retention_days < 1:
             return False, 0, "retention_days must be >= 1"
 
-        client = self._client
-        assert client is not None, "Supabase client not initialized"
+        client = self._require_client()
 
         # Preferred path: RPC in schema.sql (stable, server-side retention logic).
         try:
@@ -1370,7 +1476,7 @@ class LockClient:
         cmd = [
             sys.executable,
             "-m",
-            "src.lock_client",
+            "collab.lock_client",
             "watch",
             "--interval",
             str(interval),
@@ -1429,48 +1535,44 @@ class LockClient:
             # CRITICAL: Don't pass file handles from parent to child!
             # The child process will open its own log files via logging_config.py.
             # Passing parent file handles causes NUL corruption and file locking issues.
-            if os.path.exists(pythonw):
-                proc = subprocess.Popen(
-                    [pythonw] + cmd[1:],
-                    creationflags=creation_flags,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    close_fds=True,
+            spawn_argv = [pythonw] + cmd[1:] if os.path.exists(pythonw) else cmd
+            try:
+                proc = safe_subprocess.spawn_background(
+                    spawn_argv,
+                    policy="watcher",
                     cwd=_PROJECT_ROOT,
-                )
-            else:
-                proc = subprocess.Popen(
-                    cmd,
                     creationflags=creation_flags,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    close_fds=True,
-                    cwd=_PROJECT_ROOT,
                 )
+            except SubprocessSecurityError as exc:
+                logger.error("Refusing to start watcher: %s", exc)
+                print(f"❌ Refusing to start watcher: {exc}")
+                return
         else:
             # Unix/Linux/Mac: only use start_new_session if NOT tracking a parent
             # start_new_session creates a new process group, detaching from parent
-            if not parent_pid:
-                # No parent to track - can safely create new session
-                logger.debug("Starting detached watcher (new session)")
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    cwd=_PROJECT_ROOT,
-                    start_new_session=True,
-                )
-            else:
-                # Tied to parent - stay in same process group
-                logger.debug(
-                    "Starting watcher tied to parent %d (same session)", parent_pid
-                )
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    cwd=_PROJECT_ROOT,
-                )
+            try:
+                if not parent_pid:
+                    logger.debug("Starting detached watcher (new session)")
+                    proc = safe_subprocess.spawn_background(
+                        cmd,
+                        policy="watcher",
+                        cwd=_PROJECT_ROOT,
+                        start_new_session=True,
+                    )
+                else:
+                    logger.debug(
+                        "Starting watcher tied to parent %d (same session)",
+                        parent_pid,
+                    )
+                    proc = safe_subprocess.spawn_background(
+                        cmd,
+                        policy="watcher",
+                        cwd=_PROJECT_ROOT,
+                    )
+            except SubprocessSecurityError as exc:
+                logger.error("Refusing to start watcher: %s", exc)
+                print(f"❌ Refusing to start watcher: {exc}")
+                return
         if sys.platform != "win32":
             # On Linux/Mac, the spawned proc.pid is the real child.
             # We record it immediately for tracking, though the child
@@ -1499,10 +1601,12 @@ class LockClient:
         if actual_pid:
             print(f"✅ Started (PID: {actual_pid})")
         else:
-            print(
-                "❌ Watcher process exited or failed to record PID. "
+            start_error = DaemonStartError(
+                "Watcher process exited or failed to record PID. "
                 f"(Launcher PID: {proc.pid})"
             )
+            logger.error("%s: %s", start_error.code, start_error.message)
+            print(f"❌ {start_error.message}")
             print("   Check logs/collab.log for details.")
             pid = self._read_pid()
             if pid == proc.pid:
@@ -1636,11 +1740,7 @@ class LockClient:
 
                 # Soft stop did not work — fallback to forced termination
                 if sys.platform == "win32":
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(target_pid)],
-                        capture_output=True,
-                        creationflags=0x08000000,
-                    )
+                    platform_probe.taskkill_force(target_pid, tree=True)
                 else:
                     try:
                         os.kill(-target_pid, signal.SIGTERM)
@@ -1697,7 +1797,11 @@ class LockClient:
         Checks both the primary PID file and the legacy PyCharm watcher PID file for
         backward compatibility.
         """
-        pid = self._read_pid()
+        try:
+            pid = self._read_pid(strict=True)
+        except PidParseError as exc:
+            print(f"❌ Lock watcher status unavailable: {exc.message}")
+            return False
         local_only_mode = bool(getattr(self, "local_only", False))
         if pid and self._is_process_alive(pid):
             # Attempt to read PID metadata (entrypoint) and prefer it for
@@ -1757,6 +1861,14 @@ class LockClient:
             if local_only_mode:
                 try:
                     found = self._discover_running_watchers()
+                    if len(found) > 1:
+                        logger.warning(
+                            "%s",
+                            WatcherDiscoveryError(
+                                f"multiple watcher processes: {found}",
+                                detail="canonical PID file may be stale",
+                            ),
+                        )
                     for found_pid in found:
                         if self._is_process_alive(found_pid):
                             found_cmd = self._get_cmdline_for_pid(found_pid)
@@ -1781,6 +1893,14 @@ class LockClient:
         if local_only_mode:
             try:
                 found = self._discover_running_watchers()
+                if len(found) > 1:
+                    logger.warning(
+                        "%s",
+                        WatcherDiscoveryError(
+                            f"multiple watcher processes: {found}",
+                            detail="canonical PID file may be stale",
+                        ),
+                    )
                 for found_pid in found:
                     if self._is_process_alive(found_pid):
                         found_cmd = self._get_cmdline_for_pid(found_pid)
@@ -1836,37 +1956,12 @@ class LockClient:
             return is_test_watcher if is_test else not is_test_watcher
 
         if sys.platform == "win32":
-            # Check multiple Python executable names
-            python_images = ["python.exe", "pythonw.exe", "python3.exe"]
-            for image in python_images:
-                try:
-                    result = subprocess.run(
-                        [
-                            "tasklist",
-                            "/FI",
-                            f"IMAGENAME eq {image}",
-                            "/FO",
-                            "CSV",
-                            "/NH",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        creationflags=0x08000000,
-                    )
-                    for line in result.stdout.strip().split("\n"):
-                        if not line.strip():
-                            continue
-                        parts = line.strip().strip('"').split('","')
-                        if len(parts) >= 2:
-                            try:
-                                pid = int(parts[1])
-                                # Don't kill ourselves
-                                if pid != os.getpid():
-                                    pids_to_check.add(pid)
-                            except (ValueError, IndexError):
-                                pass
-                except Exception as e:
-                    logger.debug("Error scanning %s processes: %s", image, e)
+            try:
+                for pid in platform_probe.iter_tasklist_python_pids():
+                    if pid != os.getpid():
+                        pids_to_check.add(pid)
+            except Exception as e:
+                logger.debug("Error scanning python processes via tasklist: %s", e)
 
             # Inspect command-lines (prefer psutil); fall back to WMIC if available.
             for pid in list(pids_to_check):
@@ -1892,11 +1987,7 @@ class LockClient:
 
                     if inspected and cmd and _should_kill(cmd):
                         print(f"Killing orphaned lock_client (PID: {pid})")
-                        subprocess.run(
-                            ["taskkill", "/F", "/T", "/PID", str(pid)],
-                            capture_output=True,
-                            creationflags=0x08000000,
-                        )
+                        platform_probe.taskkill_force(pid, tree=True)
                         killed += 1
                         continue
 
@@ -1904,29 +1995,10 @@ class LockClient:
                     # try WMIC if present
                     if shutil.which("wmic"):
                         try:
-                            result = subprocess.run(
-                                [
-                                    "wmic",
-                                    "process",
-                                    "where",
-                                    f"ProcessId={pid}",
-                                    "get",
-                                    "CommandLine",
-                                    "/value",
-                                ],
-                                capture_output=True,
-                                text=True,
-                                creationflags=0x08000000,
-                                errors="ignore",
-                            )
-                            out = (result.stdout or "").lower()
-                            if _should_kill(out):
+                            out = platform_probe.wmic_cmdline_value(pid)
+                            if out and _should_kill(out):
                                 print(f"Killing orphaned lock_client (PID: {pid})")
-                                subprocess.run(
-                                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                                    capture_output=True,
-                                    creationflags=0x08000000,
-                                )
+                                platform_probe.taskkill_force(pid, tree=True)
                                 killed += 1
                         except Exception as e:
                             logger.debug("Error checking PID %d via WMIC: %s", pid, e)
@@ -1944,12 +2016,8 @@ class LockClient:
         else:
             # Unix: use ps and grep
             try:
-                result = subprocess.run(
-                    ["ps", "aux"],
-                    capture_output=True,
-                    text=True,
-                )
-                for line in result.stdout.split("\n"):
+                ps_out = platform_probe.ps_aux()
+                for line in ps_out.split("\n"):
                     if "python" in line.lower() and _should_kill(line):
                         parts = line.split()
                         if len(parts) >= 2:
@@ -2009,19 +2077,12 @@ class LockClient:
     def _prepare_dashboard_server(self) -> Tuple[Optional[str], Optional[str]]:
         """Create temp HTML with injected config, start local HTTP server.
 
+        Serves the full ``collab/dashboard`` directory so sibling assets (``dashboard-
+        format.js``, etc.) resolve correctly.
+
         Returns (url, tmp_path) or (None, None) on error.
         """
-        html_path = os.path.join(_RESOURCE_ROOT, "dashboard", "index.html")
-        if not os.path.exists(html_path):
-            logger.error("Dashboard file not found at %s", html_path)
-            return None, None
-
-        try:
-            with open(html_path, "r", encoding="utf-8") as fh:
-                content = fh.read()
-        except Exception as e:
-            logger.error("Error reading dashboard template: %s", e)
-            return None, None
+        from collab.dashboard_server import prepare_dashboard_server
 
         injected = {
             "url": SUPABASE_URL or "",
@@ -2029,74 +2090,9 @@ class LockClient:
             "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
             "user": self.developer_id or "",
         }
-        inject_script = (
-            f"<script>window.__SUPABASE_CONFIG__ = {json.dumps(injected)};</script>\n"
+        return prepare_dashboard_server(
+            _RESOURCE_ROOT, injected, project_root=_PROJECT_ROOT
         )
-
-        try:
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", delete=False, suffix=".html", encoding="utf-8"
-            )
-            tmp.write(inject_script)
-            tmp.write(content)
-            tmp.flush()
-            tmp.close()
-        except Exception as e:
-            logger.error("Error creating temp dashboard file: %s", e)
-            return None, None
-
-        try:
-            import http.server
-            from functools import partial
-
-            tmp_dir = os.path.dirname(tmp.name)
-            filename = os.path.basename(tmp.name)
-
-            Handler = partial(http.server.SimpleHTTPRequestHandler, directory=tmp_dir)
-
-            # Silence request logging
-            RequestHandler = http.server.SimpleHTTPRequestHandler
-            RequestHandler.log_message = lambda *a, **k: None  # type: ignore  # noqa
-
-            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-            port = server.server_address[1]
-
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-
-            def _safe_shutdown() -> None:
-                """Best-effort dashboard server shutdown for process exit."""
-                try:
-                    server.shutdown()
-                except BaseException:
-                    pass
-                try:
-                    server.server_close()
-                except Exception:
-                    pass
-
-            atexit.register(_safe_shutdown)
-
-            url = f"http://127.0.0.1:{port}/{filename}"
-
-            # Probe until ready
-            import socket as _socket
-
-            for _ in range(20):
-                try:
-                    with _socket.create_connection(("127.0.0.1", port), timeout=0.3):
-                        break
-                except Exception:
-                    time.sleep(0.05)
-
-            return url, tmp.name
-        except Exception as e:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
-            logger.error("Failed to start local dashboard server: %s", e)
-            return None, None
 
     # ------------------------------------------------------------------
     # Watcher (foreground process)
@@ -2771,8 +2767,12 @@ class LockClient:
                     err = ctypes.windll.kernel32.GetLastError()
                 except Exception:
                     err = None
-                logger.debug(
-                    "OpenProcess failed for parent PID %s: err=%s", parent, err
+                logger.warning(
+                    "%s",
+                    ParentMonitorError(
+                        f"cannot monitor parent PID {parent}",
+                        detail=f"OpenProcess err={err}",
+                    ),
                 )
                 return
 
@@ -3035,6 +3035,8 @@ class LockClient:
                     for lk in active
                     if lk.get("developer_id") == self.developer_id
                 }
+            except LockServiceUnavailableError:
+                return set()
             except Exception:
                 return set()
 
@@ -3052,6 +3054,9 @@ class LockClient:
                     fp = lk.get("file_path", "")
                     if fp:
                         lock_map[fp] = lk
+        except LockServiceUnavailableError as e:
+            logger.error("Error getting Supabase locks (service unavailable): %s", e)
+            return git_modified
         except Exception as e:
             logger.error("Error getting Supabase locks: %s", e)
             return git_modified
@@ -3108,8 +3113,7 @@ class LockClient:
                 logger.info("🔒 [RESUMED] %s — lock re-adopted from this machine", fp)
                 try:
                     # Use direct update to ONLY change lock_token, NOT acquired_at
-                    client = self._client
-                    assert client is not None
+                    client = self._require_client()
                     client.table("file_locks").update({"lock_token": current_token}).eq(
                         "file_path", fp
                     ).eq("developer_id", self.developer_id).execute()
@@ -3238,21 +3242,21 @@ class LockClient:
     @staticmethod
     def _run_git_status() -> str:
         """Run git status --porcelain and return output."""
-        args = ["git", "status", "--porcelain"]
-        if sys.platform == "win32":
-            return (
-                subprocess.check_output(
-                    args, stderr=subprocess.DEVNULL, creationflags=0x08000000
-                )
-                .decode()
-                .strip()
+        captured = safe_subprocess.capture(
+            ["git", "status", "--porcelain"],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_STATUS_TIMEOUT_S,
+        )
+        if captured.timed_out:
+            logger.warning(
+                "git status --porcelain timed out after %ss; skipping status snapshot",
+                _GIT_STATUS_TIMEOUT_S,
             )
-        else:
-            return (
-                subprocess.check_output(args, stderr=subprocess.DEVNULL)
-                .decode()
-                .strip()
-            )
+            return ""
+        if not captured.ok:
+            return ""
+        return safe_subprocess.decode_output(captured.stdout).strip()
 
     def _get_modified_and_unpushed_files(self) -> List[str]:
         """Return files that are either dirty (status) or have unpushed commits
@@ -3283,31 +3287,30 @@ class LockClient:
                 "--symbolic-full-name",
                 "@{u}",
             ]
-            if sys.platform == "win32":
-                subprocess.check_output(
-                    args_rev, stderr=subprocess.DEVNULL, creationflags=0x08000000
-                )
-            else:
-                subprocess.check_output(args_rev, stderr=subprocess.DEVNULL)
+            upstream = safe_subprocess.capture(
+                args_rev,
+                policy="git",
+                cwd=_PROJECT_ROOT,
+                timeout=_GIT_REF_TIMEOUT_S,
+            )
+            if upstream.timed_out or not upstream.ok:
+                return sorted(modified)
 
             # If upstream exists, get names/statuses of files that differ from it.
             # Keep deleted paths as "in progress" so lock ownership remains
             # visible in the dashboard until explicit release.
             args_diff = ["git", "diff", "--name-status", "@{u}..HEAD"]
-            if sys.platform == "win32":
-                diff_out = (
-                    subprocess.check_output(
-                        args_diff, stderr=subprocess.DEVNULL, creationflags=0x08000000
-                    )
-                    .decode()
-                    .strip()
-                )
-            else:
-                diff_out = (
-                    subprocess.check_output(args_diff, stderr=subprocess.DEVNULL)
-                    .decode()
-                    .strip()
-                )
+            diff_capture = safe_subprocess.capture(
+                args_diff,
+                policy="git",
+                cwd=_PROJECT_ROOT,
+                timeout=_GIT_REF_TIMEOUT_S,
+            )
+            diff_out = (
+                safe_subprocess.decode_output(diff_capture.stdout).strip()
+                if diff_capture.ok
+                else ""
+            )
 
             if diff_out:
                 for line in diff_out.splitlines():
@@ -3370,14 +3373,16 @@ class LockClient:
         return False
 
     @staticmethod
-    def _read_pid() -> Optional[int]:
+    def _read_pid(*, strict: bool = False) -> Optional[int]:
         """Read daemon PID from the PID file.
 
         Supports two formats for backward compatibility:
         - Plain integer stored in `.daemon.pid` (legacy)
         - JSON object stored in `.daemon.pid` containing a numeric "pid" field
 
-        Returns the pid as an int, or None if the file is missing or malformed.
+        Returns the pid as an int, or None if the file is missing or empty.
+        When ``strict`` is True and the file exists but cannot be parsed, raises
+        :class:`PidParseError`.
         """
         if not os.path.exists(PID_FILE):
             return None
@@ -3395,14 +3400,28 @@ class LockClient:
                         return pid
                 except Exception:
                     logger.debug("PID file contains invalid JSON: %s", raw)
+                    if strict:
+                        raise PidParseError(
+                            f"PID file at {PID_FILE} contains invalid JSON",
+                            detail=raw[:200],
+                        ) from None
                     return None
             # Fallback: plain integer
             return int(raw)
         except ValueError:
             logger.debug("PID file does not contain an integer: %s", PID_FILE)
+            if strict:
+                raise PidParseError(
+                    f"PID file at {PID_FILE} does not contain a valid integer",
+                ) from None
             return None
         except OSError as e:
             logger.debug("Could not read PID file %s: %s", PID_FILE, e)
+            if strict:
+                raise PidParseError(
+                    f"Could not read PID file at {PID_FILE}",
+                    detail=str(e),
+                ) from e
             return None
 
     @staticmethod
@@ -3431,72 +3450,7 @@ class LockClient:
             # psutil not installed — continue to platform fallbacks
             pass
 
-        # Platform-specific fallbacks
-        if sys.platform == "win32":
-            # Prefer modern PowerShell CIM query when WMIC is not present.
-            # Only call WMIC if it is actually available on PATH to avoid
-            # repeated FileNotFoundError/WinError logs on newer Windows.
-            try:
-                if shutil.which("wmic"):
-                    try:
-                        out = subprocess.check_output(
-                            [
-                                "wmic",
-                                "process",
-                                "where",
-                                f"ProcessId={pid}",
-                                "get",
-                                "CommandLine",
-                            ],
-                            stderr=subprocess.DEVNULL,
-                            text=True,
-                        )
-                        lines = [
-                            line.strip() for line in out.splitlines() if line.strip()
-                        ]
-                        if len(lines) >= 2:
-                            return " ".join(lines[1:]).strip()
-                    except Exception:
-                        # If WMIC fails, continue to PowerShell fallback
-                        logger.debug("WMIC command-line query failed for PID %d", pid)
-                # PowerShell CIM fallback (works on recent Windows)
-                try:
-                    cmd_str = (
-                        "(Get-CimInstance Win32_Process -Filter "
-                        '"ProcessId=%d").CommandLine'
-                    ) % pid
-                    ps_cmd = ("-NoProfile", "-Command", cmd_str)
-                    out = subprocess.check_output(
-                        ["powershell", *ps_cmd], stderr=subprocess.DEVNULL, text=True
-                    )
-                    out = out.strip()
-                    if out:
-                        return out
-                except Exception:
-                    logger.debug("PowerShell command-line query failed for PID %d", pid)
-            except Exception:
-                # Defensive: if shutil or other checks fail, give up gracefully
-                logger.debug("Windows cmdline fallback failed for PID %d", pid)
-            # As a last resort on Windows we cannot reliably get a cmdline
-            return None
-        else:
-            # Unix-like systems: read /proc/<pid>/cmdline if available
-            proc_path = f"/proc/{pid}/cmdline"
-            try:
-                if os.path.exists(proc_path):
-                    with open(proc_path, "rb") as fh:
-                        data = fh.read()
-                        if not data:
-                            return None
-                        # cmdline entries are null-separated
-                        raw_parts = data.split(b"\x00")
-                        parts = [
-                            part.decode(errors="replace") for part in raw_parts if part
-                        ]
-                        return " ".join(parts)
-            except Exception:
-                pass
-            return None
+        return platform_probe.get_cmdline(pid)
 
     @staticmethod
     def _cmdline_matches_watcher(cmdline: str) -> bool:
@@ -3778,20 +3732,7 @@ class LockClient:
             except Exception as exc:
                 logger.debug("psutil pid_exists failed for PID %s: %s", pid, exc)
 
-            # Final Fallback: tasklist (slow but usually present)
-            try:
-                tasklist_exe = _resolve_executable_path("tasklist")
-                if not tasklist_exe:
-                    return False
-                out = subprocess.check_output(
-                    [tasklist_exe, "/FI", f"PID eq {pid}", "/NH"],
-                    text=True,
-                    creationflags=0x08000000,
-                )
-                return str(pid) in out
-            except Exception as exc:
-                logger.debug("tasklist process check failed for PID %s: %s", pid, exc)
-                return False
+            return platform_probe.is_pid_alive_tasklist(pid)
         else:
             try:
                 os.kill(pid, 0)
@@ -3843,65 +3784,24 @@ class LockClient:
             logger.debug("psutil process_iter unavailable/failed: %s", exc)
 
         if sys.platform == "win32":
-            tasklist_exe = _resolve_executable_path("tasklist")
-            if not tasklist_exe:
-                logger.debug("tasklist executable not found; skipping Windows fallback")
-                tasklist_exe = None
-            if not tasklist_exe:
-                return sorted(candidates)
-            python_images = ["python.exe", "pythonw.exe", "python3.exe"]
-            for image in python_images:
-                try:
-                    result = subprocess.run(
-                        [
-                            tasklist_exe,
-                            "/FI",
-                            f"IMAGENAME eq {image}",
-                            "/FO",
-                            "CSV",
-                            "/NH",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        creationflags=0x08000000,
-                    )
-                    for line in (result.stdout or "").splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        parts = line.strip().strip('"').split('","')
-                        if len(parts) >= 2:
-                            try:
-                                pid = int(parts[1])
-                                if pid != os.getpid():
-                                    candidates.add(pid)
-                            except Exception as exc:
-                                logger.debug(
-                                    "Failed parsing tasklist row for image %s: %s",
-                                    image,
-                                    exc,
-                                )
-                except Exception as exc:
-                    logger.debug(
-                        "tasklist fallback failed for image %s: %s", image, exc
-                    )
-                    continue
+            try:
+                for pid in platform_probe.iter_tasklist_python_pids():
+                    if pid != os.getpid():
+                        candidates.add(pid)
+            except Exception as exc:
+                logger.debug("tasklist watcher discovery failed: %s", exc)
         else:
             try:
-                ps_exe = _resolve_executable_path("ps") or "ps"
-                result = subprocess.run(
-                    [ps_exe, "-eo", "pid,cmd"], capture_output=True, text=True
-                )
-                for line in (result.stdout or "").splitlines():
+                for line in platform_probe.ps_pid_cmd_csv().splitlines():
                     line = line.strip()
                     if not line:
                         continue
                     parts = line.split(None, 1)
                     if len(parts) >= 2:
                         try:
-                            pid = int(parts[0])
-                            if pid != os.getpid():
-                                candidates.add(pid)
+                            cand = int(parts[0])
+                            if cand != os.getpid():
+                                candidates.add(cand)
                         except Exception as exc:
                             logger.debug("Failed parsing ps output row: %s", exc)
             except Exception as exc:
@@ -3946,15 +3846,15 @@ class LockClient:
     def _terminate_process(self, pid: int) -> None:
         """Forcefully terminate a process by PID."""
         if sys.platform == "win32":
-            taskkill_exe = _resolve_executable_path("taskkill")
-            if not taskkill_exe:
-                logger.debug("taskkill not found while terminating PID %s", pid)
-                return
-            subprocess.run(
-                [taskkill_exe, "/F", "/PID", str(pid)],
-                capture_output=True,
-                creationflags=0x08000000,
-            )
+            try:
+                safe_subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    policy="taskkill",
+                )
+            except SubprocessSecurityError as exc:
+                logger.debug("taskkill rejected while terminating PID %s: %s", pid, exc)
+            except Exception as exc:
+                logger.debug("taskkill failed for PID %s: %s", pid, exc)
         else:
             try:
                 # Use getattr or numeric 9 for SIGKILL fallback on Windows
@@ -3990,74 +3890,24 @@ class LockClient:
         # If WMIC is available, prefer it for name+PPID. Otherwise fall back
         # to tasklist for a name-only result.
         try:
-            wmic_exe = _resolve_executable_path("wmic")
-            if wmic_exe:
-                result = subprocess.run(
-                    [
-                        wmic_exe,
-                        "process",
-                        "where",
-                        f"ProcessId={pid}",
-                        "get",
-                        "Name,ParentProcessId",
-                        "/value",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    creationflags=0x08000000,
-                    timeout=5,
-                    errors="ignore",
-                )
-                logger.debug(
-                    "WMIC result for PID %d: rc=%d stdout=%r stderr=%r",
+            name, parent_id = platform_probe.wmic_process_name_and_ppid_value(pid)
+            if name:
+                logger.info(
+                    "WMIC success: PID %d = %s, parent = %s",
                     pid,
-                    result.returncode,
-                    result.stdout[:200] if result.stdout else None,
-                    result.stderr[:200] if result.stderr else None,
+                    name,
+                    parent_id,
                 )
-                if result.returncode == 0 and result.stdout:
-                    name_match = re.search(r"Name=(\S+)", result.stdout)
-                    parent_match = re.search(r"ParentProcessId=(\d+)", result.stdout)
-                    logger.debug(
-                        "WMIC parse for PID %d: name_match=%s parent_match=%s",
-                        pid,
-                        name_match.group(0) if name_match else None,
-                        parent_match.group(0) if parent_match else None,
-                    )
-                    if name_match:
-                        name = name_match.group(1)
-                        parent_id = int(parent_match.group(1)) if parent_match else None
-                        if not name.lower().endswith(".exe"):
-                            name += ".exe"
-                        logger.info(
-                            "WMIC success: PID %d = %s, parent = %s",
-                            pid,
-                            name,
-                            parent_id,
-                        )
-                        return name, parent_id
+                return name, parent_id
         except Exception as e:
             logger.debug("WMIC query failed for PID %d: %s", pid, e)
 
-        # Fallback: tasklist for name only
         try:
-            tasklist_exe = _resolve_executable_path("tasklist")
-            if not tasklist_exe:
-                return None, None
-            args = [tasklist_exe, "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"]
-            out = (
-                subprocess.check_output(
-                    args, stderr=subprocess.DEVNULL, creationflags=0x08000000, timeout=5
-                )
-                .decode("utf-8", errors="ignore")
-                .strip()
-            )
-            # Format: "Image Name","PID","Session Name","Session#","Mem Usage"
+            out = platform_probe.tasklist_csv_for_pid(pid)
             if out.startswith('"'):
                 parts = [p.strip('"') for p in out.split(",")]
                 if len(parts) >= 2:
-                    name = parts[0]
-                    return name, None
+                    return parts[0], None
         except Exception as e:
             logger.debug("tasklist query failed for PID %d: %s", pid, e)
 
@@ -4238,25 +4088,11 @@ class LockClient:
     def _get_process_name_via_tasklist(self, pid: int) -> Optional[str]:
         """Get process name using tasklist - simpler and more reliable than WMIC."""
         try:
-            tasklist_exe = _resolve_executable_path("tasklist")
-            if not tasklist_exe:
-                return None
-            result = subprocess.run(
-                [tasklist_exe, "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
-                capture_output=True,
-                text=True,
-                creationflags=0x08000000,
-                timeout=3,
-                errors="ignore",
-            )
-            if result.returncode == 0 and result.stdout:
-                # Format: "Image Name","PID","Session Name","Session#","Mem Usage"
-                lines = result.stdout.strip().split("\n")
-                for line in lines:
-                    if line.startswith('"'):
-                        parts = [p.strip('"') for p in line.split(",")]
-                        if len(parts) >= 2:
-                            return parts[0]
+            out = platform_probe.tasklist_csv_for_pid(pid)
+            if out.startswith('"'):
+                parts = [p.strip('"') for p in out.split(",")]
+                if len(parts) >= 2:
+                    return parts[0]
         except Exception as exc:
             logger.debug("tasklist name lookup failed for PID %s: %s", pid, exc)
         return None

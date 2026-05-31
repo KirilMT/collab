@@ -6,11 +6,11 @@ repository standards. Generated tests include proper fixtures, docstrings, and
 the Arrange-Act-Assert pattern.
 
 Usage:
-    python scripts/generate_tests.py src/services/new_module.py
-    python scripts/generate_tests.py src/lock_client.py
+    python scripts/generate_tests.py collab/services/new_module.py
+    python scripts/generate_tests.py collab/lock_client.py
     python scripts/generate_tests.py scripts/cleanup.py --dry-run
     python scripts/generate_tests.py --scan
-    python scripts/generate_tests.py src/ --scan
+    python scripts/generate_tests.py collab/ --scan
 """
 
 import argparse
@@ -120,8 +120,8 @@ class TestGenerator:
         rel = self.relative_source_path
         if rel is None:
             path = self.source_file.replace("\\", "/")
-            if "src/" in path:
-                return "src." + path.split("src/")[1].replace("/", ".").replace(
+            if "collab/" in path:
+                return "collab." + path.split("collab/")[1].replace("/", ".").replace(
                     ".py", ""
                 )
             return self.module_name
@@ -129,7 +129,7 @@ class TestGenerator:
         parts = rel.with_suffix("").parts
         if not parts:
             return self.module_name
-        if parts[0] == "src":
+        if parts[0] == "collab":
             return ".".join(parts)
         if len(parts) == 1:
             return parts[0]
@@ -142,8 +142,8 @@ class TestGenerator:
 
         rel = self.relative_source_path
         if rel is not None and rel.parts:
-            # Preserve module structure, e.g., src/foo.py -> tests/backend/unit/foo
-            if len(rel.parts) > 1 and rel.parts[0] == "src":
+            # Preserve module structure, e.g., collab/foo.py -> tests/backend/unit/foo
+            if len(rel.parts) > 1 and rel.parts[0] == "collab":
                 sub_path = Path(*rel.parts[1:-1])
                 return self.repo_root / "tests" / "backend" / self.category / sub_path
 
@@ -205,13 +205,13 @@ class TestGenerator:
         rel = self.relative_source_path
         if rel is not None:
             rel_without_suffix = rel.with_suffix("")
-            if rel.parts and rel.parts[0] == "src":
+            if rel.parts and rel.parts[0] == "collab":
                 return ".".join(rel_without_suffix.parts[1:])
             return ".".join(rel_without_suffix.parts)
 
         path = self.source_file.replace("\\", "/")
-        if "src/" in path:
-            return path.split("src/")[1].replace("/", ".").replace(".py", "")
+        if "collab/" in path:
+            return path.split("collab/")[1].replace("/", ".").replace(".py", "")
         return self.module_name
 
     def _build_path_loader_block(self, import_names: List[str]) -> List[str]:
@@ -398,7 +398,7 @@ class TestDiscovery:
                 if self._is_candidate_source(child):
                     yield child
 
-            for dirname in ("src", "scripts"):
+            for dirname in ("collab", "scripts"):
                 target = self.repo_root / dirname
                 if target.exists():
                     yield from self._iter_python_files(target)

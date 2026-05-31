@@ -190,14 +190,14 @@ def test_graceful_shutdown_queries_supabase_when_local_empty(monkeypatch, tmp_pa
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "pid.txt"))
-    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"src/dirty.py"})
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/dirty.py"})
 
     mod._local_owned_locks.clear()
 
     deleted_paths = []
 
     class FakeSelectResp:
-        data = [{"file_path": "src/clean.py"}, {"file_path": "src/dirty.py"}]
+        data = [{"file_path": "collab/clean.py"}, {"file_path": "collab/dirty.py"}]
 
     class FakeTable:
         def select(self, *args):
@@ -240,8 +240,8 @@ def test_graceful_shutdown_queries_supabase_when_local_empty(monkeypatch, tmp_pa
 
     mod._graceful_shutdown()
 
-    assert "src/clean.py" in deleted_paths
-    assert "src/dirty.py" not in deleted_paths
+    assert "collab/clean.py" in deleted_paths
+    assert "collab/dirty.py" not in deleted_paths
 
 
 def test_graceful_shutdown_keeps_dirty_locks(monkeypatch, tmp_path):
@@ -261,10 +261,10 @@ def test_graceful_shutdown_keeps_dirty_locks(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
     # Simulate: src/dirty.py is still dirty, src/clean.py is clean
-    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"src/dirty.py"})
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/dirty.py"})
     # Pre-populate _local_owned_locks with both files
     mod._local_owned_locks.clear()
-    mod._local_owned_locks.update({"src/dirty.py", "src/clean.py"})
+    mod._local_owned_locks.update({"collab/dirty.py", "collab/clean.py"})
 
     deleted_files = []
 
@@ -299,8 +299,8 @@ def test_graceful_shutdown_keeps_dirty_locks(monkeypatch, tmp_path):
     mod._graceful_shutdown()
 
     # src/clean.py should have been released; src/dirty.py should NOT
-    assert "src/clean.py" in deleted_files
-    assert "src/dirty.py" not in deleted_files
+    assert "collab/clean.py" in deleted_files
+    assert "collab/dirty.py" not in deleted_files
     assert not pid_file.exists()
 
     # Clean up
@@ -410,7 +410,7 @@ def test_graceful_shutdown_release_exception_and_db_query_exception(
 
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
     mod._local_owned_locks.clear()
-    mod._local_owned_locks.add("src/will_fail.py")
+    mod._local_owned_locks.add("collab/will_fail.py")
 
     class FakeClient:
         def __init__(self):

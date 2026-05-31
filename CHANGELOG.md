@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/KirilMT/collab/compare/v0.3.0...v0.3.1) (2026-05-31)
+
+### Bug Fixes
+
+- **dashboard:** reload Supabase credentials on each sync (release 0.3.1) ([#56](https://github.com/KirilMT/collab/issues/56)) ([21e262d](https://github.com/KirilMT/collab/commit/21e262d115ad2d857e1565a174cf44fb41d2c531))
+
+## [0.3.0](https://github.com/KirilMT/collab/compare/v0.2.9...v0.3.0) (2026-05-31)
+
+### Features
+
+- **dashboard:** frontend testing stack, static asset fix, and CI-parity validation ([#54](https://github.com/KirilMT/collab/issues/54)) ([5c660f5](https://github.com/KirilMT/collab/commit/5c660f53b865af9d84693e8013c67bfdd5b0f8f6))
+- **phase5:** subprocess hardening, platform probes, and lifecycle errors ([#49](https://github.com/KirilMT/collab/issues/49)) ([3bfdfd5](https://github.com/KirilMT/collab/commit/3bfdfd5a069cd8ad5e263d6a04c623d5f683a711))
+- **phase6:** flat collab/ package at repo root (Option A) ([#51](https://github.com/KirilMT/collab/issues/51)) ([4d7d0f6](https://github.com/KirilMT/collab/commit/4d7d0f6cb19eff2872f6622a011ca8459fb2aa66))
+
 ## [0.2.9](https://github.com/KirilMT/collab/compare/v0.2.8...v0.2.9) (2026-05-14)
 
 ### Bug Fixes
@@ -123,10 +137,10 @@ and this project adheres to
 
 - **frontend:** Add `eslint.config.js` with production-aligned flat-config rules (recommended
   - no-unused-vars warn, no-console warn, no-undef error; targets
-    `src/dashboard/**/*.js` and `tests/frontend/playwright/**/*.js`)
+    `collab/dashboard/**/*.js` and `tests/frontend/playwright/**/*.js`)
 - **frontend:** Add `playwright.config.js` with full E2E test
   configuration — globalSetup/globalTeardown hooks, webServer auto-start,
-  `src/dashboard` static serving, Chromium + Firefox projects, visual regression
+  `collab/dashboard` static serving, Chromium + Firefox projects, visual regression
   settings, .env feature-flag support
 - **frontend:** Add four Playwright E2E helper modules under
   `tests/frontend/playwright/` (e2e-test-setup.js, e2e-test-teardown.js,

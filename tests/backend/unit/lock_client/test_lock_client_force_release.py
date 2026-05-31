@@ -17,11 +17,11 @@ def test_force_release(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service_key")
 
-    response = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="admin")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert isinstance(ok, bool)
     assert isinstance(msg, str)
 
@@ -43,7 +43,7 @@ def test_force_release_api_exception(monkeypatch):
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
 
     lc = mod.LockClient(developer_id="admin")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is False
     assert "API Error" in msg
 
@@ -57,7 +57,7 @@ def test_force_release_with_error(monkeypatch):
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="admin")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is False
     assert "API Error" in msg
 
@@ -78,7 +78,7 @@ def test_force_release_no_lock(monkeypatch):
     )
 
     lc = mod.LockClient(developer_id="admin")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is False
     assert "No lock removed" in msg
 
@@ -94,13 +94,13 @@ def test_force_release_nonadmin_own_lock(monkeypatch):
         status=200,
         data=[
             {
-                "file_path": "src/app.py",
+                "file_path": "collab/app.py",
                 "developer_id": "alice",
                 "expires_at": "2099-01-01T00:00:00Z",
             }
         ],
     )
-    delete_resp = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    delete_resp = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
 
     call_log = []
 
@@ -134,7 +134,7 @@ def test_force_release_nonadmin_own_lock(monkeypatch):
     )
 
     lc = mod.LockClient(developer_id="alice")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is True
     eq_calls = [c for c in call_log if isinstance(c, tuple) and c[0] == "eq"]
     dev_id_filters = [c for c in eq_calls if c[1] == "developer_id"]
@@ -153,7 +153,7 @@ def test_force_release_nonadmin_other_dev_lock_denied(monkeypatch):
         status=200,
         data=[
             {
-                "file_path": "src/app.py",
+                "file_path": "collab/app.py",
                 "developer_id": "bob",
                 "expires_at": "2099-01-01T00:00:00Z",
             }
@@ -164,7 +164,7 @@ def test_force_release_nonadmin_other_dev_lock_denied(monkeypatch):
     )
 
     lc = mod.LockClient(developer_id="alice")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is False
     assert "Permission denied" in msg
     assert "@bob" in msg
@@ -176,7 +176,7 @@ def test_force_release_admin_other_dev_lock_succeeds(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service_key")
     monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "service_key")
 
-    delete_resp = FakeResponse(status=200, data=[{"file_path": "src/app.py"}])
+    delete_resp = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
 
     call_log = []
 
@@ -196,7 +196,7 @@ def test_force_release_admin_other_dev_lock_succeeds(monkeypatch):
     )
 
     lc = mod.LockClient(developer_id="admin_user")
-    ok, msg = lc.force_release("src/app.py")
+    ok, msg = lc.force_release("collab/app.py")
     assert ok is True
 
 
@@ -239,15 +239,15 @@ def test_force_release_all_counts_deleted_rows(monkeypatch):
     lc = mod.LockClient(local_only=True, developer_id="root")
     lc._is_admin = True
 
-    locks = [{"file_path": f"src/file{i}.py"} for i in range(3)]
+    locks = [{"file_path": f"collab/file{i}.py"} for i in range(3)]
     monkeypatch.setattr(lc, "active", lambda: locks)
 
     class RespWithData:
         status = 200
         data = [
-            {"file_path": "src/file0.py"},
-            {"file_path": "src/file1.py"},
-            {"file_path": "src/file2.py"},
+            {"file_path": "collab/file0.py"},
+            {"file_path": "collab/file1.py"},
+            {"file_path": "collab/file2.py"},
         ]
         error = None
 
@@ -277,7 +277,7 @@ def test_force_release_all_chunk_exception_returns_partial(monkeypatch):
     lc = mod.LockClient(local_only=True, developer_id="root")
     lc._is_admin = True
 
-    locks = [{"file_path": f"src/file{i}.py"} for i in range(5)]
+    locks = [{"file_path": f"collab/file{i}.py"} for i in range(5)]
     monkeypatch.setattr(lc, "active", lambda: locks)
 
     class ExplodingClient:
@@ -308,7 +308,7 @@ def test_force_release_all_api_error_returns_partial(monkeypatch):
     lc = mod.LockClient(local_only=True, developer_id="root")
     lc._is_admin = True
 
-    locks = [{"file_path": f"src/file{i}.py"} for i in range(3)]
+    locks = [{"file_path": f"collab/file{i}.py"} for i in range(3)]
     monkeypatch.setattr(lc, "active", lambda: locks)
 
     class ErrorResp:

@@ -4,32 +4,34 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import types
 from unittest import mock
 
 import pytest
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_git_capture, patch_subprocess
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific process helper")
 def test_get_cmdline_for_pid_local_wmic_and_powershell(monkeypatch):
     mod = load_watcher_module()
-    if "psutil" in sys.modules:
-        del sys.modules["psutil"]
+    fake_psutil = types.SimpleNamespace()
 
-    def fake_check_output(cmd, stderr=None, text=None, creationflags=None):
-        if cmd[0] == "wmic":
-            return "CommandLine\npython watch.exe\n"
-        if cmd[0] == "powershell":
-            return "python powershell_watch.exe"
-        raise RuntimeError("unexpected")
+    class _FailingProc:
+        def cmdline(self):
+            raise OSError("psutil unavailable in test")
 
-    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    fake_psutil.Process = lambda _pid: _FailingProc()
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "get_cmdline",
+        lambda pid: "python watch.exe" if pid == 1234 else None,
+    )
     got = mod._get_cmdline_for_pid_local(1234)
-    assert "watch.exe" in got or "powershell_watch" in got
+    assert got is not None
+    assert "watch.exe" in got
 
 
 def test_write_pid_file_and_get_developer_and_branch(monkeypatch, tmp_path):
@@ -43,7 +45,7 @@ def test_write_pid_file_and_get_developer_and_branch(monkeypatch, tmp_path):
     obj = __import__("json").loads(raw)
     assert obj["pid"] == 4242
 
-    monkeypatch.setattr(subprocess, "check_output", lambda *a, **k: b"devname\n")
+    patch_subprocess(monkeypatch, check_output=lambda *a, **k: b"devname\n")
     dev = mod._get_developer_id()
     assert isinstance(dev, str)
     branch = mod._get_current_branch()
@@ -142,12 +144,12 @@ def test_get_current_branch_success(monkeypatch):
     """Test getting current branch on the current platform."""
     mod = load_watcher_module()
 
-    def mock_check_output(cmd, *args, **kwargs):
-        if "branch" in cmd and "--show-current" in cmd:
-            return b"feature/test-branch\n"
-        raise subprocess.CalledProcessError(1, cmd)
+    def _git(argv, **_k):
+        if "branch" in argv and "--show-current" in argv:
+            return "feature/test-branch"
+        return ""
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_git_capture(monkeypatch, mod, _git)
     result = mod._get_current_branch()
     assert result == "feature/test-branch"
 
@@ -155,13 +157,20 @@ def test_get_current_branch_success(monkeypatch):
 def test_get_current_branch_error(monkeypatch):
     """Test getting current branch returns 'unknown' on error (lines 112-113)."""
     mod = load_watcher_module()
-
-    def mock_check_output(cmd, *args, **kwargs):
-        raise subprocess.CalledProcessError(128, cmd)
-
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_git_capture(monkeypatch, mod, lambda *_a, **_k: "")
     result = mod._get_current_branch()
     assert result == "unknown"
+
+
+def test_get_current_branch_when_git_helper_raises(monkeypatch):
+    """Cover exception guard when _git_capture_text raises unexpectedly."""
+    mod = load_watcher_module()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("git helper failed")
+
+    monkeypatch.setattr(mod, "_git_capture_text", _boom)
+    assert mod._get_current_branch() == "unknown"
 
 
 # ============================================================================
@@ -184,7 +193,7 @@ def test_shorten_process_label_and_cmdline_match_moved():
 def test_should_ignore_and_cmdline_helpers_migrated():
     mod = load_watcher_module()
     assert mod._should_ignore_path(".git/objects/abc") is True
-    assert mod._should_ignore_path("src/app.py") is False
+    assert mod._should_ignore_path("collab/app.py") is False
 
     assert mod._cmdline_matches_watcher_local("python live_locks_watcher") is True
     assert mod._cmdline_matches_watcher_local(None) is False
@@ -290,10 +299,9 @@ def test_is_same_machine_token_matches_env_user_when_git_fails(monkeypatch):
     monkeypatch.setattr(mod.os.path, "abspath", lambda p: "C:/repo")
 
     # Force git-config path to fail
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("git fail")),
+    patch_subprocess(
+        monkeypatch,
+        check_output=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("git fail")),
     )
 
     import hashlib
@@ -312,7 +320,7 @@ def test_is_same_machine_token_returns_false_for_unknown_token(monkeypatch):
     monkeypatch.setattr(mod.os.path, "abspath", lambda p: "C:/repo")
 
     # Keep git deterministic too
-    monkeypatch.setattr(mod.subprocess, "check_output", lambda *a, **k: b"bob\n")
+    patch_subprocess(monkeypatch, check_output=lambda *a, **k: b"bob\n")
 
     assert mod._is_same_machine_token("0000000000000000") is False
 
@@ -386,11 +394,11 @@ def test_get_process_info_local_parses_wmic_output(monkeypatch):
     """Windows WMIC output with process row should be parsed."""
     mod = load_watcher_module()
     monkeypatch.setattr(mod.sys, "platform", "win32")
-
-    def _wmic(*args, **kwargs):
-        return b"Name  ParentProcessId\ncode.exe 456\n"
-
-    monkeypatch.setattr(mod.subprocess, "check_output", _wmic)
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "wmic_process_name_and_ppid",
+        lambda pid: ("code.exe", 456) if pid == 999 else (None, None),
+    )
     assert mod._get_process_info_local(999) == ("code.exe", 456)
 
 
@@ -615,7 +623,7 @@ def test_is_process_alive_win32_tasklist_success(monkeypatch):
     """_is_process_alive returns True on win32 when tasklist finds the PID (no
     psutil)."""
     mod = load_watcher_module()
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
     import builtins as _builtins
 
@@ -628,7 +636,7 @@ def test_is_process_alive_win32_tasklist_success(monkeypatch):
 
     monkeypatch.setattr(_builtins, "__import__", _no_psutil)
     monkeypatch.setattr(
-        subprocess, "check_output", lambda *a, **k: "Image  PID\npython.exe  99999"
+        mod.platform_probe, "is_pid_alive_tasklist", lambda pid: pid == 99999
     )
     assert mod._is_process_alive(99999) is True
 
@@ -667,17 +675,16 @@ def test_is_process_alive_non_win32_permission_error(monkeypatch):
 
 
 def test_get_current_branch_non_win32(monkeypatch):
-    """_get_current_branch uses subprocess without creationflags on non- win32."""
+    """_get_current_branch returns git output on non-win32 platforms."""
     mod = load_watcher_module()
-    monkeypatch.setattr(sys, "platform", "linux")
-
-    def _check_output(cmd, **kwargs):
-        assert (
-            "creationflags" not in kwargs
-        ), "creationflags must not be passed on non-win32"
-        return b"main\n"
-
-    monkeypatch.setattr(subprocess, "check_output", _check_output)
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+    patch_git_capture(
+        monkeypatch,
+        mod,
+        lambda argv, **_k: (
+            "main" if "branch" in argv and "--show-current" in argv else ""
+        ),
+    )
     assert mod._get_current_branch() == "main"
 
 

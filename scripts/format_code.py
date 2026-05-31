@@ -367,7 +367,7 @@ class CodeFormatter:
         targets = self._get_targets(
             (".py",),
             [
-                "src",
+                "collab",
                 "tests",
                 "scripts",
             ],
@@ -461,8 +461,8 @@ class CodeFormatter:
     def format_frontend(self) -> bool:
         base_targets = self._filter_glob_targets(
             [
-                "src/**/*.js",
-                "src/**/*.css",
+                "collab/**/*.js",
+                "collab/**/*.css",
                 "tests/**/*.js",
             ]
         )
@@ -555,7 +555,7 @@ class CodeFormatter:
         return all_passed
 
     def format_templates(self) -> bool:
-        template_dirs = ["src/dashboard"]
+        template_dirs = ["collab/dashboard"]
         targets = self._get_targets((".html", ".htm"), template_dirs)
         if not targets:
             return True

@@ -24,6 +24,7 @@ from ._helpers import (
     FakeResponse,
     load_lock_client_module,
     make_create_client,
+    patch_subprocess,
 )
 
 mod = load_lock_client_module()
@@ -160,14 +161,14 @@ def test_daemon_start_launches_process(tmp_path, monkeypatch, capsys):
     def mock_popen(*args, **kwargs):
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
     # Process will appear dead since PID doesn't exist
     is_alive_false = staticmethod(lambda pid: False)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_false)
 
     lc = mod.LockClient(developer_id="test_user")
-    monkeypatch.setattr(lc, "_read_pid", lambda: None)
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: None)
     lc.daemon_start()
     captured = capsys.readouterr()
     assert (
@@ -192,7 +193,7 @@ def test_daemon_start_successful(tmp_path, monkeypatch, capsys):
     def mock_popen(*args, **kwargs):
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
     is_alive_true = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_true)
@@ -210,7 +211,7 @@ def test_daemon_start_successful(tmp_path, monkeypatch, capsys):
         called_popen.append(True)
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen_wrap)
+    patch_subprocess(monkeypatch, popen=mock_popen_wrap)
     monkeypatch.setattr(lc, "_read_pid", mock_read_pid)
     lc.daemon_start()
     captured = capsys.readouterr()
@@ -236,7 +237,7 @@ def test_daemon_start_with_open_dashboard(tmp_path, monkeypatch, capsys):
         popen_cmds.append(cmd)
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
     is_alive_true = staticmethod(lambda pid: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_true)
@@ -275,7 +276,7 @@ def test_daemon_start_removes_stale_stop_request_before_restart(tmp_path, monkey
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda _pid: True)
     )
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProc())
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
     monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
 
     lc = mod.LockClient(developer_id="test_user")
@@ -319,7 +320,7 @@ def test_daemon_start_ignores_stale_stop_request_check_errors(
     class _Proc:
         pid = 67890
 
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _Proc())
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: _Proc())
 
     lc = mod.LockClient(developer_id="test_user")
     lc.daemon_start()
@@ -368,7 +369,7 @@ def test_daemon_stop_kills_process(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(mock_is_alive)
     )
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
+    patch_subprocess(monkeypatch, run=lambda *a, **k: None)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
 
     lc = mod.LockClient(developer_id="test_user")
@@ -577,7 +578,11 @@ def test_daemon_status_preserves_stale_pid(monkeypatch, tmp_path):
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     # Simulate that the PID exists but belongs to another process
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 99999))
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_read_pid",
+        staticmethod(lambda *, strict=False: 99999),
+    )
     is_alive_true = staticmethod(lambda p: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_true)
     monkeypatch.setattr(
@@ -600,7 +605,9 @@ def test_daemon_status_local_only_discovers_replacement_watcher(monkeypatch, tmp
 
     client = object.__new__(mod.LockClient)
     client.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 12345))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 12345)
+    )
     monkeypatch.setattr(
         mod.LockClient,
         "_is_process_alive",
@@ -625,7 +632,9 @@ def test_daemon_status_local_only_discovers_when_pid_missing(monkeypatch):
     """Local-only daemon_status can report a discovered watcher without a PID file."""
     client = object.__new__(mod.LockClient)
     client.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: None)
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: pid == 33333)
     )
@@ -641,7 +650,9 @@ def test_daemon_status_local_only_discovery_exception_returns_false(monkeypatch)
     """Local-only daemon_status suppresses discovery errors and reports not running."""
     client = object.__new__(mod.LockClient)
     client.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: None)
+    )
     monkeypatch.setattr(
         client,
         "_discover_running_watchers",
@@ -688,7 +699,9 @@ def test_daemon_start_uses_pid_metadata(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
     # Simulate read_pid and process alive
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 9999))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 9999)
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda p: True)
     )
@@ -706,7 +719,9 @@ def test_daemon_start_legacy_plain_pid_matches_current(monkeypatch, tmp_path, ca
     pid_file.write_text(str(os.getpid()))
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: os.getpid()))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: os.getpid())
+    )
     is_alive_true = staticmethod(lambda p: True)
     monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_true)
     # Avoid accidental real watcher spawn by returning a watcher-like cmdline.
@@ -832,7 +847,7 @@ def test_get_git_username_fallback_to_env(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     username = mod.LockClient._get_git_username()
     assert username in ("env_user", "env_username")
@@ -847,7 +862,7 @@ def test_get_git_username_oserror(monkeypatch):
     def mock_check_output(cmd, *args, **kwargs):
         raise OSError("failed")
 
-    monkeypatch.setattr(subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, check_output=mock_check_output)
     client = getattr(mod, "LockClient")
     assert client._get_git_username() == "unknown_user"
 
@@ -873,7 +888,7 @@ def test_daemon_start_non_win32(monkeypatch):
     monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "admin_key")
     monkeypatch.setattr(mod, "_supabase_create_client", lambda url, key: None)
     client = getattr(mod, "LockClient")()
-    monkeypatch.setattr(client, "_read_pid", lambda: None)
+    monkeypatch.setattr(client, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(client, "_is_process_alive", lambda pid: False)
     monkeypatch.setattr(sys, "platform", "linux")
 
@@ -886,7 +901,7 @@ def test_daemon_start_non_win32(monkeypatch):
         did_call.append(1)
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     monkeypatch.setattr(os, "setsid", lambda: None, raising=False)
     client.daemon_start(open_dashboard=True)
     assert len(did_call) >= 1
@@ -897,7 +912,7 @@ def test_daemon_start_win32_exception_and_fallback(monkeypatch):
     monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "admin_key")
     monkeypatch.setattr(mod, "_supabase_create_client", lambda url, key: None)
     client = getattr(mod, "LockClient")()
-    monkeypatch.setattr(client, "_read_pid", lambda: None)
+    monkeypatch.setattr(client, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(client, "_is_process_alive", lambda pid: False)
     # Prevent _get_parent_ide_pid from making its own subprocess calls
     monkeypatch.setattr(client, "_get_parent_ide_pid", lambda: (None, "unknown"))
@@ -919,7 +934,7 @@ def test_daemon_start_win32_exception_and_fallback(monkeypatch):
         did_call.append(kwargs.get("creationflags"))
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     client.daemon_start()
     assert len(did_call) == 1
     assert did_call[0] is not None
@@ -929,7 +944,7 @@ def test_daemon_start_win32_exception_and_fallback(monkeypatch):
 def test_daemon_status_legacy_pid(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_supabase_create_client", lambda url, key: None)
     client = getattr(mod, "LockClient")()
-    monkeypatch.setattr(client, "_read_pid", lambda: None)
+    monkeypatch.setattr(client, "_read_pid", lambda strict=False: None)
     legacy = tmp_path / ".pycharm_watcher.pid"
     legacy.write_text("54321")
     monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
@@ -941,7 +956,7 @@ def test_daemon_status_legacy_pid(monkeypatch, tmp_path):
 def test_daemon_status_legacy_pid_exception(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_supabase_create_client", lambda url, key: None)
     client = getattr(mod, "LockClient")()
-    monkeypatch.setattr(client, "_read_pid", lambda: None)
+    monkeypatch.setattr(client, "_read_pid", lambda strict=False: None)
     legacy = tmp_path / ".pycharm_watcher.pid"
     legacy.write_text("invalid")
     monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
@@ -982,7 +997,9 @@ def test_daemon_start_cmdline_unavailable_assumes_running(
 ):
     client = object.__new__(mod.LockClient)
 
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 42424))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 42424)
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda p: True)
     )
@@ -1128,7 +1145,7 @@ def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
         client,
         "active",
         mock.Mock(
-            return_value=[{"file_path": "src/app.py", "developer_id": "test_user"}]
+            return_value=[{"file_path": "collab/app.py", "developer_id": "test_user"}]
         ),
     )
     monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=""))
@@ -1233,7 +1250,7 @@ def test_daemon_start_invokes_popen(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(client, "_read_pid", fake_read_pid)
 
     # Stub Popen to return our fake proc
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: proc)
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: proc)
 
     # Prevent writing real PID file
     monkeypatch.setattr(client, "_write_pid", lambda *a, **k: None)
@@ -1250,7 +1267,7 @@ def test_daemon_stop_no_running(monkeypatch, tmp_path, capsys):
     client = mod.LockClient(developer_id="tester", local_only=True)
 
     # No PID file, and discover returns empty
-    monkeypatch.setattr(client, "_read_pid", lambda: None)
+    monkeypatch.setattr(client, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(client, "_discover_running_watchers", lambda: [])
 
     client.daemon_stop()
@@ -1269,7 +1286,7 @@ def test_cleanup_orphaned_processes_unix(monkeypatch, capsys):
     def fake_run(*a, **k):
         return types.SimpleNamespace(stdout=fake_ps, returncode=0)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     killed = []
 
@@ -1306,7 +1323,7 @@ def test_terminate_process_win32(monkeypatch):
         calls.append(cmd)
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     client = mod.LockClient(local_only=True)
     client._terminate_process(99999)
@@ -1336,13 +1353,17 @@ def test_terminate_process_unix_not_found(monkeypatch):
 
 
 def test_get_process_name_via_tasklist(monkeypatch):
-    def fake_run(cmd, **kw):
-        return types.SimpleNamespace(
-            stdout='"python.exe","12345","Console","1","12345 K"\n',
-            returncode=0,
-        )
+    monkeypatch.setattr(sys, "platform", "win32")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    def fake_run(cmd, **kw):
+        if isinstance(cmd, (list, tuple)) and any("tasklist" in str(c) for c in cmd):
+            return types.SimpleNamespace(
+                stdout='"python.exe","12345","Console","1","12345 K"\n',
+                returncode=0,
+            )
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    patch_subprocess(monkeypatch, run=fake_run)
 
     client = mod.LockClient(local_only=True)
     name = client._get_process_name_via_tasklist(12345)
@@ -1353,7 +1374,7 @@ def test_get_process_name_via_tasklist_not_found(monkeypatch):
     def fake_run(cmd, **kw):
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     client = mod.LockClient(local_only=True)
     name = client._get_process_name_via_tasklist(99999)
@@ -1539,14 +1560,18 @@ def test_is_process_alive_win32_ctypes_api_active(monkeypatch):
 
     monkeypatch.setattr("builtins.__import__", mock_import)
 
-    def mock_check_output(cmd, **kwargs):
-        if any("tasklist" in str(c) for c in cmd):
-            return '"python.exe","12345","Console","1","25600 K"\n'
-        raise subprocess.CalledProcessError(1, cmd)
+    import types
 
-    monkeypatch.setattr(mod.subprocess, "check_output", mock_check_output)
+    def mock_run(cmd, **kwargs):
+        if any("tasklist" in str(c) for c in cmd):
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='"python.exe","12345","Console","1","25600 K"\n',
+            )
+        return types.SimpleNamespace(returncode=1, stdout="")
+
+    patch_subprocess(monkeypatch, run=mock_run)
     alive = mod.LockClient._is_process_alive(12345)
-    # Falls back to tasklist which finds the process
     assert alive is True
 
 
@@ -1556,11 +1581,12 @@ def test_is_process_alive_win32_tasklist_fallback_not_found(monkeypatch):
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
     monkeypatch.delitem(sys.modules, "ctypes", raising=False)
 
-    def mock_check_output(cmd, **kwargs):
-        # Return empty result (process not found)
-        return b""
+    import types
 
-    monkeypatch.setattr(mod.subprocess, "check_output", mock_check_output)
+    def mock_run(cmd, **kwargs):
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    patch_subprocess(monkeypatch, run=mock_run)
     alive = mod.LockClient._is_process_alive(12345)
     assert alive is False
 
@@ -1720,7 +1746,7 @@ def test_get_process_info_local_wmic_success(monkeypatch):
             )
         return types.SimpleNamespace(returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(mod.subprocess, "run", mock_run)
+    patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     name, ppid = client._get_process_info_local(12345)
     assert name == "python.exe"
@@ -1740,7 +1766,7 @@ def test_get_process_info_local_wmic_appends_exe(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", mock_run)
+    patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     name, ppid = client._get_process_info_local(12345)
     assert name == "python.exe"
@@ -1760,10 +1786,15 @@ def test_get_process_info_local_tasklist_success(monkeypatch):
 
     monkeypatch.setattr("builtins.__import__", mock_import)
 
-    def mock_check_output(cmd, **kwargs):
-        return b'"python.exe","12345","Console","1","25600 K"\n'
+    import types
 
-    monkeypatch.setattr(mod.subprocess, "check_output", mock_check_output)
+    def mock_run(cmd, **kwargs):
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout='"python.exe","12345","Console","1","25600 K"\n',
+        )
+
+    patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     name, ppid = client._get_process_info_local(12345)
     assert name == "python.exe"
@@ -1779,11 +1810,7 @@ def test_get_process_info_local_wmic_and_tasklist_fail(monkeypatch):
     def mock_run(cmd, **kwargs):
         raise RuntimeError("wmic failed")
 
-    def mock_check_output(cmd, **kwargs):
-        raise subprocess.CalledProcessError(1, cmd)
-
-    monkeypatch.setattr(mod.subprocess, "run", mock_run)
-    monkeypatch.setattr(mod.subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     assert client._get_process_info_local(12345) == (None, None)
 
@@ -1800,13 +1827,18 @@ def test_get_process_info_local_tasklist_fallback(monkeypatch):
             raise ImportError("psutil disabled for tasklist fallback test")
         return real_import(name, *args, **kwargs)
 
-    def mock_check_output(cmd, **kwargs):
+    import types
+
+    def mock_run(cmd, **kwargs):
         if cmd and "tasklist" in str(cmd[0]):
-            return b'"python.exe","12345","Console","1","25600 K"\n'
-        raise subprocess.CalledProcessError(1, cmd)
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='"python.exe","12345","Console","1","25600 K"\n',
+            )
+        return types.SimpleNamespace(returncode=1, stdout="")
 
     monkeypatch.setattr("builtins.__import__", mock_import)
-    monkeypatch.setattr(mod.subprocess, "check_output", mock_check_output)
+    patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     name, ppid = client._get_process_info_local(12345)
     assert name == "python.exe"
@@ -1985,7 +2017,7 @@ def test_discover_running_watchers_win32_fallback_filters_results(monkeypatch):
             )
         return types.SimpleNamespace(stdout="", returncode=0)
 
-    monkeypatch.setattr(mod.subprocess, "run", mock_run)
+    patch_subprocess(monkeypatch, run=mock_run)
     monkeypatch.setattr(
         mod.LockClient,
         "_get_cmdline_for_pid",
@@ -2021,7 +2053,7 @@ def test_discover_running_watchers_unix_fallback_filters_results(monkeypatch):
             raise RuntimeError("cannot inspect")
         return None
 
-    monkeypatch.setattr(mod.subprocess, "run", mock_run)
+    patch_subprocess(monkeypatch, run=mock_run)
     monkeypatch.setattr(mod.LockClient, "_get_cmdline_for_pid", mock_cmdline)
 
     client = mod.LockClient(local_only=True)
@@ -2439,7 +2471,7 @@ def test_get_process_info_local_wmic_available(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
     client = mod.LockClient(local_only=True)
     name, ppid = client._get_process_info_local(os.getpid())
     assert name == "python.exe"
@@ -2461,7 +2493,7 @@ def test_get_process_info_local_wmic_fails_then_tasklist(monkeypatch):
             )
         return types.SimpleNamespace(returncode=1, stdout="", stderr="error")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run_tasklist)
+    patch_subprocess(monkeypatch, run=fake_run_tasklist)
     client = mod.LockClient(local_only=True)
     name = client._get_process_name_via_tasklist(12345)
     assert name == "python.exe"
@@ -2518,7 +2550,7 @@ def test_daemon_start_orphaned_watcher_parent_dead(monkeypatch, tmp_path):
         popen_calls.append(cmd)
         return types.SimpleNamespace(pid=9901)
 
-    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    patch_subprocess(monkeypatch, popen=fake_popen)
 
     client = mod.LockClient(local_only=True)
     monkeypatch.setattr(client, "_get_parent_ide_pid", lambda: (None, None))
@@ -2713,11 +2745,11 @@ def test_daemon_stop_forced_kill_windows(monkeypatch, tmp_path):
     taskkill_calls = []
 
     def fake_run(cmd, **kwargs):
-        if "taskkill" in cmd:
-            taskkill_calls.append(cmd)
+        if any("taskkill" in str(part).lower() for part in cmd):
+            taskkill_calls.append(list(cmd))
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     output = []
     monkeypatch.setattr(
@@ -2727,7 +2759,7 @@ def test_daemon_stop_forced_kill_windows(monkeypatch, tmp_path):
     client = mod.LockClient(local_only=True)
     client.daemon_stop()
 
-    assert len(taskkill_calls) > 0
+    assert taskkill_calls
 
 
 def test_daemon_stop_forced_kill_unix(monkeypatch, tmp_path):
@@ -2944,7 +2976,7 @@ def test_daemon_status_metadata_parse_error_then_cmdline_unknown(
     )
 
     c = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c, "_read_pid", lambda: 1234)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: 1234)
     monkeypatch.setattr(c, "_is_process_alive", lambda _p: True)
     monkeypatch.setattr(c, "_get_cmdline_for_pid", lambda _p: None)
 
@@ -2967,7 +2999,7 @@ def test_daemon_status_cmdline_match_prints_verified_path(
     )
 
     c = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c, "_read_pid", lambda: 9999)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: 9999)
     monkeypatch.setattr(c, "_is_process_alive", lambda _p: True)
     monkeypatch.setattr(
         c, "_get_cmdline_for_pid", lambda _p: "python lock_client.py watch"
@@ -3206,17 +3238,18 @@ def test_cleanup_orphaned_processes_windows_psutil_match(monkeypatch, tmp_path):
     taskkill_calls = []
 
     def fake_run(cmd, **kwargs):
-        if cmd[0] == "tasklist":
+        exe = str(cmd[0]).lower()
+        if "tasklist" in exe:
             return types.SimpleNamespace(
                 stdout='"python.exe","12345","Console","1","12345 K"\n',
                 returncode=0,
             )
-        if cmd[0] == "taskkill":
-            taskkill_calls.append(cmd)
+        if "taskkill" in exe:
+            taskkill_calls.append(list(cmd))
             return types.SimpleNamespace(stdout="", returncode=0)
         raise AssertionError(f"Unexpected command: {cmd}")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     class FakeProcess:
         def __init__(self, pid):
@@ -3260,25 +3293,27 @@ def test_cleanup_orphaned_processes_windows_wmic_fallback(monkeypatch):
 
     calls = []
 
+    def _exe(cmd, name: str) -> bool:
+        return name in str(cmd[0]).lower()
+
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[0] == "tasklist":
+        calls.append(list(cmd))
+        if _exe(cmd, "tasklist"):
             return types.SimpleNamespace(
                 stdout='"python.exe","23456","Console","1","12345 K"\n',
                 returncode=0,
             )
-        if cmd[0] == "wmic":
+        if _exe(cmd, "wmic"):
             return types.SimpleNamespace(
-                stdout="CommandLine=python collab_test_lock_client.py watch",
+                stdout="commandline=python collab_test_lock_client.py watch",
                 returncode=0,
             )
-        if cmd[0] == "taskkill":
+        if _exe(cmd, "taskkill"):
             return types.SimpleNamespace(stdout="", returncode=0)
         raise AssertionError(f"Unexpected command: {cmd}")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
-    # Simulate psutil import failure
     real_import = __import__
 
     def mock_import(name, *a, **k):
@@ -3300,8 +3335,8 @@ def test_cleanup_orphaned_processes_windows_wmic_fallback(monkeypatch):
     monkeypatch.setattr(client, "_remove_pid", lambda: None)
     client.cleanup_orphaned_processes()
 
-    assert any(cmd[0] == "wmic" for cmd in calls)
-    assert any(cmd[0] == "taskkill" for cmd in calls)
+    assert any(_exe(cmd, "wmic") for cmd in calls)
+    assert any(_exe(cmd, "taskkill") for cmd in calls)
     assert any("Killed 1 orphaned process" in line for line in output)
 
 
@@ -3322,11 +3357,11 @@ def test_cleanup_orphaned_processes_windows_no_matches_checks_locked_logs(
     monkeypatch.setattr(mod, "_COLLAB_ROOT", str(collab_root))
 
     def fake_run(cmd, **kwargs):
-        if cmd[0] == "tasklist":
+        if "tasklist" in str(cmd[0]).lower():
             return types.SimpleNamespace(stdout="", returncode=0)
         raise AssertionError(f"Unexpected command: {cmd}")
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
     monkeypatch.setattr(mod.shutil, "which", lambda name: None)
 
     real_open = open
@@ -3356,8 +3391,12 @@ def test_cleanup_orphaned_processes_unix_ps_scan(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
 
+    from tests.backend.subprocess_testing import argv_executable_is
+
     def fake_run(cmd, **kwargs):
-        assert cmd == ["ps", "aux"]
+        cmd_list = list(cmd)
+        assert argv_executable_is(cmd_list, "ps")
+        assert cmd_list[1:] == ["aux"]
         return types.SimpleNamespace(
             stdout=(
                 "user 34567 0.0 0.1 ? S 00:00:00 python "
@@ -3368,7 +3407,7 @@ def test_cleanup_orphaned_processes_unix_ps_scan(monkeypatch):
             returncode=0,
         )
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     kill_calls = []
 
@@ -3547,14 +3586,14 @@ def test_daemon_start_unix_with_parent_pid(monkeypatch, tmp_path):
     def mock_popen(*a, **k):
         return FakeProc()
 
-    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    patch_subprocess(monkeypatch, popen=mock_popen)
     monkeypatch.setattr(mod.time, "sleep", lambda _: None)
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
     )
 
     lc = mod.LockClient(developer_id="test_user")
-    monkeypatch.setattr(lc, "_read_pid", lambda: None)
+    monkeypatch.setattr(lc, "_read_pid", lambda strict=False: None)
     # Return a non-zero parent_pid so the Unix else branch at 1179 is taken
     monkeypatch.setattr(lc, "_get_parent_ide_pid", lambda: (54321, "test_method"))
     monkeypatch.setattr(lc, "_get_process_info_local", lambda pid: ("fake_ide", None))
@@ -3578,7 +3617,7 @@ def test_daemon_stop_test_mode_default_pid_file_skips_discovery(
 
     c = mod.LockClient(developer_id="test_user")
     calls = []
-    monkeypatch.setattr(c, "_read_pid", lambda: None)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(c, "_remove_pid", lambda: calls.append("removed"))
     monkeypatch.setattr(
         c,
@@ -3604,7 +3643,7 @@ def test_daemon_stop_propagate_restore_setter_exception_swallowed(
     )
 
     c = mod.LockClient(developer_id="test_user")
-    monkeypatch.setattr(c, "_read_pid", lambda: None)
+    monkeypatch.setattr(c, "_read_pid", lambda strict=False: None)
     monkeypatch.setattr(c, "_discover_running_watchers", lambda: [])
     monkeypatch.setattr(c, "_remove_pid", lambda: None)
 
@@ -3648,7 +3687,9 @@ def test_daemon_status_local_only_stale_pid_discovery_match_branch(
 
     c = object.__new__(mod.LockClient)
     c.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 12345))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 12345)
+    )
     monkeypatch.setattr(
         mod.LockClient,
         "_is_process_alive",
@@ -3683,7 +3724,9 @@ def test_daemon_status_local_only_stale_pid_discovery_exception_branch(
 
     c = object.__new__(mod.LockClient)
     c.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: 12345))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 12345)
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda _p: True)
     )
@@ -3711,7 +3754,9 @@ def test_daemon_status_local_only_missing_pid_discovery_cmdline_match(monkeypatc
     exists."""
     c = object.__new__(mod.LockClient)
     c.local_only = True
-    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: None)
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda _p: True)
     )

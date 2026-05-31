@@ -17,6 +17,10 @@ Smart --quick mode (three-tier priority):
     Tier 2 — fallback:  No changes detected or global file changed -> runs the
                         full suite without coverage (fast, safe).
     Skip    — no-op:    No backend/frontend changes in that category -> skipped.
+
+Full mode frontend Playwright matches CI (chromium + @live) and requires
+SUPABASE_URL + SUPABASE_ANON_KEY in .env. Quick mode skips the frontend block
+when the git diff has no frontend-related paths.
 """
 
 import argparse
@@ -548,16 +552,37 @@ _FULL_SUITE_FILENAMES: frozenset = frozenset(
 _FULL_SUITE_PREFIXES: tuple = ("scripts/", ".github/")
 
 _BACKEND_MAP: List[Tuple[str, List[str]]] = [
-    ("src/", ["tests/backend/unit/"]),
-    ("src/dashboard/", []),
+    ("collab/", ["tests/backend/unit/"]),
+    ("collab/dashboard/", []),
     ("tests/backend/", ["tests/backend/"]),
     ("scripts/", ["tests/backend/"]),
 ]
 
 _FRONTEND_MAP: List[Tuple[str, List[str]]] = [
-    ("src/dashboard/", ["tests/frontend/"]),
+    ("collab/dashboard/", ["tests/frontend/"]),
     ("tests/frontend/", ["tests/frontend/"]),
+    ("playwright.config.js", ["tests/frontend/"]),
+    ("jest.config.cjs", ["tests/frontend/"]),
+    ("eslint.config.js", ["tests/frontend/"]),
+    ("package.json", ["tests/frontend/"]),
+    ("package-lock.json", ["tests/frontend/"]),
 ]
+
+# Quick-mode: only run Jest when these paths change (or full_suite).
+_JEST_TRIGGER_PREFIXES: Tuple[str, ...] = (
+    "collab/dashboard/dashboard-format",
+    "tests/frontend/unit/",
+    "jest.config.cjs",
+)
+
+# Quick-mode: only run Playwright when dashboard or E2E harness changes (or full_suite).
+_PLAYWRIGHT_TRIGGER_PREFIXES: Tuple[str, ...] = (
+    "collab/dashboard/",
+    "tests/frontend/playwright/",
+    "playwright.config.js",
+    "package.json",
+    "package-lock.json",
+)
 
 
 def _get_changed_files() -> List[str]:
@@ -688,6 +713,95 @@ def detect_changed_scopes(files: Optional[List[str]] = None) -> Dict[str, Any]:
     }
 
 
+def _has_supabase_credentials() -> bool:
+    """True when live Playwright / CI E2E can reach Supabase (same as CI secrets)."""
+    url = (os.environ.get("SUPABASE_URL") or "").strip()
+    anon = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+    return bool(url and anon)
+
+
+def _quick_frontend_needs_jest(changed_files: List[str], full_suite: bool) -> bool:
+    if full_suite:
+        return True
+    return any(
+        any(normalized.startswith(prefix) for prefix in _JEST_TRIGGER_PREFIXES)
+        for normalized in (f.replace("\\", "/") for f in changed_files)
+    )
+
+
+def _quick_frontend_needs_playwright(
+    changed_files: List[str], full_suite: bool
+) -> bool:
+    if full_suite:
+        return True
+    return any(
+        any(normalized.startswith(prefix) for prefix in _PLAYWRIGHT_TRIGGER_PREFIXES)
+        for normalized in (f.replace("\\", "/") for f in changed_files)
+    )
+
+
+def _frontend_validation_plan(
+    quick: bool, files: Optional[List[str]], scopes: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Decide which frontend checks run (smart --quick vs full CI-parity)."""
+    changed = scopes.get("changed_files") or []
+    full_suite = bool(scopes.get("full_suite"))
+
+    if files:
+        normalized = [f.replace("\\", "/") for f in _expand_input_paths(files)]
+        return {
+            "run_block": True,
+            "changed_files": normalized,
+            "run_eslint": True,
+            "run_jest": True,
+            "run_playwright": True,
+            "playwright_script": (
+                "test:frontend:e2e:ci"
+                if _has_supabase_credentials()
+                else "test:frontend:e2e:fast"
+            ),
+            "require_supabase_for_playwright": not quick,
+            "skip_reason": None,
+        }
+
+    if quick and not scopes.get("frontend") and not full_suite:
+        return {
+            "run_block": False,
+            "changed_files": changed,
+            "run_eslint": False,
+            "run_jest": False,
+            "run_playwright": False,
+            "playwright_script": None,
+            "require_supabase_for_playwright": False,
+            "skip_reason": (
+                "No frontend-related files changed — skipping frontend validation."
+            ),
+        }
+
+    run_jest = (not quick) or _quick_frontend_needs_jest(changed, full_suite)
+    run_playwright = (not quick) or _quick_frontend_needs_playwright(
+        changed, full_suite
+    )
+
+    if quick:
+        pw_script = "test:frontend:e2e:fast"
+        require_supabase = False
+    else:
+        pw_script = "test:frontend:e2e:ci"
+        require_supabase = True
+
+    return {
+        "run_block": True,
+        "changed_files": changed,
+        "run_eslint": True,
+        "run_jest": run_jest,
+        "run_playwright": run_playwright,
+        "playwright_script": pw_script,
+        "require_supabase_for_playwright": require_supabase,
+        "skip_reason": None,
+    }
+
+
 def validate_python_backend(
     quick: bool = False, force_all_apps: bool = True, files: Optional[List[str]] = None
 ) -> bool:
@@ -703,7 +817,7 @@ def validate_python_backend(
 
         python_targets = [f for f in clean_files if f.endswith(".py")]
         template_targets = [f for f in clean_files if f.endswith(".html")]
-        _bandit_prefixes = ("src/", "scripts/")
+        _bandit_prefixes = ("collab/", "scripts/")
         bandit_targets = [
             f
             for f in clean_files
@@ -726,7 +840,7 @@ def validate_python_backend(
     # Full run (no specific files provided)
     if not files:
         python_targets = [
-            "src",
+            "collab",
             "tests",
             "scripts",
         ]
@@ -831,7 +945,7 @@ def validate_python_backend(
             [
                 "bandit",
                 "-r",
-                "src/",
+                "collab/",
                 "scripts/",
                 "-ll",
             ],
@@ -856,7 +970,7 @@ def validate_python_backend(
             success = "skipped"
     else:
         success, _ = run_command(
-            [python_exe, "-m", "djlint", "--check", "src/dashboard"],
+            [python_exe, "-m", "djlint", "--check", "collab/dashboard"],
             "HTML template linting",
         )
 
@@ -868,7 +982,7 @@ def validate_python_backend(
 
     _FULL_TESTPATHS = ["tests/backend", "tests/frontend"]
     _cov_sources = [
-        "--cov=src",
+        "--cov=collab",
         "--cov=scripts",
     ]
     quick_cov_args = _cov_sources + ["--cov-report=xml"]
@@ -1119,9 +1233,17 @@ def _has_playwright_test_files() -> bool:
 
 
 def validate_javascript_frontend(
-    quick: bool = False, force_all_apps: bool = True, files: Optional[List[str]] = None
+    quick: bool = False,
+    force_all_apps: bool = True,
+    files: Optional[List[str]] = None,
+    scopes: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """Run JavaScript frontend validation checks when relevant files exist."""
+    """Run JavaScript frontend validation checks when relevant files exist.
+
+    Full mode (default): ESLint + Jest + Playwright CI parity (chromium + @live).
+    Quick mode: skip entire block when no frontend diff; otherwise targeted ESLint,
+    Jest, and/or Playwright fast (mock + contract only).
+    """
     npm_available = shutil.which("npm") is not None
 
     if not npm_available:
@@ -1132,22 +1254,29 @@ def validate_javascript_frontend(
         print(msg_npm)
         return True
 
-    eslint_targets = []
-    html_targets = []
-    jest_targets = []
+    if scopes is None:
+        scopes = detect_changed_scopes(files)
+
+    plan = _frontend_validation_plan(quick, files, scopes)
+    if not plan["run_block"]:
+        print_header("JAVASCRIPT FRONTEND VALIDATION")
+        print(f"{Colors.OKCYAN}[INFO] {plan['skip_reason']}{Colors.ENDC}")
+        return True
+
+    changed_files: List[str] = plan["changed_files"]
+    eslint_targets = [
+        f
+        for f in changed_files
+        if f.endswith((".js", ".jsx", ".ts", ".tsx")) and Path(f).exists()
+    ]
 
     if files:
-        eslint_targets = [
-            f for f in files if f.endswith((".js", ".jsx", ".ts", ".tsx"))
-        ]
-        html_targets = [f for f in files if f.endswith(".html")]
-        jest_targets = [f for f in files if f.endswith(".test.js")]
-        if not any([eslint_targets, html_targets, jest_targets]):
+        if not eslint_targets and not any(f.endswith(".html") for f in changed_files):
             return True
     else:
         glob_patterns = [
-            "src/**/*.js",
-            "src/**/*.css",
+            "collab/**/*.js",
+            "collab/**/*.css",
             "tests/frontend/**/*.js",
         ]
         discovered = [
@@ -1157,19 +1286,29 @@ def validate_javascript_frontend(
             return True
 
     print_header("JAVASCRIPT FRONTEND VALIDATION")
+    if quick and plan["skip_reason"] is None:
+        print(
+            f"{Colors.OKCYAN}[INFO] Quick mode: smart frontend scoping "
+            f"(changed: {len(changed_files)} file(s)).{Colors.ENDC}"
+        )
+    elif not quick:
+        print(
+            f"{Colors.OKCYAN}[INFO] Full mode: CI-parity frontend checks "
+            f"(ESLint, Jest, Playwright chromium + live).{Colors.ENDC}"
+        )
     checks: List[Tuple[str, ValidationStatus | bool]] = []
     success: ValidationStatus | bool = True
 
-    # Step 1: ESLint (or skip if not configured)
+    # Step 1: ESLint
     print_section("Step 1/3: JavaScript Linting (eslint)")
-    if files and eslint_targets:
+    if eslint_targets:
         success, _ = run_command(
             ["npx", "eslint"] + eslint_targets + ["--report-unused-disable-directives"],
             "ESLint check",
             force_all_apps=force_all_apps,
             check=False,
         )
-    else:
+    elif not quick:
         success, _ = run_command(
             [
                 "npx",
@@ -1181,17 +1320,20 @@ def validate_javascript_frontend(
             force_all_apps=force_all_apps,
             check=False,
         )
-    if not success:
-        print_warning("ESLint unavailable or not configured - skipping strict failure.")
+    else:
+        print(
+            f"{Colors.OKCYAN}[INFO] Quick mode: no JS/TS files in diff — "
+            f"skipping ESLint.{Colors.ENDC}"
+        )
         success = "skipped"
     checks.append(("ESLint", success))
 
-    # Step 2: Jest (or skip if test script is missing)
+    # Step 2: Jest
     print_section("Step 2/3: JavaScript Tests (jest)")
-    if quick:
+    if not plan["run_jest"]:
         print(
-            f"{Colors.OKCYAN}[INFO] Quick mode: skipping frontend test execution "
-            f"unless explicitly requested.{Colors.ENDC}"
+            f"{Colors.OKCYAN}[INFO] Quick mode: no Jest-related changes — "
+            f"skipping Jest.{Colors.ENDC}"
         )
         success = "skipped"
     else:
@@ -1209,35 +1351,49 @@ def validate_javascript_frontend(
                 force_all_apps=force_all_apps,
                 check=False,
             )
-            if not success:
-                print_warning("Jest tests failed; skipping strict frontend failure.")
-                success = "skipped"
     checks.append(("Jest Tests", success))
 
-    # Step 3: Playwright (non-quick mode only)
+    # Step 3: Playwright — full mode matches CI (chromium + chromium-live).
     print_section("Step 3/3: E2E Tests (playwright)")
-    if quick:
-        print(f"{Colors.OKCYAN}[INFO] Quick mode: skipping E2E tests.{Colors.ENDC}")
+    if not plan["run_playwright"]:
+        print(
+            f"{Colors.OKCYAN}[INFO] Quick mode: no dashboard/E2E harness changes — "
+            f"skipping Playwright.{Colors.ENDC}"
+        )
+        success = "skipped"
+    elif not _has_playwright_test_files():
+        print(
+            f"{Colors.OKCYAN}[INFO] No Playwright test files found — skipping "
+            f"E2E validation.{Colors.ENDC}"
+        )
         success = "skipped"
     else:
-        if not _has_playwright_test_files():
-            print(
-                f"{Colors.OKCYAN}[INFO] No Playwright test files found — skipping "
-                f"E2E validation.{Colors.ENDC}"
+        package_scripts = _load_package_json_scripts()
+        pw_script = plan["playwright_script"]
+        if pw_script not in package_scripts:
+            print_error(f"package.json missing {pw_script!r} script.")
+            success = False
+        elif (
+            plan["require_supabase_for_playwright"] and not _has_supabase_credentials()
+        ):
+            print_error(
+                "Full validation requires SUPABASE_URL and SUPABASE_ANON_KEY in .env "
+                "(same as CI Playwright job for live @live smoke tests)."
             )
-            success = "skipped"
+            success = False
         else:
+            label = (
+                "Playwright E2E (CI parity: mock + contract + live)"
+                if pw_script == "test:frontend:e2e:ci"
+                else "Playwright E2E (quick: mock + contract, chromium)"
+            )
             success, _ = run_command(
-                ["npx", "playwright", "test", "--project=chromium"],
-                "Playwright E2E tests",
+                ["npm", "run", pw_script],
+                label,
                 force_all_apps=force_all_apps,
                 check=False,
+                env={"PLAYWRIGHT_VALIDATE": "1", "CI": "1"},
             )
-            if not success:
-                print_warning(
-                    "Playwright tests failed; skipping strict frontend failure."
-                )
-                success = "skipped"
     checks.append(("E2E Tests", success))
 
     print_section("Frontend Validation Summary")
@@ -1307,7 +1463,7 @@ def main():
                     for f in args.files
                     if (f.endswith(".py")) and not Path(f).name.startswith(".")
                 ],
-                [f for f in args.files if f.startswith("src/")],
+                [f for f in args.files if f.startswith("collab/")],
             ]
         )
         has_docs = any(
@@ -1338,6 +1494,10 @@ def main():
     print(f"{Colors.OKCYAN}This script simulates the CI pipeline locally.{Colors.ENDC}")
     print(f"{Colors.OKCYAN}All checks must pass before committing code.{Colors.ENDC}\n")
 
+    scopes = detect_changed_scopes(args.files if args.files else None)
+    if args.quick and scopes.get("reason"):
+        print_warning(f"Quick mode: {scopes['reason']}")
+
     results = []
 
     if run_backend:
@@ -1351,6 +1511,7 @@ def main():
         frontend_passed = validate_javascript_frontend(
             quick=args.quick,
             files=args.files if args.files else None,
+            scopes=scopes,
         )
         results.append(("Frontend", frontend_passed))
 

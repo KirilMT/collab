@@ -75,8 +75,8 @@ Now you are on your new branch and can work safely without affecting `main`.
 **Step 3.1: The 5-Step Quality Loop (Iterative Process)**
 Before you commit, apply this loop to every file you touch:
 
-1.  **Check:** Run linters `ruff check src/`.
-2.  **Format:** Run formatters `black src/`.
+1.  **Check:** Run linters `ruff check collab/`.
+2.  **Format:** Run formatters `black collab/`.
 3.  **Test:** Run `pytest` to ensure no regressions.
 4.  **Audit:** Self-review logic and complexity.
 5.  **Commit:** Only when 1-4 pass.

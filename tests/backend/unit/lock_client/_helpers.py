@@ -16,10 +16,10 @@ sys.modules.setdefault("supabase", mock.MagicMock())
 def _find_lock_client_path() -> Path:
     p = Path(__file__).resolve()
     for parent in p.parents:
-        candidate = parent / "src" / "lock_client.py"
+        candidate = parent / "collab" / "lock_client.py"
         if candidate.exists():
             return candidate
-    candidate = Path(__file__).resolve().parents[4] / "src" / "lock_client.py"
+    candidate = Path(__file__).resolve().parents[4] / "collab" / "lock_client.py"
     if candidate.exists():
         return candidate
     raise FileNotFoundError("lock_client.py not found in repo")
@@ -27,16 +27,23 @@ def _find_lock_client_path() -> Path:
 
 def load_lock_client_module():
     candidate = _find_lock_client_path()
-    repo_root = candidate.parents[2]
+    repo_root = candidate.parents[1]
     root_str = str(repo_root)
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
 
-    # Always import via package machinery so src.main and tests share the
+    # Always import via package machinery so collab.main and tests share the
     # exact same module object for monkeypatching.
-    if "src.lock_client" in sys.modules:
-        return sys.modules["src.lock_client"]
-    return importlib.import_module("src.lock_client")
+    if "collab.lock_client" in sys.modules:
+        return sys.modules["collab.lock_client"]
+    return importlib.import_module("collab.lock_client")
+
+
+def patch_subprocess(monkeypatch, **kwargs):
+    """Stub subprocess for code paths using ``subprocess_bridge``."""
+    from tests.backend.subprocess_testing import patch_subprocess as _patch
+
+    return _patch(monkeypatch, **kwargs)
 
 
 def _load_lock_client_module():
@@ -50,10 +57,10 @@ def _load_lock_client_module():
 def _find_watcher_path() -> Path:
     p = Path(__file__).resolve()
     for parent in p.parents:
-        candidate = parent / "src" / "live_locks_watcher.py"
+        candidate = parent / "collab" / "live_locks_watcher.py"
         if candidate.exists():
             return candidate
-    candidate = Path(__file__).resolve().parents[5] / "src" / "live_locks_watcher.py"
+    candidate = Path(__file__).resolve().parents[5] / "collab" / "live_locks_watcher.py"
     if candidate.exists():
         return candidate
     raise FileNotFoundError("live_locks_watcher.py not found in repo")
@@ -62,7 +69,7 @@ def _find_watcher_path() -> Path:
 def load_watcher_module():
     candidate = _find_watcher_path()
     spec = importlib.util.spec_from_file_location(
-        "src.live_locks_watcher", str(candidate)
+        "collab.live_locks_watcher", str(candidate)
     )
     mod = importlib.util.module_from_spec(spec)
     assert spec and spec.loader

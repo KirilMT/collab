@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_git_capture
 
 # ---- Auto-migrated from migrated_remaining ----
 
@@ -25,7 +25,7 @@ def test_reconcile_readopts_dirty_locked_file(monkeypatch):
     mod._active_conflicts.clear()
 
     # Mock git status: src/app.py is dirty
-    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"src/app.py"})
+    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"collab/app.py"})
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
 
     # Existing lock for src/app.py with matching SESSION_TOKEN
@@ -34,7 +34,7 @@ def test_reconcile_readopts_dirty_locked_file(monkeypatch):
     class FakeResponse:
         data = [
             {
-                "file_path": "src/app.py",
+                "file_path": "collab/app.py",
                 "developer_id": "alice",
                 "lock_token": current_token,
                 "branch_name": "main",
@@ -64,7 +64,7 @@ def test_reconcile_readopts_dirty_locked_file(monkeypatch):
     mod._reconcile_on_startup(client)
 
     # File should be re-adopted (in _local_owned_locks)
-    assert "src/app.py" in mod._local_owned_locks
+    assert "collab/app.py" in mod._local_owned_locks
     # acquire_lock RPC should NOT have been called
     assert "acquire_lock" not in rpc_called
 
@@ -93,7 +93,7 @@ def test_reconcile_releases_stale_clean_lock(monkeypatch):
     class FakeSelectResponse:
         data = [
             {
-                "file_path": "src/old.py",
+                "file_path": "collab/old.py",
                 "developer_id": "alice",
                 "lock_token": "old-token",
                 "branch_name": "main",
@@ -131,9 +131,9 @@ def test_reconcile_releases_stale_clean_lock(monkeypatch):
     mod._reconcile_on_startup(client)
 
     # src/old.py should have been released
-    assert "src/old.py" in deleted_files
+    assert "collab/old.py" in deleted_files
     # Should NOT be in _local_owned_locks
-    assert "src/old.py" not in mod._local_owned_locks
+    assert "collab/old.py" not in mod._local_owned_locks
 
     mod._local_owned_locks.clear()
 
@@ -152,7 +152,7 @@ def test_reconcile_acquires_lock_for_new_dirty_file(monkeypatch):
     mod._active_conflicts.clear()
 
     # Mock git status: src/new.py is dirty
-    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"src/new.py"})
+    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"collab/new.py"})
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(watcher, "_should_ignore_path", lambda p: False)
 
@@ -192,9 +192,9 @@ def test_reconcile_acquires_lock_for_new_dirty_file(monkeypatch):
     # acquire_lock RPC should have been called for src/new.py
     assert len(rpc_calls) == 1
     assert rpc_calls[0]["name"] == "acquire_lock"
-    assert rpc_calls[0]["params"]["p_file_path"] == "src/new.py"
+    assert rpc_calls[0]["params"]["p_file_path"] == "collab/new.py"
     # File should now be in _local_owned_locks
-    assert "src/new.py" in mod._local_owned_locks
+    assert "collab/new.py" in mod._local_owned_locks
 
     mod._local_owned_locks.clear()
 
@@ -214,7 +214,9 @@ def test_reconcile_post_restart_conflict_non_interactive(monkeypatch):
     mod._active_conflicts.clear()
 
     # Mock git status: src/shared.py is dirty
-    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"src/shared.py"})
+    monkeypatch.setattr(
+        watcher, "_run_git_status_porcelain", lambda: {"collab/shared.py"}
+    )
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(watcher, "_should_ignore_path", lambda p: False)
     # Non-interactive
@@ -255,9 +257,9 @@ def test_reconcile_post_restart_conflict_non_interactive(monkeypatch):
     mod._reconcile_on_startup(client)
 
     # File should be in _active_conflicts
-    assert "src/shared.py" in mod._active_conflicts
+    assert "collab/shared.py" in mod._active_conflicts
     # Should NOT be in _local_owned_locks (conflict)
-    assert "src/shared.py" not in mod._local_owned_locks
+    assert "collab/shared.py" not in mod._local_owned_locks
     # Notification should have been sent
     assert any("Post-restart" in t for t, m in notify_calls)
 
@@ -279,7 +281,9 @@ def test_reconcile_multi_session_different_token_non_interactive(monkeypatch):
     mod._active_conflicts.clear()
 
     # Mock git status: src/multi.py is dirty
-    monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"src/multi.py"})
+    monkeypatch.setattr(
+        watcher, "_run_git_status_porcelain", lambda: {"collab/multi.py"}
+    )
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
     # Non-interactive
     monkeypatch.setattr(sys, "stdin", type("F", (), {"isatty": lambda s: False})())
@@ -288,7 +292,7 @@ def test_reconcile_multi_session_different_token_non_interactive(monkeypatch):
     class FakeSelectResponse:
         data = [
             {
-                "file_path": "src/multi.py",
+                "file_path": "collab/multi.py",
                 "developer_id": "alice",
                 "lock_token": "other-machine-token-12345",
                 "branch_name": "main",
@@ -318,7 +322,7 @@ def test_reconcile_multi_session_different_token_non_interactive(monkeypatch):
     mod._reconcile_on_startup(client)
 
     # Lock should NOT be re-adopted (different token, non-interactive → leave)
-    assert "src/multi.py" not in mod._local_owned_locks
+    assert "collab/multi.py" not in mod._local_owned_locks
     assert "acquire_lock" not in rpc_calls
 
     mod._local_owned_locks.clear()
@@ -333,11 +337,11 @@ def test_reconcile_stale_release_exception_and_acquire_exception(monkeypatch):
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda d: False)
     monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
-    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"src/new.py"})
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/new.py"})
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
 
     # Existing stale lock is clean (not in dirty set), and unlocking it raises.
-    existing = [{"file_path": "src/stale.py", "lock_token": "x"}]
+    existing = [{"file_path": "collab/stale.py", "lock_token": "x"}]
 
     class FakeClient:
         def __init__(self):
@@ -409,20 +413,20 @@ def test_get_modified_and_unpushed_files_status_exception(monkeypatch):
     """If git status fails, helper should continue and return best-effort set."""
     mod = load_watcher_module()
 
-    def _check_output(cmd, *args, **kwargs):
-        if cmd[:3] == ["git", "status", "--porcelain"]:
-            raise RuntimeError("status fail")
-        if cmd[:2] == ["git", "rev-parse"]:
-            return b"origin/main\n"
-        if cmd[:3] == ["git", "diff", "--name-only"]:
-            return b"src/from_diff.py\n"
-        return b""
+    def _git(argv, **_k):
+        if len(argv) >= 2 and argv[1] == "status":
+            return ""
+        if len(argv) >= 2 and argv[1] == "rev-parse":
+            return "origin/main"
+        if len(argv) >= 2 and argv[1] == "diff":
+            return "collab/from_diff.py"
+        return ""
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_git_capture(monkeypatch, mod, _git)
     monkeypatch.setattr(mod, "_normalize_path", lambda p, root: p)
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
     out = mod._get_modified_and_unpushed_files()
-    assert "src/from_diff.py" in out
+    assert "collab/from_diff.py" in out
 
 
 def test_reconcile_on_startup_git_status_exception(monkeypatch):
@@ -468,7 +472,7 @@ def test_reconcile_same_machine_re_adopt_update_exception(monkeypatch):
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda d: False)
-    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"src/file.py"})
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/file.py"})
     monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(mod, "_is_same_machine_token", lambda token: True)
 
@@ -500,7 +504,7 @@ def test_reconcile_same_machine_re_adopt_update_exception(monkeypatch):
                     {
                         "data": [
                             {
-                                "file_path": "src/file.py",
+                                "file_path": "collab/file.py",
                                 "developer_id": "alice",
                                 "lock_token": "other-token",
                             }
@@ -513,4 +517,4 @@ def test_reconcile_same_machine_re_adopt_update_exception(monkeypatch):
             return self
 
     mod._reconcile_on_startup(FakeClient())
-    assert "src/file.py" in mod._local_owned_locks
+    assert "collab/file.py" in mod._local_owned_locks

@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, reload_watcher_module
 
 
 def _repo_root() -> Path:
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "pyproject.toml").exists() and (parent / "src").exists():
+        if (parent / "pyproject.toml").exists() and (parent / "collab").exists():
             return parent
     raise FileNotFoundError("Could not locate repository root")
 
@@ -34,7 +34,7 @@ def test_module_imports():
 
 
 def test_main_block_present():
-    module_file = _repo_root().joinpath("src/live_locks_watcher.py")
+    module_file = _repo_root().joinpath("collab/live_locks_watcher.py")
     src = module_file.read_text(encoding="utf-8")
     assert '__name__ == "__main__"' in src or "__name__ == '__main__'" in src
 
@@ -62,13 +62,7 @@ def test_reload_watcher_with_colorama_and_plyer(monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
 
     try:
-        spec = importlib.util.spec_from_file_location(
-            "tmp_watcher",
-            _repo_root().joinpath("src/live_locks_watcher.py"),
-        )
-        assert spec and spec.loader
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)  # type: ignore[arg-defined]
+        mod = reload_watcher_module("collab.live_locks_watcher_colorama")
 
         # Basic smoke checks on functions that depend on the optional imports
         assert callable(mod._color)
@@ -107,17 +101,13 @@ def test_setup_collab_logging_fallback_to_basic_config(monkeypatch):
 
 def test_reload_watcher_handles_find_spec_exceptions(monkeypatch):
     """Import-time optional dependency probes should tolerate find_spec errors."""
-    module_path = _repo_root().joinpath("src/live_locks_watcher.py")
 
     def _raising_find_spec(_name):
         raise RuntimeError("probe failed")
 
     monkeypatch.setattr(importlib.util, "find_spec", _raising_find_spec)
 
-    spec = importlib.util.spec_from_file_location("tmp_watcher_probe_fail", module_path)
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[arg-defined]
+    mod = reload_watcher_module("collab.live_locks_watcher_probe_fail")
 
     # Module should still import with optional dependencies disabled.
     assert mod._HAS_COLORAMA is False
@@ -127,7 +117,7 @@ def test_reload_watcher_handles_find_spec_exceptions(monkeypatch):
 
 def test_reload_watcher_exits_on_local_supabase_shadow(monkeypatch):
     """Watcher should abort when a local .collab/supabase module shadows package."""
-    module_path = _repo_root().joinpath("src/live_locks_watcher.py")
+    module_path = _repo_root().joinpath("collab/live_locks_watcher.py")
     # Force a deterministic runtime collab root so shadow detection doesn't
     # depend on the process cwd/environment.
     monkeypatch.setenv("COLLAB_HOME", str(module_path.parent))
@@ -142,20 +132,14 @@ def test_reload_watcher_exits_on_local_supabase_shadow(monkeypatch):
 
     monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
 
-    spec = importlib.util.spec_from_file_location(
-        "tmp_watcher_shadowed_supa", module_path
-    )
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-
     with pytest.raises(SystemExit):
-        spec.loader.exec_module(mod)  # type: ignore[arg-defined]
+        reload_watcher_module("collab.live_locks_watcher_shadowed_supa")
 
 
 def test_watcher_allows_project_venv_site_packages_origin(monkeypatch):
     """Watcher import should allow installed packages from a repo-local virtualenv."""
-    module_path = _repo_root().joinpath("src/live_locks_watcher.py")
-    project_root = module_path.parents[2]
+    module_path = _repo_root().joinpath("collab/live_locks_watcher.py")
+    project_root = module_path.parents[1]
     monkeypatch.delenv("COLLAB_HOME", raising=False)
     monkeypatch.setenv("COLLAB_PROJECT_ROOT", str(project_root))
     fake_supa_spec = types.SimpleNamespace(
@@ -178,10 +162,5 @@ def test_watcher_allows_project_venv_site_packages_origin(monkeypatch):
     monkeypatch.setitem(sys.modules, "supabase", fake_supa)
     monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
 
-    spec = importlib.util.spec_from_file_location(
-        "tmp_watcher_site_packages_supa", module_path
-    )
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[arg-defined]
+    mod = reload_watcher_module("collab.live_locks_watcher_site_packages_supa")
     assert callable(mod.create_client)

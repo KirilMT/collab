@@ -18,8 +18,8 @@ def test_acquire_multiple_success(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    file1 = tmp_path / "src" / "app.py"
-    file2 = tmp_path / "src" / "routes.py"
+    file1 = tmp_path / "collab" / "app.py"
+    file2 = tmp_path / "collab" / "routes.py"
     file1.parent.mkdir(parents=True)
     file1.write_text("# code")
     file2.write_text("# code")
@@ -57,7 +57,7 @@ def test_acquire_api_exception(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    test_file = tmp_path / "src" / "app.py"
+    test_file = tmp_path / "collab" / "app.py"
     test_file.parent.mkdir(parents=True)
     test_file.write_text("# code")
 
@@ -71,6 +71,7 @@ def test_acquire_api_exception(monkeypatch, tmp_path):
         lambda: lambda url, key: ExplodingClient(FakeResponse()),
     )
     monkeypatch.setattr(mod, "_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(mod, "_ensure_lock_service_reachable", lambda: None)
 
     lc = mod.LockClient(developer_id="test_user")
     ok, msg = lc.acquire(str(test_file))

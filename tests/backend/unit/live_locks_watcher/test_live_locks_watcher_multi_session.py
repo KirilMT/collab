@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from ._helpers import load_watcher_module
+from ._helpers import load_watcher_module, patch_subprocess
 
 
 def test_handle_multi_session_interactive_readopt_choice_1(monkeypatch):
@@ -39,10 +39,10 @@ def test_handle_multi_session_interactive_readopt_choice_1(monkeypatch):
     client = FakeClient()
     mod._local_owned_locks.clear()
 
-    mod._handle_multi_session_lock(client, "src/multi.py", "old-token")
+    mod._handle_multi_session_lock(client, "collab/multi.py", "old-token")
 
     assert "update" in update_called
-    assert "src/multi.py" in mod._local_owned_locks
+    assert "collab/multi.py" in mod._local_owned_locks
 
 
 def test_handle_multi_session_interactive_release_choice_3(monkeypatch):
@@ -75,10 +75,10 @@ def test_handle_multi_session_interactive_release_choice_3(monkeypatch):
     client = FakeClient()
     mod._local_owned_locks.clear()
 
-    mod._handle_multi_session_lock(client, "src/multi.py", "old-token")
+    mod._handle_multi_session_lock(client, "collab/multi.py", "old-token")
 
     assert "delete" in delete_called
-    assert "src/multi.py" not in mod._local_owned_locks
+    assert "collab/multi.py" not in mod._local_owned_locks
 
 
 def test_handle_multi_session_interactive_leave_choice_2(monkeypatch):
@@ -115,10 +115,10 @@ def test_handle_multi_session_interactive_leave_choice_2(monkeypatch):
     client = FakeClient()
     mod._local_owned_locks.clear()
 
-    mod._handle_multi_session_lock(client, "src/multi.py", "old-token")
+    mod._handle_multi_session_lock(client, "collab/multi.py", "old-token")
 
     assert not touched_db
-    assert "src/multi.py" not in mod._local_owned_locks
+    assert "collab/multi.py" not in mod._local_owned_locks
 
 
 def test_handle_post_restart_conflict_interactive_abort_choice_4(monkeypatch):
@@ -147,7 +147,7 @@ def test_handle_post_restart_conflict_interactive_abort_choice_4(monkeypatch):
     mod._active_conflicts.clear()
 
     with pytest.raises(SystemExit):
-        mod._handle_post_restart_conflict(None, "src/conflict.py", {"owner": "bob"})
+        mod._handle_post_restart_conflict(None, "collab/conflict.py", {"owner": "bob"})
 
     assert shutdown_called
     assert exit_called == [1]
@@ -164,21 +164,18 @@ def test_handle_post_restart_conflict_interactive_show_diff_then_continue(monkey
     import builtins
 
     monkeypatch.setattr(builtins, "input", lambda p: next(inputs))
-    monkeypatch.setattr(
-        mod.subprocess,
-        "check_output",
-        lambda *a, **k: b"diff --git a/src/conflict.py b/src/conflict.py\n",
-    )
+    diff_bytes = b"diff --git a/src/conflict.py b/src/conflict.py\n"
+    patch_subprocess(monkeypatch, check_output=lambda *a, **k: diff_bytes)
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
     mod._active_conflicts.clear()
     mod._handle_post_restart_conflict(
         None,
-        "src/conflict.py",
+        "collab/conflict.py",
         {"owner": "bob", "branch": "main", "reason": "test"},
     )
 
-    assert "src/conflict.py" in mod._active_conflicts
+    assert "collab/conflict.py" in mod._active_conflicts
 
 
 def test_handle_post_restart_conflict_interactive_diff_failure_then_continue(
@@ -198,13 +195,13 @@ def test_handle_post_restart_conflict_interactive_diff_failure_then_continue(
     def _boom(*args, **kwargs):
         raise RuntimeError("git diff unavailable")
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _boom)
+    patch_subprocess(monkeypatch, check_output=_boom)
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
     mod._active_conflicts.clear()
-    mod._handle_post_restart_conflict(None, "src/conflict.py", {"owner": "bob"})
+    mod._handle_post_restart_conflict(None, "collab/conflict.py", {"owner": "bob"})
 
-    assert "src/conflict.py" in mod._active_conflicts
+    assert "collab/conflict.py" in mod._active_conflicts
 
 
 def test_handle_post_restart_conflict_tty_input_eof_defaults_continue(monkeypatch):
@@ -221,9 +218,9 @@ def test_handle_post_restart_conflict_tty_input_eof_defaults_continue(monkeypatc
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
     mod._active_conflicts.clear()
-    mod._handle_post_restart_conflict(None, "src/eof_conflict.py", {"owner": "bob"})
+    mod._handle_post_restart_conflict(None, "collab/eof_conflict.py", {"owner": "bob"})
 
-    assert "src/eof_conflict.py" in mod._active_conflicts
+    assert "collab/eof_conflict.py" in mod._active_conflicts
 
 
 def test_handle_multi_session_interactive_eof_defaults_leave(monkeypatch):
@@ -259,7 +256,7 @@ def test_handle_multi_session_interactive_eof_defaults_leave(monkeypatch):
         def table(self, name):
             return FakeTable()
 
-    mod._handle_multi_session_lock(FakeClient(), "src/multi.py", "old-token")
+    mod._handle_multi_session_lock(FakeClient(), "collab/multi.py", "old-token")
     assert touched == []
 
 
@@ -288,8 +285,8 @@ def test_handle_multi_session_choice1_update_exception(monkeypatch):
         def table(self, name):
             return FakeTable()
 
-    mod._handle_multi_session_lock(FakeClient(), "src/err_update.py", "old-token")
-    assert "src/err_update.py" in mod._local_owned_locks
+    mod._handle_multi_session_lock(FakeClient(), "collab/err_update.py", "old-token")
+    assert "collab/err_update.py" in mod._local_owned_locks
 
 
 def test_handle_multi_session_choice3_delete_exception(monkeypatch):
@@ -317,4 +314,4 @@ def test_handle_multi_session_choice3_delete_exception(monkeypatch):
             return FakeTable()
 
     # no raise expected
-    mod._handle_multi_session_lock(FakeClient(), "src/err_delete.py", "old-token")
+    mod._handle_multi_session_lock(FakeClient(), "collab/err_delete.py", "old-token")

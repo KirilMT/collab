@@ -162,7 +162,7 @@ class TestBackwardCompatibilityInvocation:
         # Check pyproject.toml registration
         with open("pyproject.toml") as f:
             content = f.read()
-            assert 'collab = "src.lock_client:main"' in content
+            assert 'collab = "collab.lock_client:main"' in content
 
 
 class TestCLICommandVariants:
@@ -209,7 +209,7 @@ class TestCLIDashboardAssetIntegrity:
 
     def test_dashboard_index_html_exists(self) -> None:
         """Verify dashboard HTML asset is present."""
-        dashboard_path = os.path.join("src", "dashboard", "index.html")
+        dashboard_path = os.path.join("collab", "dashboard", "index.html")
         assert os.path.exists(
             dashboard_path
         ), f"Dashboard not found at {dashboard_path}"

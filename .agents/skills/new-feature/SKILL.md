@@ -7,7 +7,7 @@ description: Use when scaffolding a new feature or implementing a significant ne
 
 ## Use this skill when
 
-- Adding a new feature in `src/`
+- Adding a new feature in `collab/`
 - Implementing a significant capability across multiple files
 - Executing a roadmap item from `docs/collab_roadmap.md`
 
@@ -44,13 +44,13 @@ See `testing-workflow` for test placement and strategy.
 
 ### Core Runtime Locations
 
-| Component                  | Location                            |
-| -------------------------- | ----------------------------------- |
-| CLI and lock orchestration | `src/lock_client.py`, `src/main.py` |
-| Watcher process            | `src/live_locks_watcher.py`         |
-| Logging setup              | `src/logging_config.py`             |
-| Dashboard template         | `src/dashboard/index.html`          |
-| Validation and tooling     | `scripts/`                          |
+| Component                  | Location                                  |
+| -------------------------- | ----------------------------------------- |
+| CLI and lock orchestration | `collab/lock_client.py`, `collab/main.py` |
+| Watcher process            | `collab/live_locks_watcher.py`            |
+| Logging setup              | `collab/logging_config.py`                |
+| Dashboard template         | `collab/dashboard/index.html`             |
+| Validation and tooling     | `scripts/`                                |
 
 ### Separation of Concerns
 

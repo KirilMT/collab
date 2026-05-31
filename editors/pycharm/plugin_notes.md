@@ -22,7 +22,7 @@ interfere with your coding workflow.
 ## Manual Start
 
 ```bash
-python src/live_locks_watcher.py --interval 5 --timeout 480
+python collab/live_locks_watcher.py --interval 5 --timeout 480
 ```
 
 ## How Conflicts Work
@@ -32,7 +32,7 @@ When the watcher detects a conflict (file locked by another developer):
 1. A **desktop notification** pops up with the file name and lock owner
 2. The terminal shows a detailed warning with a dashboard link:
    ```
-   [10:30] WARNING: ⚠ CONFLICT: src/lock_client.py is locked by @bob
+   [10:30] WARNING: ⚠ CONFLICT: collab/lock_client.py is locked by @bob
                      — your changes may cause a merge conflict.
                      Run: collab dashboard
    ```
@@ -40,7 +40,7 @@ When the watcher detects a conflict (file locked by another developer):
    files locked by another developer
 4. When you revert the file or the conflict resolves, the watcher logs:
    ```
-   [10:35] INFO: ✅ Conflict cleared: src/lock_client.py (file reverted or resolved)
+   [10:35] INFO: ✅ Conflict cleared: collab/lock_client.py (file reverted or resolved)
    ```
 
 ## Stopping the Watcher

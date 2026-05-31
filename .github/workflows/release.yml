@@ -58,7 +58,7 @@ jobs:
       - name: Run tests
         run: |
           set -euo pipefail
-          pytest --cov=src --cov-report=xml
+          pytest --cov=collab --cov-report=xml
 
       - name: Upload coverage report
         if: always()

@@ -4,7 +4,12 @@ import types
 from datetime import datetime as _real_datetime
 from pathlib import Path
 
-from ._helpers import FakeClient, FakeResponse, load_lock_client_module
+from ._helpers import (
+    FakeClient,
+    FakeResponse,
+    load_lock_client_module,
+    patch_subprocess,
+)
 
 mod = load_lock_client_module()
 
@@ -161,7 +166,7 @@ def test_get_cmdline_for_pid_windows_powershell_failure_returns_none(monkeypatch
     def _check_output(*_a, **_k):
         raise RuntimeError("powershell failure")
 
-    monkeypatch.setattr(mod.subprocess, "check_output", _check_output)
+    patch_subprocess(monkeypatch, check_output=_check_output)
     assert mod.LockClient._get_cmdline_for_pid(12345) is None
 
 
@@ -360,8 +365,8 @@ def test_mark_missing_lines_coverage_helper():
     base = Path(__file__).resolve().parents[4]
     # Keep this lightweight helper deterministic across environments by
     # asserting the migrated runtime modules exist in the repository.
-    assert (base / "src" / "lock_client.py").exists()
-    assert (base / "src" / "live_locks_watcher.py").exists()
+    assert (base / "collab" / "lock_client.py").exists()
+    assert (base / "collab" / "live_locks_watcher.py").exists()
 
 
 def test_safe_now_returns_datetime(monkeypatch):

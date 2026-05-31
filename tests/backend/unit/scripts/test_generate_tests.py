@@ -45,19 +45,19 @@ class TestCodeAnalyzer:
 
 class TestTestGenerator:
     def test_detect_category(self):
-        assert gen.TestGenerator("src/routes/api.py").category == "functional"
-        assert gen.TestGenerator("src/lock_client.py").category == "unit"
-        assert gen.TestGenerator("src/unknown.py").category == "unit"
+        assert gen.TestGenerator("collab/routes/api.py").category == "functional"
+        assert gen.TestGenerator("collab/lock_client.py").category == "unit"
+        assert gen.TestGenerator("collab/unknown.py").category == "unit"
 
     def test_generate_empty_entities(self):
-        tg = gen.TestGenerator("src/foo.py")
+        tg = gen.TestGenerator("collab/foo.py")
         assert tg.generate([]) == ""
 
     def test_generate_import_block_for_src(self):
-        tg = gen.TestGenerator("src/my_module.py")
+        tg = gen.TestGenerator("collab/my_module.py")
         code = tg.generate([("MyClass", "class"), ("do_it", "function")])
         assert "import pytest" in code
-        assert "from src.my_module import (" in code
+        assert "from collab.my_module import (" in code
         assert "class TestMyClass:" in code
         assert "test_do_it_is_callable" in code
 
@@ -70,13 +70,13 @@ class TestTestGenerator:
         assert "clean_default = module_under_test.clean_default" in code
 
     def test_get_import_path(self, tmp_path):
-        tg = gen.TestGenerator("src/foo.py")
+        tg = gen.TestGenerator("collab/foo.py")
         assert tg._get_import_path() == "foo"
 
         tg2 = gen.TestGenerator("other/bar.py")
         assert tg2._get_import_path().endswith("bar")
 
-        external_src = tmp_path / "src" / "pkg" / "mod.py"
+        external_src = tmp_path / "collab" / "pkg" / "mod.py"
         external_src.parent.mkdir(parents=True, exist_ok=True)
         external_src.write_text("x = 1\n", encoding="utf-8")
         tg3 = gen.TestGenerator(
@@ -98,15 +98,15 @@ class TestTestGenerator:
         tg = gen.TestGenerator("run.py")
         assert tg._get_direct_import_module() == "run"
 
-        # Force external-path branch with src/ in the absolute path.
-        external = tmp_path / "src" / "nested" / "mod.py"
+        # Force external-path branch with collab/ in the absolute path.
+        external = tmp_path / "collab" / "nested" / "mod.py"
         external.parent.mkdir(parents=True, exist_ok=True)
         external.write_text("def x():\n    return 1\n", encoding="utf-8")
         tg2 = gen.TestGenerator(str(external), repo_root=tmp_path / "other-root")
-        assert tg2._get_direct_import_module() == "src.nested.mod"
+        assert tg2._get_direct_import_module() == "collab.nested.mod"
 
     def test_generate_adds_blank_line_when_import_block_has_no_trailing_empty(self):
-        tg = gen.TestGenerator("src/my_mod.py")
+        tg = gen.TestGenerator("collab/my_mod.py")
         tg._build_import_block = (  # type: ignore[method-assign]
             lambda _names: ["import pytest"]
         )
@@ -121,7 +121,7 @@ class TestTestGenerator:
         assert "Path(" in expr
 
     def test_get_test_dir_and_file(self, tmp_path):
-        src = tmp_path / "src" / "collab"
+        src = tmp_path / "collab" / "collab"
         src.mkdir(parents=True)
         source_file = src / "foo.py"
         source_file.write_text("def x():\n    return 1\n", encoding="utf-8")
@@ -149,9 +149,11 @@ class TestDiscovery:
             "def clean_default():\n    return None\n", encoding="utf-8"
         )
 
-        src_dir = tmp_path / "src"
-        src_dir.mkdir(parents=True)
-        (src_dir / "alpha.py").write_text("def x():\n    return 1\n", encoding="utf-8")
+        collab_dir = tmp_path / "collab"
+        collab_dir.mkdir(parents=True)
+        (collab_dir / "alpha.py").write_text(
+            "def x():\n    return 1\n", encoding="utf-8"
+        )
 
         tests_dir = tmp_path / "tests" / "backend" / "unit"
         tests_dir.mkdir(parents=True)
@@ -161,7 +163,7 @@ class TestDiscovery:
         untested = disc.find_untested()
 
         assert "scripts/cleanup.py" not in untested
-        assert "src/alpha.py" in untested
+        assert "collab/alpha.py" in untested
 
     def test_find_untested_external(self, tmp_path):
         src_dir = tmp_path / "external"
