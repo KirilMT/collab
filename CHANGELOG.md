@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.3.1](https://github.com/KirilMT/collab/compare/v0.3.0...v0.3.1) (2026-05-31)
 
-
 ### Bug Fixes
 
-* **dashboard:** reload Supabase credentials on each sync (release 0.3.1) ([#56](https://github.com/KirilMT/collab/issues/56)) ([21e262d](https://github.com/KirilMT/collab/commit/21e262d115ad2d857e1565a174cf44fb41d2c531))
+- **dashboard:** reload Supabase credentials on each sync (release 0.3.1) ([#56](https://github.com/KirilMT/collab/issues/56)) ([21e262d](https://github.com/KirilMT/collab/commit/21e262d115ad2d857e1565a174cf44fb41d2c531))
 
 ## [0.3.0](https://github.com/KirilMT/collab/compare/v0.2.9...v0.3.0) (2026-05-31)
 
