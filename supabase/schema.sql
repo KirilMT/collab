@@ -14,7 +14,9 @@ create table if not exists file_locks (
   branch_name text,
   reason text,
   acquired_at timestamptz not null default now(),
-  is_ephemeral boolean not null default false
+  is_ephemeral boolean not null default false,
+  agent_id text,
+  agent_label text
 );
 
 create table if not exists file_locks_history (
@@ -27,7 +29,9 @@ create table if not exists file_locks_history (
   acquired_at timestamptz,
   released_at timestamptz,
   outcome text,
-  is_ephemeral boolean
+  is_ephemeral boolean,
+  agent_id text,
+  agent_label text
 );
 
 -- ---------------------------------------------------------------------------
@@ -35,6 +39,8 @@ create table if not exists file_locks_history (
 -- ---------------------------------------------------------------------------
 create index if not exists idx_file_locks_acquired_at
   on file_locks(acquired_at);
+create index if not exists idx_file_locks_owner
+  on file_locks(developer_id, agent_id);
 -- Note: expiry semantics are intentionally disabled. Locks persist until
 -- explicitly released; no automatic time-based replacement is enforced.
 create index if not exists idx_file_locks_history_developer
@@ -105,34 +111,42 @@ create or replace function acquire_lock(
   p_branch_name text,
   p_reason text,
   p_lock_token text,
-  p_is_ephemeral boolean default false
-) returns table(status text, lock_token text, owner text) as $$
+  p_is_ephemeral boolean default false,
+  p_agent_id text default null,
+  p_agent_label text default null
+) returns table(status text, lock_token text, owner text, agent_id text) as $$
 declare
   rec record;
 begin
-  -- Try to insert; on conflict update only when expired or same owner
-  -- Insert without an expires_at value; locks persist until released.
-  insert into file_locks(file_path, developer_id, branch_name, lock_token, reason, acquired_at, is_ephemeral)
-  values (p_file_path, p_developer_id, p_branch_name, p_lock_token, p_reason, now(), p_is_ephemeral)
+  -- Try to insert; on conflict update only when the same human AND agent own the lock.
+  insert into file_locks(
+    file_path, developer_id, branch_name, lock_token, reason,
+    acquired_at, is_ephemeral, agent_id, agent_label
+  )
+  values (
+    p_file_path, p_developer_id, p_branch_name, p_lock_token, p_reason,
+    now(), p_is_ephemeral, p_agent_id, p_agent_label
+  )
   on conflict (file_path) do update
     set developer_id = excluded.developer_id,
         branch_name = excluded.branch_name,
         lock_token = excluded.lock_token,
         reason = excluded.reason,
         acquired_at = now(),
-        is_ephemeral = excluded.is_ephemeral
-    -- Do not replace another developer's lock. Only allow update when the
-    -- existing lock belongs to the requester (renewal).
+        is_ephemeral = excluded.is_ephemeral,
+        agent_id = excluded.agent_id,
+        agent_label = excluded.agent_label
     where file_locks.developer_id = excluded.developer_id
-  returning file_locks.lock_token, file_locks.developer_id into rec;
+      and coalesce(file_locks.agent_id, '') = coalesce(excluded.agent_id, '')
+  returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id into rec;
 
   if found then
-    return query select 'ok'::text, rec.lock_token::text, rec.developer_id::text;
+    return query select 'ok'::text, rec.lock_token::text, rec.developer_id::text, rec.agent_id::text;
   end if;
 
-  -- No row returned => conflict, return current owner/token
-  select fl.lock_token, fl.developer_id into rec from file_locks fl where fl.file_path = p_file_path;
-  return query select 'conflict'::text, rec.lock_token::text, rec.developer_id::text;
+  select fl.lock_token, fl.developer_id, fl.agent_id into rec
+  from file_locks fl where fl.file_path = p_file_path;
+  return query select 'conflict'::text, rec.lock_token::text, rec.developer_id::text, rec.agent_id::text;
 end;
 $$ language plpgsql security definer;
 
@@ -144,10 +158,10 @@ returns trigger as $$
 begin
   insert into file_locks_history(
     file_path, developer_id, lock_token, branch_name, reason,
-    acquired_at, released_at, outcome, is_ephemeral
+    acquired_at, released_at, outcome, is_ephemeral, agent_id, agent_label
   ) values (
     OLD.file_path, OLD.developer_id, OLD.lock_token, OLD.branch_name, OLD.reason,
-    OLD.acquired_at, now(), 'released', OLD.is_ephemeral
+    OLD.acquired_at, now(), 'released', OLD.is_ephemeral, OLD.agent_id, OLD.agent_label
   );
 
   -- Automatic retention: keep history bounded without manual intervention.
