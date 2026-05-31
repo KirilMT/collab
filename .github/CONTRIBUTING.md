@@ -234,30 +234,50 @@ If your change is potentially breaking:
 - Avoid leaking secrets or environment credentials.
 - Keep logs useful for troubleshooting race conditions and daemon state.
 
-## Frontend-Ready Standards
+## Frontend Testing (Required)
 
-Even if frontend surface is minimal today, scripts and structure must remain frontend-ready.
+The dashboard has a full automated frontend stack. Run locally before PRs:
+
+```bash
+npm test                                    # Jest — dashboard-format.js
+npx playwright test --project=chromium      # mock E2E + visual + live + contract
+```
+
+| Layer           | Location                                              | Purpose                                                              |
+| --------------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
+| Jest unit       | `tests/frontend/unit/`                                | Formatting/routing helpers in `collab/dashboard/dashboard-format.js` |
+| Playwright mock | `tests/frontend/playwright/dashboard.spec.js`         | Dense fixtures (16 locks / 30 history), flows, visual baselines      |
+| Playwright live | same + `playwright-live.html`                         | Real Supabase (same injection as `collab dashboard`)                 |
+| Schema contract | `tests/frontend/playwright/supabase-contract.spec.js` | PostgREST columns + RLS read access                                  |
+
+### CI repository secrets (Playwright live + contract)
+
+Add these in GitHub **Settings → Secrets and variables → Actions** (same values as local `.env`):
+
+- `SUPABASE_URL` (required)
+- `SUPABASE_ANON_KEY` (required)
+- `SUPABASE_SERVICE_ROLE_KEY` (optional; matches local dashboard when force-release is enabled)
+
+The Playwright CI job writes `.env` from secrets and fails fast if required secrets are missing.
+
+The **Supabase Keep-Alive** workflow (`.github/workflows/supabase-keepalive.yml`) uses the same secrets on a **Mon/Thu schedule** so Free-tier projects are not paused for inactivity (~7-day window). Enable it when you add secrets.
 
 Requirements:
 
 - Keep frontend validation hooks intact in `scripts/validate_code.py`.
-- Keep frontend test directories present:
-  - `tests/frontend/jest/`
-  - `tests/frontend/playwright/`
 - Do not remove frontend checks to make pipelines pass faster.
 
 ## Test Organization Requirements
 
-Use this structure:
+Use this structure (updated for cleanliness—no empty placeholder directories):
 
-- `tests/backend/unit/`
+- `tests/backend/unit/` (with module-grouped subdirectories for the large test surface)
 - `tests/backend/functional/`
 - `tests/backend/integration/`
 - `tests/backend/security/`
-- `tests/backend/performance/`
-- `tests/backend/reliability/`
-- `tests/frontend/jest/`
-- `tests/frontend/playwright/`
+- `tests/frontend/unit/` (Jest)
+- `tests/frontend/playwright/` (E2E, visual, live smoke, Supabase contract)
+- `tests/packaging/`
 
 When adding tests:
 
@@ -323,7 +343,7 @@ Purpose:
 Behavior:
 
 - Runs linting, type checks, tests, coverage checks, docs checks.
-- Preserves frontend validation readiness with safe skip behavior when tooling is absent.
+- Frontend validation runs ESLint, Jest, and Playwright (chromium); any failure fails the run. Jest/E2E are skipped only in `--quick` mode or when scripts/specs are absent.
 
 ### `scripts/generate_tests.py`
 

@@ -66,8 +66,13 @@ pytest --cov=collab --cov=scripts --cov-report=term-missing tests/backend
 
 1. Place new backend tests in `tests/backend/unit/`.
 2. Place integration tests in `tests/backend/integration/`.
-3. Place frontend JS tests in `tests/frontend/jest/`.
-4. Place frontend E2E tests in `tests/frontend/playwright/`.
+3. Place frontend JS unit tests in `tests/frontend/unit/` (see `jest.config.cjs` for `testMatch` and coverage paths).
+4. Frontend testing stack (all required before merge):
+   - **Jest unit:** `collab/dashboard/dashboard-format.js` + `tests/frontend/unit/` — run `npm test`.
+   - **Playwright mock E2E/visual:** dense fixtures (16 active / 30 history + pagination) in `dashboard-seed-data.js`, `dashboard.spec.js`.
+   - **Playwright live smoke:** `playwright-live.html` (same injection as `collab dashboard`); `.env` / CI env via `test-utils.js` (python-dotenv parity, inline `#` comments).
+   - **Schema/RLS contract:** `supabase-contract.spec.js` — PostgREST column checks; no manual pre-release API probing.
+   - **CI:** repository secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY`, optional `SUPABASE_SERVICE_ROLE_KEY` (see CONTRIBUTING).
 5. Follow the `test_<module>_<function>.py` naming convention.
 6. Use Arrange-Act-Assert pattern.
 

@@ -315,11 +315,9 @@ collab/
 │   │   ├── functional/         # Functional tests
 │   │   ├── integration/        # Integration tests
 │   │   ├── security/           # Security tests
-│   │   ├── performance/        # Performance tests
-│   │   └── reliability/        # Reliability tests
+│   │   └── (performance/ and reliability/ removed — empty placeholders deleted for clean/optimized structure)
 │   └── frontend/
-│       ├── jest/               # Frontend unit placeholder
-│       └── playwright/         # Frontend e2e placeholder
+│       └── playwright/         # E2E + visual regression (config, CI job, helpers, snapshots, deterministic fixtures)
 ├── scripts/
 │   ├── setup-dev.ps1           # Windows dev setup
 │   ├── setup.sh                # Linux/macOS setup
@@ -468,6 +466,20 @@ python -m build
 ## License
 
 MIT License — see LICENSE file for details.
+
+---
+
+## Documentation
+
+| Document                                      | Description                              |
+| --------------------------------------------- | ---------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)       | System design and data flow              |
+| [API.md](docs/API.md)                         | CLI overview and environment variables   |
+| [CLI_REFERENCE.md](docs/CLI_REFERENCE.md)     | Full command reference                   |
+| [SECURITY.md](docs/SECURITY.md)               | Subprocess hardening and secret handling |
+| [PERFORMANCE.md](docs/PERFORMANCE.md)         | Validation and watcher tuning            |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and fixes                  |
+| [collab_roadmap.md](docs/collab_roadmap.md)   | Future enhancements                      |
 
 ---
 

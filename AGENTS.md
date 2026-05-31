@@ -163,20 +163,19 @@ python scripts/validate_code.py
 
 - Backend total coverage: >=85 percent
 - Backend diff coverage on changed lines: >=92 percent
-- Frontend checks remain enabled in scripts even when no frontend tests exist yet
+- Frontend checks (ESLint + Playwright E2E/visual) remain enabled; real tests exist under `tests/frontend/playwright/`
 
 ### Test Organization
 
-Tests must follow this structure:
+Tests must follow this structure (cleaned of empty placeholder directories for maintainability, accuracy, and user preference for optimized project layout; only directories containing real tests or test assets are listed):
 
-- `tests/backend/unit/`
+- `tests/backend/unit/` (module-grouped subdirectories under it—lock_client/, live_locks_watcher/, scripts/—for scalable organization of the 900+ tests)
 - `tests/backend/functional/`
 - `tests/backend/integration/`
 - `tests/backend/security/`
-- `tests/backend/performance/`
-- `tests/backend/reliability/`
-- `tests/frontend/jest/`
-- `tests/frontend/playwright/`
+- `tests/frontend/unit/` (Jest — `dashboard-format.js` helpers)
+- `tests/frontend/playwright/` (E2E + visual + live smoke + Supabase contract; dense seeded fixtures)
+- `tests/packaging/` (packaging/install smoke tests)
 
 ---
 
