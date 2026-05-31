@@ -17,6 +17,12 @@ const { execSync } = require("child_process");
 const TEST_PORT = 8000;
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const COLLAB_DIR = path.join(PROJECT_ROOT, ".collab");
+const PLAYWRIGHT_LIVE_DASHBOARD = path.join(
+  PROJECT_ROOT,
+  "collab",
+  "dashboard",
+  "playwright-live.html",
+);
 
 /**
  * Force kill any process listening on port.
@@ -115,6 +121,11 @@ async function globalTeardown() {
 
   // Clean up any lock artifacts left by E2E tests
   cleanupCollabTestArtifacts();
+
+  if (fs.existsSync(PLAYWRIGHT_LIVE_DASHBOARD)) {
+    fs.unlinkSync(PLAYWRIGHT_LIVE_DASHBOARD);
+    console.warn("✅ Removed generated live dashboard HTML.");
+  }
 
   console.warn("\n✅ Global teardown complete.\n");
 }

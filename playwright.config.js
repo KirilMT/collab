@@ -1,6 +1,7 @@
 const { defineConfig, devices } = require("@playwright/test");
 const fs = require("fs");
 const path = require("path");
+const { stripEnvValue } = require("./tests/frontend/playwright/test-utils");
 
 function loadEnvFile() {
   const envPath = path.resolve(__dirname, ".env");
@@ -12,7 +13,7 @@ function loadEnvFile() {
       if (trimmed && !trimmed.startsWith("#")) {
         const [key, ...valueParts] = trimmed.split("=");
         if (key && valueParts.length > 0) {
-          env[key.trim()] = valueParts.join("=").trim();
+          env[key.trim()] = stripEnvValue(valueParts.join("="));
         }
       }
     }
