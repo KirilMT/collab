@@ -35,7 +35,7 @@ function getStateDir(workspaceRoot) {
       }
     }
     return dir;
-  } catch (_e) {
+  } catch {
     return os.tmpdir();
   }
 }
@@ -292,7 +292,7 @@ function getVSCodeWindowPid() {
       }
     }
     return process.pid;
-  } catch (_e) {
+  } catch {
     return process.pid;
   }
 }
@@ -391,7 +391,17 @@ async function updateStatusBar() {
       .eq("file_path", activeFile)
       .limit(1);
 
-    logToCollab(`Status bar check for ${activeFile}: found ${data ? data.length : 0} locks. Error: ${error ? JSON.stringify(error) : "none"}`);
+    if (error) {
+      logToCollab(
+        `Status bar check for ${activeFile}: found ${data ? data.length : 0} locks. Error: ${JSON.stringify(error)}`,
+        "DEBUG",
+      );
+    } else {
+      logToCollab(
+        `Status bar check for ${activeFile}: found ${data ? data.length : 0} lock(s)`,
+        "DEBUG",
+      );
+    }
 
     if (error || !data || data.length === 0) {
       statusBarItem.text = "$(unlock) Unlocked";
@@ -476,7 +486,11 @@ function subscribeToChanges() {
         "postgres_changes",
         { event: "*", schema: "public", table: "file_locks" },
         (payload) => {
-          logToCollab(`Realtime event received: ${payload.eventType} on ${payload.new?.file_path || "unknown"}`);
+          const eventPath =
+            payload.new?.file_path || payload.old?.file_path || "unknown";
+          logToCollab(
+            `Realtime event received: ${payload.eventType} on ${eventPath}`,
+          );
           updateStatusBar();
           if (
             payload.eventType === "INSERT" ||
@@ -580,7 +594,7 @@ function showStartupNotification() {
 
   try {
     showStartupNotificationOnce(msg, JSON.stringify(stats));
-  } catch (e) {
+  } catch {
     try {
       vscode.window.showInformationMessage(msg);
     } catch (e2) {

@@ -48,6 +48,30 @@ See `AGENTS.md` for agent terminal guidance.
 
 ---
 
+## Locks visible in Supabase but dashboard / `collab active` show zero
+
+**Symptoms:** Row exists in Supabase **Table Editor** for `file_locks`, VS Code status bar may show the lock, but the **Collaborative Explorer** dashboard lists **0 active locks**, or `collab active` printed **No active locks** earlier.
+
+**Common causes:**
+
+1. **Stale dashboard tab after changing `.env`** — The watcher bakes an initial config into the temp dashboard HTML at startup. Older builds kept that snapshot until restart. Current dashboards reload `/collab-runtime-config.json` on each sync; still prefer **`collab dashboard`** or click **Sync** after editing `.env`, and confirm the header chip shows your new project id (subdomain before `.supabase.co`).
+2. **`collab` not from this repo’s venv** — Use `.\.venv\Scripts\collab.exe active` (Windows) or activate `.venv` first. A global `collab` on `PATH` may miss `.env` or use another install.
+3. **Timing** — `collab active` queries the database directly; if you ran it before the watcher acquired locks, run it again after saving the file.
+4. **Schema / Realtime** — Apply `supabase/schema.sql` on the new project (RLS + `supabase_realtime` publication for `file_locks`).
+
+**Verify:**
+
+```powershell
+.\.venv\Scripts\collab.exe active
+.\.venv\Scripts\collab.exe status testFile
+```
+
+Check `logs/collab.log` for `🔒 [LOCKED] your-file` and extension lines like `found 1 lock(s)` (not `Error: none` — that old message only meant “no API error”).
+
+**After migrating Supabase projects:** Update `.env`, restart the watcher (`collab daemon-stop` then save a file or reload the IDE), open a fresh dashboard URL from `logs/collab.log`, and click **Sync**.
+
+---
+
 ## Supabase Free tier project paused (inactive 7+ days)
 
 **Symptoms:** Dashboard shows **Paused**, API returns errors, `collab active` fails until you click **Restore** in the [Supabase dashboard](https://supabase.com/dashboard).

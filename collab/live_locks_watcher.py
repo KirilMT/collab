@@ -707,6 +707,7 @@ def _start_dashboard_server() -> str | None:
     url, _html_path = prepare_dashboard_server(
         _RESOURCE_ROOT,
         injected,
+        project_root=_PROJECT_ROOT,
         log_error=logger.warning,
         log_warning=logger.debug,
     )
