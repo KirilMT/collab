@@ -49,6 +49,90 @@ def test_prepare_dashboard_server_serves_sibling_static_assets(monkeypatch, tmp_
             pass
 
 
+def test_repo_name_from_remote_url_parses_https_and_scp():
+    assert (
+        mod._repo_name_from_remote_url("https://github.com/KirilMT/collab.git")
+        == "collab"
+    )
+    assert (
+        mod._repo_name_from_remote_url("git@github.com:KirilMT/collab.git") == "collab"
+    )
+    assert mod._repo_name_from_remote_url("") is None
+
+
+def test_resolve_project_display_name_precedence(tmp_path, monkeypatch):
+    """Env override wins; otherwise git remote repo name is used."""
+    monkeypatch.delenv("COLLAB_PROJECT_NAME", raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "from-pyproject"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: "from-git")
+    assert mod.resolve_project_display_name(str(tmp_path)) == "from-git"
+
+    (tmp_path / ".env").write_text(
+        "COLLAB_PROJECT_NAME=My Custom App\n",
+        encoding="utf-8",
+    )
+    from dotenv import dotenv_values
+
+    vals = dict(dotenv_values(tmp_path / ".env"))
+    assert mod.resolve_project_display_name(str(tmp_path), vals) == "My Custom App"
+
+
+def test_resolve_project_display_name_pyproject_fallback(tmp_path, monkeypatch):
+    monkeypatch.delenv("COLLAB_PROJECT_NAME", raising=False)
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: None)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "collab-runtime"\n',
+        encoding="utf-8",
+    )
+    assert mod.resolve_project_display_name(str(tmp_path)) == "collab-runtime"
+
+
+def test_resolve_project_display_name_package_json_fallback(tmp_path, monkeypatch):
+    monkeypatch.delenv("COLLAB_PROJECT_NAME", raising=False)
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: None)
+    (tmp_path / "package.json").write_text('{"name": "pkg-name"}\n', encoding="utf-8")
+    assert mod.resolve_project_display_name(str(tmp_path)) == "pkg-name"
+
+
+def test_name_from_pyproject_handles_invalid_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("not valid {{{\n", encoding="utf-8")
+    assert mod._name_from_pyproject(str(tmp_path)) is None
+
+
+def test_name_from_package_json_handles_invalid_json(tmp_path):
+    (tmp_path / "package.json").write_text("{bad json", encoding="utf-8")
+    assert mod._name_from_package_json(str(tmp_path)) is None
+
+
+def test_name_from_git_remote_parses_config_output(tmp_path, monkeypatch):
+    from collab import safe_subprocess
+
+    class _Cap:
+        ok = True
+        timed_out = False
+        stdout = b"https://github.com/org/demo.git\n"
+
+    monkeypatch.setattr(safe_subprocess, "capture", lambda *a, **k: _Cap())
+    monkeypatch.setattr(safe_subprocess, "decode_output", lambda b: b.decode("utf-8"))
+    assert mod._name_from_git_remote(str(tmp_path)) == "demo"
+
+
+def test_name_from_git_remote_returns_none_when_git_fails(tmp_path, monkeypatch):
+    from collab import safe_subprocess
+
+    class _Cap:
+        ok = False
+        timed_out = False
+        stdout = b""
+
+    monkeypatch.setattr(safe_subprocess, "capture", lambda *a, **k: _Cap())
+    assert mod._name_from_git_remote(str(tmp_path)) is None
+
+
 def test_runtime_config_endpoint_serves_fresh_env(monkeypatch, tmp_path):
     """Dashboard sync can reload Supabase credentials from project .env."""
     dash_dir = tmp_path / "dashboard"
@@ -89,6 +173,7 @@ def test_runtime_config_endpoint_serves_fresh_env(monkeypatch, tmp_path):
     assert payload["url"] == "https://fresh.supabase.co"
     assert payload["anonKey"] == "anon-fresh"
     assert payload["user"] == "tester"
+    assert payload["projectName"] == tmp_path.name
 
     os.unlink(html)
 

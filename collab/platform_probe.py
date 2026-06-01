@@ -50,7 +50,7 @@ def _run_platform(
         "timeout": timeout,
         "text": text,
     }
-    if sys.platform == "win32":
+    if os.name == "nt":
         kwargs["creationflags"] = _WIN_CREATION_FLAGS
     try:
         completed = sp.run(list(argv), capture_output=True, **kwargs)

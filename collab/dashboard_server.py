@@ -15,6 +15,7 @@ import os
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.parse
 from typing import Any, Callable, Optional, Tuple
 
@@ -22,6 +23,98 @@ logger = logging.getLogger(__name__)
 
 DASHBOARD_TEMP_PREFIX = ".collab-dashboard-"
 RUNTIME_CONFIG_PATH = "/collab-runtime-config.json"
+
+
+def _repo_name_from_remote_url(url: str) -> Optional[str]:
+    """Extract repo folder name from HTTPS or SCP-style git remote URLs."""
+    cleaned = (url or "").strip().rstrip("/")
+    if not cleaned:
+        return None
+    if cleaned.endswith(".git"):
+        cleaned = cleaned[:-4]
+    if ":" in cleaned and "@" in cleaned.split(":", 1)[0]:
+        cleaned = cleaned.rsplit(":", 1)[-1]
+    tail = cleaned.rsplit("/", 1)[-1].strip()
+    return tail or None
+
+
+def _name_from_pyproject(project_root: str) -> Optional[str]:
+    """Return ``[project].name`` from ``pyproject.toml`` when present."""
+    path = os.path.join(project_root, "pyproject.toml")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+        name = data.get("project", {}).get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    except (OSError, ValueError, TypeError, tomllib.TOMLDecodeError) as exc:
+        logger.debug("Could not read pyproject.toml project name: %s", exc)
+    return None
+
+
+def _name_from_package_json(project_root: str) -> Optional[str]:
+    """Return ``name`` from ``package.json`` when present."""
+    path = os.path.join(project_root, "package.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.debug("Could not read package.json name: %s", exc)
+    return None
+
+
+def _name_from_git_remote(project_root: str) -> Optional[str]:
+    """Return the repository folder name from ``remote.origin.url`` (git config)."""
+    from collab import safe_subprocess
+
+    captured = safe_subprocess.capture(
+        ["git", "config", "--get", "remote.origin.url"],
+        policy="git",
+        cwd=project_root,
+        timeout=5,
+    )
+    if not captured.ok or captured.timed_out:
+        return None
+    remote = safe_subprocess.decode_output(captured.stdout).strip()
+    return _repo_name_from_remote_url(remote)
+
+
+def resolve_project_display_name(
+    project_root: str,
+    file_vals: Optional[dict[str, Any]] = None,
+) -> str:
+    """Return a human-friendly label for the repository Collab is serving.
+
+    Precedence (repository-first, as shown in the dashboard header):
+
+    1. ``COLLAB_PROJECT_NAME`` (``.env`` or environment)
+    2. Git ``origin`` remote repository name (e.g. ``collab`` from ``.../collab.git``)
+    3. ``pyproject.toml`` ``[project].name``
+    4. ``package.json`` ``name``
+    5. Basename of *project_root*
+    """
+    vals = file_vals if file_vals is not None else {}
+    override = vals.get("COLLAB_PROJECT_NAME") or os.getenv("COLLAB_PROJECT_NAME") or ""
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+
+    for resolver in (
+        lambda: _name_from_git_remote(project_root),
+        lambda: _name_from_pyproject(project_root),
+        lambda: _name_from_package_json(project_root),
+    ):
+        name = resolver()
+        if name:
+            return name
+
+    return os.path.basename(os.path.abspath(project_root)) or "project"
 
 
 def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
@@ -64,6 +157,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     state_dir = state_override or os.path.join(project_root, ".collab")
     agent_id = agent_identity.resolve_agent_id(state_dir)
     agent_label = agent_identity.resolve_agent_label()
+    project_name = resolve_project_display_name(project_root, file_vals)
     return {
         "url": url,
         "anonKey": anon,
@@ -71,6 +165,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
         "user": user,
         "agentId": agent_id,
         "agentLabel": agent_label,
+        "projectName": project_name,
     }
 
 
@@ -234,7 +329,12 @@ def prepare_dashboard_server(
     log_warning: Callable[[str, Any], None] = logger.warning,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Write injected HTML, start server from dashboard dir; return (url, path)."""
-    html_path = write_injected_dashboard_html(resource_root, injected)
+    env_root = project_root or resource_root
+    enriched = {
+        **injected,
+        "projectName": resolve_project_display_name(env_root),
+    }
+    html_path = write_injected_dashboard_html(resource_root, enriched)
     if not html_path:
         return None, None
 
