@@ -19,7 +19,8 @@ def test_require_pid_rejects_invalid():
         platform_probe.get_cmdline(0)
 
 
-def test_tasklist_image_rejects_unknown():
+def test_tasklist_image_rejects_unknown(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
     with pytest.raises(ValueError):
         platform_probe.tasklist_csv_for_image("cmd.exe")
 

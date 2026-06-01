@@ -917,6 +917,8 @@ def test_daemon_start_win32_exception_and_fallback(monkeypatch):
     # Prevent _get_parent_ide_pid from making its own subprocess calls
     monkeypatch.setattr(client, "_get_parent_ide_pid", lambda: (None, "unknown"))
     monkeypatch.setattr(sys, "platform", "win32")
+    # safe_subprocess passes creationflags only when os.name == "nt" (real host).
+    monkeypatch.setattr(os, "name", "nt")
 
     def mock_open(*args, **kwargs):
         raise OSError("failed")
