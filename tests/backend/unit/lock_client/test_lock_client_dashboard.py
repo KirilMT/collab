@@ -329,9 +329,7 @@ def test_prepare_dashboard_server_cli_migrated(monkeypatch, tmp_path):
     html = d / "index.html"
     html.write_text("<html>dashboard</html>")
 
-    # Fake ThreadingHTTPServer and Thread so we don't actually bind a port
     import http.server as _http
-    import threading as _threading
 
     class FakeServer:
         def __init__(self, addr, handler):
@@ -343,15 +341,7 @@ def test_prepare_dashboard_server_cli_migrated(monkeypatch, tmp_path):
         def shutdown(self):
             return None
 
-    class FakeThread:
-        def __init__(self, target, daemon=True):
-            self._target = target
-
-        def start(self):
-            return None
-
     monkeypatch.setattr(_http, "ThreadingHTTPServer", FakeServer)
-    monkeypatch.setattr(_threading, "Thread", FakeThread)
 
     # Make socket.create_connection succeed immediately
     class DummyConn:

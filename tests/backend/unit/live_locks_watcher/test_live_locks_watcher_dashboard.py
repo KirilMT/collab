@@ -88,9 +88,7 @@ def test_start_dashboard_server_migrated(tmp_path, monkeypatch):
     (d / "index.html").write_text("<html>ok</html>")
     monkeypatch.setattr(mod, "_RESOURCE_ROOT", str(tmp_path))
 
-    # Monkeypatch the ThreadingHTTPServer to avoid binding sockets
     import http.server as _http
-    import threading as _threading
 
     class FakeServer:
         def __init__(self, addr, handler):
@@ -102,15 +100,7 @@ def test_start_dashboard_server_migrated(tmp_path, monkeypatch):
         def shutdown(self):
             return None
 
-    class FakeThread:
-        def __init__(self, target, daemon=True):
-            self._target = target
-
-        def start(self):
-            return None
-
     monkeypatch.setattr(_http, "ThreadingHTTPServer", FakeServer)
-    monkeypatch.setattr(_threading, "Thread", FakeThread)
 
     url = mod._start_dashboard_server()
     assert url is not None

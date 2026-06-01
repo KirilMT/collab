@@ -807,19 +807,37 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
 
         function updateProjectInfo() {
             const el = document.getElementById("project-info");
-            if (!SUPABASE_URL) {
+            const repoName = (runtimeCfg.projectName || "").trim();
+            let supabaseRef = "";
+            if (SUPABASE_URL) {
+                try {
+                    supabaseRef = new URL(SUPABASE_URL).hostname.replace(
+                        ".supabase.co",
+                        ""
+                    );
+                } catch (e) {
+                    supabaseRef = "";
+                }
+            }
+            const display = repoName || supabaseRef;
+            if (!display) {
                 el.classList.add("hidden");
                 el.textContent = "";
                 return;
             }
-            try {
-                const host = new URL(SUPABASE_URL).hostname.replace(".supabase.co", "");
-                el.textContent = host;
-                el.title = "Supabase project: " + SUPABASE_URL;
-                el.classList.remove("hidden");
-            } catch (e) {
-                el.classList.add("hidden");
+            el.textContent = display;
+            const tip = [];
+            if (repoName) {
+                tip.push("Repository project: " + repoName);
             }
+            if (supabaseRef) {
+                tip.push("Supabase project: " + supabaseRef);
+            }
+            if (SUPABASE_URL) {
+                tip.push(SUPABASE_URL);
+            }
+            el.title = tip.join("\n");
+            el.classList.remove("hidden");
         }
 
         async function syncRuntimeConfig() {
