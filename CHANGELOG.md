@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.4.1](https://github.com/KirilMT/collab/compare/v0.4.0...v0.4.1) (2026-06-01)
 
-
 ### Bug Fixes
 
-* **dashboard:** show repository name instead of Supabase project ref ([#60](https://github.com/KirilMT/collab/issues/60)) ([9325863](https://github.com/KirilMT/collab/commit/93258632d680765e40c5f983e0ea1316f41fe979))
+- **dashboard:** show repository name instead of Supabase project ref ([#60](https://github.com/KirilMT/collab/issues/60)) ([9325863](https://github.com/KirilMT/collab/commit/93258632d680765e40c5f983e0ea1316f41fe979))
 
 ## [0.4.0](https://github.com/KirilMT/collab/compare/v0.3.1...v0.4.0) (2026-06-01)
 
