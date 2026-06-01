@@ -41,9 +41,7 @@ mod = load_lock_client_module()
 
 
 def test_is_process_alive_win32_no_psutil_ctypes_fallback(monkeypatch):
-    import sys as _sys
-
-    _sys.platform = "win32"
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
 
     fake_ctypes = types.SimpleNamespace(
@@ -66,9 +64,7 @@ def test_is_process_alive_win32_no_psutil_ctypes_fallback(monkeypatch):
 
 
 def test_is_process_alive_win32_process_exited(monkeypatch):
-    import sys as _sys
-
-    _sys.platform = "win32"
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
 
     fake_ctypes = types.SimpleNamespace(
@@ -91,9 +87,7 @@ def test_is_process_alive_win32_process_exited(monkeypatch):
 
 
 def test_is_process_alive_win32_access_denied(monkeypatch):
-    import sys as _sys
-
-    _sys.platform = "win32"
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
 
     class FakeKernel32:
@@ -122,9 +116,7 @@ def test_is_process_alive_win32_access_denied(monkeypatch):
 
 
 def test_is_process_alive_win32_tasklist_fallback(monkeypatch):
-    import sys as _sys
-
-    _sys.platform = "win32"
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
 
     class FailKernel32:

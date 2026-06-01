@@ -22,6 +22,15 @@ logger = logging.getLogger("collab.safe_subprocess")
 DEFAULT_CAPTURE_TIMEOUT_S = 30.0
 DEFAULT_RUN_TIMEOUT_S = 60.0
 
+# CREATE_NO_WINDOW — hide console for background git probes on Windows.
+_WIN_CREATE_NO_WINDOW = 0x08000000
+
+
+def _host_supports_creationflags() -> bool:
+    """True only on a real Windows host (not ``sys.platform`` test doubles)."""
+    return os.name == "nt"
+
+
 # Git subcommands used by lock_client / live_locks_watcher.
 _ALLOWED_GIT_SUBCOMMANDS = frozenset(
     {
@@ -229,8 +238,8 @@ def capture(
         kwargs["env"] = dict(env)
     if text:
         kwargs["text"] = True
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000
+    if _host_supports_creationflags():
+        kwargs["creationflags"] = _WIN_CREATE_NO_WINDOW
     try:
         out = sp.check_output(list(safe_argv), **kwargs)
         return CaptureResult(
@@ -271,8 +280,8 @@ def run(
     kwargs: dict[str, Any] = {"cwd": cwd, "timeout": timeout}
     if capture_output:
         kwargs["capture_output"] = True
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000
+    if _host_supports_creationflags():
+        kwargs["creationflags"] = _WIN_CREATE_NO_WINDOW
     try:
         completed = sp.run(list(safe_argv), **kwargs)
         return RunResult(
@@ -301,7 +310,7 @@ def spawn_background(
         "cwd": cwd,
         "close_fds": True,
     }
-    if sys.platform == "win32":
+    if _host_supports_creationflags():
         popen_kwargs["creationflags"] = creationflags
     else:
         popen_kwargs["start_new_session"] = start_new_session

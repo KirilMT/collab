@@ -249,6 +249,22 @@ def test_validate_watcher_pythonw_resolves_executable(monkeypatch, tmp_path):
     assert argv[0].endswith("pythonw.exe")
 
 
+def test_capture_ignores_spoofed_sys_platform_on_non_windows_host(monkeypatch):
+    """``creationflags`` must follow ``os.name``, not a leaked ``sys.platform``."""
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    monkeypatch.setattr(safe_subprocess.sys, "platform", "win32")
+    monkeypatch.setattr(safe_subprocess.os, "name", "posix")
+    seen: dict = {}
+
+    def fake_check_output(argv, **kwargs):
+        seen.update(kwargs)
+        return b""
+
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
+    safe_subprocess.capture(["git", "status"], policy="git")
+    assert "creationflags" not in seen
+
+
 def test_capture_timeout_and_env(monkeypatch):
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
 
@@ -278,9 +294,9 @@ def test_run_timeout(monkeypatch):
 
 
 def test_spawn_background_unix(monkeypatch):
-    """Unix ``start_new_session`` path is selected by platform, not host OS."""
+    """Unix ``start_new_session`` path is selected on non-Windows hosts."""
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
-    monkeypatch.setattr(safe_subprocess.sys, "platform", "linux")
+    monkeypatch.setattr(safe_subprocess.os, "name", "posix")
     seen: dict = {}
 
     def fake_popen(argv, **kwargs):
@@ -310,9 +326,9 @@ def test_decode_output():
 
 
 def test_spawn_background_windows(monkeypatch):
-    """Windows ``creationflags`` path is selected by platform, not host OS."""
+    """Windows ``creationflags`` path is selected on Windows hosts (``os.name``)."""
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
-    monkeypatch.setattr(safe_subprocess.sys, "platform", "win32")
+    monkeypatch.setattr(safe_subprocess.os, "name", "nt")
     seen: dict = {}
 
     def fake_popen(argv, **kwargs):
