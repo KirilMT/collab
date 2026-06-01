@@ -82,7 +82,24 @@ def _run_cli() -> None:
 
     setup_collab_logging(collab_dir=_COLLAB_ROOT)
 
-    parser = ArgumentParser(description="Collaborative File Lock Manager (Supabase)")
+    common = ArgumentParser(add_help=False)
+    common.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent identity for this session (or set COLLAB_AGENT_ID)",
+    )
+    common.add_argument(
+        "--agent-label",
+        dest="agent_label",
+        default=None,
+        help="Human-readable agent label (or set COLLAB_AGENT_LABEL)",
+    )
+
+    parser = ArgumentParser(
+        description="Collaborative File Lock Manager (Supabase)",
+        parents=[common],
+    )
     sub = parser.add_subparsers(dest="command")
 
     # acquire
@@ -94,8 +111,16 @@ def _run_cli() -> None:
     rel = sub.add_parser("release", help="Release a lock on a file")
     rel.add_argument("file_path")
 
+    # whoami
+    sub.add_parser("whoami", help="Show resolved developer and agent identity")
+
     # active
-    sub.add_parser("active", help="List all active locks")
+    active_parser = sub.add_parser("active", help="List all active locks")
+    active_parser.add_argument(
+        "--mine",
+        action="store_true",
+        help="Show only locks held by this developer and agent",
+    )
 
     # status
     st = sub.add_parser("status", help="Check lock status of a file")
@@ -208,8 +233,16 @@ def _run_cli() -> None:
     )
 
     args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
     local_only = args.command in ("daemon-status", "daemon-stop")
-    client = LockClient(local_only=local_only)
+    client = LockClient(
+        local_only=local_only,
+        agent_id=getattr(args, "agent_id", None),
+        agent_label=getattr(args, "agent_label", None),
+    )
 
     # Keep CLI output clean by silencing noisy dependency logs (httpx, urllib3,
     # postgrest, supabase) for user-facing commands that can hit network APIs.
@@ -227,13 +260,30 @@ def _run_cli() -> None:
         "reconcile",
         "history",
         "history-prune",
+        "whoami",
     }
     quiet_ctx = (
         _quiet_console_loggers() if args.command in quiet_commands else nullcontext()
     )
 
     with quiet_ctx:
-        if args.command == "acquire":
+        if args.command == "whoami":
+            from . import agent_identity
+
+            summary = agent_identity.identity_summary(
+                client.developer_id,
+                client.agent_id,
+                client.agent_label,
+            )
+            print(f"Developer: {summary['developer_id']}")
+            print(f"Mode:      {summary['mode']}")
+            if summary["agent_id"]:
+                print(f"Agent ID:    {summary['agent_id']}")
+            if summary["agent_label"]:
+                print(f"Agent label: {summary['agent_label']}")
+            sys.exit(0)
+
+        elif args.command == "acquire":
             ok, msg = client.acquire(args.file_path, reason=args.reason)
             if ok:
                 print(f"✓ Locked {args.file_path} (ID: {msg})")
@@ -267,12 +317,22 @@ def _run_cli() -> None:
                     "service is reachable."
                 )
                 sys.exit(1)
+            if getattr(args, "mine", False):
+                locks = [lk for lk in locks if client._lock_owned_by_me(lk)]
+
             if not locks:
                 print("No active locks.")
             else:
+                from . import agent_identity
+
                 for lk in locks:
+                    owner = agent_identity.format_lock_owner(
+                        str(lk.get("developer_id", "?")),
+                        lk.get("agent_id"),
+                        lk.get("agent_label"),
+                    )
                     print(
-                        f"  {lk.get('file_path')} — @{lk.get('developer_id')} "
+                        f"  {lk.get('file_path')} — {owner} "
                         f"(branch: {lk.get('branch_name', 'N/A')}, "
                         f"reason: {lk.get('reason', 'N/A')})"
                     )
@@ -281,9 +341,17 @@ def _run_cli() -> None:
             _ensure_watcher_running(client, "status")
             info = client.get_lock_status(args.file_path)
             if info.get("is_locked"):
-                locked_by = info.get("locked_by")
+                from . import agent_identity
+
+                locked_by = agent_identity.format_lock_owner(
+                    str(info.get("locked_by", "?")),
+                    info.get("locked_by_agent_id"),
+                    info.get("locked_by_agent_label"),
+                )
                 acquired_at = info.get("acquired_at")
-                print(f"🔒 Locked by @{locked_by} since {acquired_at}")
+                can_edit = info.get("can_edit", False)
+                edit_note = " (you can edit)" if can_edit else ""
+                print(f"🔒 Locked by {locked_by} since {acquired_at}{edit_note}")
             else:
                 print("🔓 File is unlocked.")
 

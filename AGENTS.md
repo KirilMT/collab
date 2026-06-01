@@ -296,5 +296,5 @@ Workflow procedures are in `.agents/skills/`:
 
 ## Version
 
-**Version:** 0.2.2
-**Last Updated:** May 13, 2026
+**Version:** 0.3.2
+**Last Updated:** May 31, 2026

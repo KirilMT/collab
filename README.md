@@ -74,14 +74,37 @@ The setup script automatically:
 
 After setup, verify your `.env` at the project root has these values:
 
-| Variable                    | Description                                                     |
-| --------------------------- | --------------------------------------------------------------- |
-| `SUPABASE_URL`              | Your Supabase project URL (from Project Settings → API)         |
-| `SUPABASE_ANON_KEY`         | Anonymous/public key (from Project Settings → API)              |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (**required** for dashboard force-release)     |
-| `LOCK_STRICT`               | If `1`, git hooks block on lock errors. Default `0` (warn only) |
+| Variable                    | Description                                                      |
+| --------------------------- | ---------------------------------------------------------------- |
+| `SUPABASE_URL`              | Your Supabase project URL (from Project Settings → API)          |
+| `SUPABASE_ANON_KEY`         | Anonymous/public key (from Project Settings → API)               |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (**required** for dashboard force-release)      |
+| `LOCK_STRICT`               | If `1`, git hooks block on lock errors. Default `0` (warn only)  |
+| `COLLAB_AGENT_ID`           | Optional stable id for an AI agent session (multi-agent locking) |
+| `COLLAB_AGENT_LABEL`        | Optional display label (e.g. `refactor-auth`)                    |
+| `COLLAB_AGENT_MODE`         | Set to `1` to auto-generate/persist an agent id when unset       |
 
 > **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button. Without it, only your own locks can be released.
+
+### Multi-agent usage (same GitHub user, multiple AI agents)
+
+When one developer runs several AI agents in the same repo, give each agent its own identity so
+locks do not collide:
+
+```bash
+# Terminal / agent A
+set COLLAB_AGENT_ID=agent-refactor-auth
+collab whoami
+collab acquire src/auth.py --reason "Refactor auth"
+
+# Terminal / agent B (different id)
+set COLLAB_AGENT_ID=agent-fix-tests
+collab acquire src/auth.py   # conflict — locked by agent-refactor-auth
+```
+
+For existing Supabase projects, re-run the `acquire_lock` function and add the `agent_id` /
+`agent_label` columns from the updated [supabase/schema.sql](supabase/schema.sql) (fresh installs
+already include them).
 
 ### 4. Verify Setup
 

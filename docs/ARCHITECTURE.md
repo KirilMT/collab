@@ -63,13 +63,28 @@ Local state is stored in the `COLLAB_STATE_DIR` (default: `.collab/` or a tempor
 - **`file_locks_history` table**: An audit trail of all lock lifecycle events.
 - **`acquire_lock` RPC**: A PL/pgSQL function that ensures atomicity during acquisition to prevent race conditions.
 
+### Multi-agent identity (human + agent)
+
+Lock ownership is keyed on **`(developer_id, agent_id)`**:
+
+| Field          | Role                                                           |
+| -------------- | -------------------------------------------------------------- |
+| `developer_id` | Human / GitHub user (git `user.name` or `COLLAB_DEVELOPER_ID`) |
+| `agent_id`     | Stable per-agent run id (`COLLAB_AGENT_ID` or auto-generated)  |
+| `agent_label`  | Optional display name (`COLLAB_AGENT_LABEL`)                   |
+
+When `agent_id` is `NULL`, behavior matches the original human-only model. Two agents under the same
+human conflict on acquire; each agent has its own watcher PID file (`.daemon.<agent_id>.pid`) and
+session token seed. A human may `force-release` any lock held under their own `developer_id`
+(including other agents' locks) without an admin key.
+
 ---
 
 ## Security Model
 
 - **Authentication**: Uses Supabase anonymous keys for general operations and service-role keys for administrative tasks (force-release).
 - **Atomicity**: Guaranteed at the database level using unique constraints and stored procedures.
-- **Process Isolation**: The daemon uses PID files and cross-platform process checks (`psutil`) to ensure only one watcher runs per workspace.
+- **Process Isolation**: The daemon uses PID files and cross-platform process checks (`psutil`) to ensure one watcher per `(workspace, agent_id)` (or per workspace when no agent is set).
 
 ---
 

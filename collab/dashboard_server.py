@@ -58,11 +58,19 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
         or os.getenv("USER")
         or ""
     )
+    from . import agent_identity
+
+    state_override = os.getenv("COLLAB_STATE_DIR", "").strip()
+    state_dir = state_override or os.path.join(project_root, ".collab")
+    agent_id = agent_identity.resolve_agent_id(state_dir)
+    agent_label = agent_identity.resolve_agent_label()
     return {
         "url": url,
         "anonKey": anon,
         "serviceKey": service,
         "user": user,
+        "agentId": agent_id,
+        "agentLabel": agent_label,
     }
 
 

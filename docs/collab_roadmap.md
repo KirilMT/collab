@@ -52,20 +52,31 @@ _Updated May 31, 2026_
 
 ---
 
+## Recently shipped
+
+### Multi-agent locking (May 31, 2026)
+
+- Agent identity layered on `developer_id` (`agent_id`, `agent_label` columns + RPC)
+- `collab whoami`, `--agent-id`, `--agent-label`, `collab active --mine`
+- Per-agent daemon PID files; dashboard agent chips
+- Schema/RPC updates in `supabase/schema.sql` for `agent_id` / `agent_label`
+
+---
+
 ## Capabilities (shipped)
 
 The runtime is feature-complete and published. Current capabilities:
 
-| Area             | Summary                                                                  |
-| ---------------- | ------------------------------------------------------------------------ |
-| Runtime package  | `collab-runtime` on PyPI; `collab` and `collab-watcher` console scripts  |
-| Locking          | Atomic acquire/release, batch operations, status, history, reconcile     |
-| Daemon & watcher | Background watcher with lifecycle management and health checks           |
-| Editor support   | VS Code / Cursor extension and PyCharm watcher integration               |
-| Reliability      | Centralized safe subprocess layer, platform process probes, typed errors |
-| Security         | Bandit-clean runtime, subprocess invariants enforced in CI               |
-| Setup            | One-command dev/prod setup with idempotent, non-interactive modes        |
-| Documentation    | Architecture, API, CLI reference, security, performance, troubleshooting |
+| Area             | Summary                                                                     |
+| ---------------- | --------------------------------------------------------------------------- |
+| Runtime package  | `collab-runtime` on PyPI; `collab` and `collab-watcher` console scripts     |
+| Locking          | Atomic acquire/release, multi-agent identity, batch ops, history, reconcile |
+| Daemon & watcher | Background watcher with lifecycle management and health checks              |
+| Editor support   | VS Code / Cursor extension and PyCharm watcher integration                  |
+| Reliability      | Centralized safe subprocess layer, platform process probes, typed errors    |
+| Security         | Bandit-clean runtime, subprocess invariants enforced in CI                  |
+| Setup            | One-command dev/prod setup with idempotent, non-interactive modes           |
+| Documentation    | Architecture, API, CLI reference, security, performance, troubleshooting    |
 
 ---
 

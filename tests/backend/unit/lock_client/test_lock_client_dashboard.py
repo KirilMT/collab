@@ -407,7 +407,13 @@ def test_cli_force_release_all_and_cleanup_migrated(monkeypatch):
     class FakeLockClient:
         last = None
 
-        def __init__(self, local_only=False):
+        def __init__(
+            self,
+            local_only=False,
+            agent_id=None,
+            agent_label=None,
+            **kwargs,
+        ):
             FakeLockClient.last = self
             self.is_admin = True
 

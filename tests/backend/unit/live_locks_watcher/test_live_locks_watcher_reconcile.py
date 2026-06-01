@@ -429,6 +429,82 @@ def test_get_modified_and_unpushed_files_status_exception(monkeypatch):
     assert "collab/from_diff.py" in out
 
 
+def test_get_modified_and_unpushed_files_origin_main_fallback(monkeypatch):
+    """With no upstream, the watcher diffs committed work against origin/main."""
+    mod = load_watcher_module()
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+
+    def _git(argv, **_k):
+        joined = " ".join(argv)
+        if argv[1] == "status":
+            return ""
+        # No upstream configured.
+        if "symbolic-full-name" in joined and "@{u}" in joined:
+            return ""
+        # Current branch lookup.
+        if argv[1] == "rev-parse" and argv[2:] == ["--abbrev-ref", "HEAD"]:
+            return "feat/no-upstream"
+        # origin/<branch> missing, origin/main present.
+        if "--verify" in joined and "origin/feat/no-upstream" in joined:
+            return ""
+        if "--verify" in joined and "origin/main" in joined:
+            return "abc123"
+        if argv[1] == "diff":
+            assert "origin/main...HEAD" in joined
+            return "collab/lock_client.py"
+        return ""
+
+    patch_git_capture(monkeypatch, mod, _git)
+    monkeypatch.setattr(mod, "_normalize_path", lambda p, root: p)
+    monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    out = mod._get_modified_and_unpushed_files()
+    assert "collab/lock_client.py" in out
+
+
+def test_resolve_lock_diff_base_ref_none_when_no_remote(monkeypatch):
+    """When no upstream/branch/remote base exists, return None (status-only)."""
+    mod = load_watcher_module()
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+    patch_git_capture(monkeypatch, mod, lambda argv, **_k: "")
+    assert mod._resolve_lock_diff_base_ref() is None
+
+
+def test_resolve_lock_diff_base_ref_env_override(monkeypatch):
+    """COLLAB_LOCK_BASE_REF is used when set, present, and no upstream exists."""
+    mod = load_watcher_module()
+    monkeypatch.setenv("COLLAB_LOCK_BASE_REF", "origin/develop")
+
+    def _git(argv, **_k):
+        joined = " ".join(argv)
+        if "symbolic-full-name" in joined:
+            return ""
+        if "--verify" in joined and "origin/develop" in joined:
+            return "sha"
+        return ""
+
+    patch_git_capture(monkeypatch, mod, _git)
+    assert mod._resolve_lock_diff_base_ref() == "origin/develop"
+
+
+def test_resolve_lock_diff_base_ref_origin_branch(monkeypatch):
+    """Origin/<branch> is used when present and there is no upstream/override."""
+    mod = load_watcher_module()
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+
+    def _git(argv, **_k):
+        joined = " ".join(argv)
+        if "symbolic-full-name" in joined:
+            return ""
+        if argv[1:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feat/x"
+        if "--verify" in joined and "origin/feat/x" in joined:
+            return "sha"
+        return ""
+
+    patch_git_capture(monkeypatch, mod, _git)
+    assert mod._resolve_lock_diff_base_ref() == "origin/feat/x"
+
+
 def test_reconcile_on_startup_git_status_exception(monkeypatch):
     """_reconcile_on_startup exits cleanly when git status fails."""
     mod = load_watcher_module()

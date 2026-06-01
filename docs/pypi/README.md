@@ -43,7 +43,7 @@ pip install collab-runtime
 For a minimum-version install (ensures you get the latest compatible release):
 
 ```bash
-pip install "collab-runtime>=0.2.2"
+pip install "collab-runtime>=0.3.2"
 ```
 
 ---
@@ -66,9 +66,36 @@ SUPABASE_ANON_KEY=your_anon_key_here
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key   # Required for force-release
 DEVELOPER_ID=your_name                             # Optional, defaults to git user.name
 LOCK_STRICT=0                                      # 1 = block on lock errors, 0 = warn only
+COLLAB_AGENT_ID=agent-my-task                      # Optional: unique id per AI agent session
+COLLAB_AGENT_LABEL=refactor-auth                   # Optional display label
+COLLAB_AGENT_MODE=1                                # Auto-generate/persist agent id when unset
 ```
 
 > **Keep `SUPABASE_SERVICE_ROLE_KEY` private — never commit it to version control.**
+
+### Multi-agent usage (same GitHub user, multiple AI agents)
+
+When one developer runs several AI agents in the same repo, give each agent its own identity so
+locks do not collide (effective owner is `developer_id` + `agent_id`):
+
+```bash
+# Agent A
+export COLLAB_AGENT_ID=agent-refactor-auth
+collab whoami
+collab acquire src/auth.py --reason "Refactor auth"
+
+# Agent B (different id) — conflicts with A on the same file
+export COLLAB_AGENT_ID=agent-fix-tests
+collab acquire src/auth.py
+```
+
+CLI flags `--agent-id` and `--agent-label` override env vars. Use `collab active --mine` to list
+only locks held by the current human + agent pair.
+
+**Existing Supabase projects:** apply the `agent_id` / `agent_label` columns and updated
+`acquire_lock` function from
+[`supabase/schema.sql`](https://github.com/KirilMT/collab/blob/main/supabase/schema.sql) in the SQL
+Editor (fresh installs already include them).
 
 ### 3 — Verify Connection
 
@@ -83,8 +110,12 @@ If connected, this lists all currently active locks (empty on a fresh setup).
 ## CLI Reference
 
 ```bash
+# Show resolved developer and agent identity
+collab whoami
+
 # Show all active locks across the team
 collab active
+collab active --mine
 
 # Lock a file before editing
 collab acquire path/to/file.py --reason "Implementing feature X"

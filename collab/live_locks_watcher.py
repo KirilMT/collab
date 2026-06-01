@@ -11,7 +11,6 @@ Usage:
 from __future__ import annotations
 
 import atexit
-import hashlib
 import importlib.util
 import json
 import logging
@@ -29,7 +28,7 @@ from typing import Any, Callable, Optional, Protocol, cast
 
 from dotenv import load_dotenv
 
-from . import platform_probe, safe_subprocess
+from . import agent_identity, platform_probe, safe_subprocess
 
 # NOTE: do NOT import collab-local modules before the runtime root and sys.path
 # setup is complete. The import for `logging_config` is moved
@@ -236,8 +235,10 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 # PID file lives at project root unless overridden.
 # Tests can override this via COLLAB_PID_FILE env var to avoid interfering with
 # the live production watcher.
-PID_FILE = os.getenv("COLLAB_PID_FILE") or os.path.join(_COLLAB_ROOT, ".daemon.pid")
+PID_FILE = agent_identity.resolve_daemon_pid_path(_COLLAB_ROOT, None)
 DEVELOPER_ID = None
+AGENT_ID: Optional[str] = None
+AGENT_LABEL: Optional[str] = None
 
 # Ephemeral developer prefixes enforced in code (not via env) to avoid
 # accidental disabling of lock persistence. These accounts (e.g. CI/test)
@@ -292,17 +293,13 @@ def _get_developer_id() -> str:
     return os.getenv("USERNAME") or os.getenv("USER") or "unknown_user"
 
 
-def _get_session_token(dev_id: str) -> str:
-    """Return a stable session token for the current machine, project and user.
+def _get_session_token(dev_id: str, agent_id: Optional[str] = None) -> str:
+    """Return a stable session token for the current machine, project, user, and agent.
 
     Must NEVER fall back to a random value — a random token breaks cross-IDE re-adoption
     because it cannot be reconstructed. If derivation fails for any component, use a
     safe fallback value for that component rather than giving up entirely.
     """
-    try:
-        dev_id_norm = str(dev_id).strip().lower() if dev_id else "unknown"
-    except Exception:
-        dev_id_norm = "unknown"
     try:
         hostname = socket.gethostname().lower()
     except Exception:
@@ -312,8 +309,39 @@ def _get_session_token(dev_id: str) -> str:
     except Exception:
         p_root = _PROJECT_ROOT.lower().rstrip("\\/") if _PROJECT_ROOT else "project"
 
-    seed = f"{dev_id_norm}:{hostname}:{p_root}"
-    return hashlib.sha256(seed.encode()).hexdigest()[:16]
+    seed = agent_identity.session_token_seed(dev_id, agent_id, hostname, p_root)
+    return agent_identity.session_token_from_seed(seed)
+
+
+def _lock_owned_by_us(lock: dict) -> bool:
+    """Return True when *lock* belongs to this watcher (developer + agent)."""
+    if not DEVELOPER_ID:
+        return False
+    return agent_identity.lock_owned_by_client(lock, DEVELOPER_ID, AGENT_ID)
+
+
+def _scope_agent(query: Any) -> Any:
+    """Restrict a PostgREST query to the current agent_id."""
+    return agent_identity.apply_agent_filter(query, AGENT_ID)
+
+
+def _acquire_rpc_payload(
+    file_path: str,
+    branch: Optional[str],
+    reason: str,
+    lock_token: str,
+) -> dict[str, Any]:
+    """Build RPC parameters for acquire_lock including agent identity."""
+    return {
+        "p_file_path": file_path,
+        "p_developer_id": DEVELOPER_ID,
+        "p_branch_name": branch,
+        "p_reason": reason,
+        "p_lock_token": lock_token,
+        "p_is_ephemeral": _is_ephemeral_dev(DEVELOPER_ID or ""),
+        "p_agent_id": AGENT_ID,
+        "p_agent_label": AGENT_LABEL,
+    }
 
 
 def _is_same_machine_token(stored_token: str) -> bool:
@@ -350,20 +378,34 @@ def _is_same_machine_token(stored_token: str) -> bool:
     # Also try path variants (with/without trailing slash)
     path_variants = [p_root, p_root.rstrip("/\\"), p_root + "/", p_root + "\\"]
 
+    agent_candidates: list[Optional[str]] = [AGENT_ID]
+    if AGENT_ID is not None:
+        agent_candidates.append(None)
+
     seen_seeds: set[str] = set()
     for dev_id in set(candidates):
-        for p in path_variants:
-            seed = f"{dev_id}:{hostname}:{p}"
-            if seed in seen_seeds:
-                continue
-            seen_seeds.add(seed)
-            token = hashlib.sha256(seed.encode()).hexdigest()[:16]
-            if token == stored_token:
-                logger.debug(
-                    "Token matched same-machine variant: dev_id=%r path=%r", dev_id, p
-                )
-                return True
+        for agent in agent_candidates:
+            for p in path_variants:
+                seed = agent_identity.session_token_seed(dev_id, agent, hostname, p)
+                if seed in seen_seeds:
+                    continue
+                seen_seeds.add(seed)
+                token = agent_identity.session_token_from_seed(seed)
+                if token == stored_token:
+                    logger.debug(
+                        "Token matched same-machine variant: dev_id=%r "
+                        "agent=%r path=%r",
+                        dev_id,
+                        agent,
+                        p,
+                    )
+                    return True
     return False
+
+
+def _scoped_owned_query(query: Any) -> Any:
+    """Scope a PostgREST query to this watcher's developer_id and agent_id."""
+    return _scope_agent(query.eq("developer_id", DEVELOPER_ID))
 
 
 def _get_current_branch() -> str:
@@ -567,8 +609,7 @@ def _scan_remote_locks(client) -> None:
     filtered_added = {
         p
         for p in added
-        if p not in _local_owned_locks
-        and (owner_map.get(p, {}).get("developer_id") != DEVELOPER_ID)
+        if p not in _local_owned_locks and not _lock_owned_by_us(owner_map.get(p, {}))
     }
     if filtered_added:
         for fp in sorted(filtered_added):
@@ -617,27 +658,24 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
 
             res = client.rpc(
                 "acquire_lock",
-                {
-                    "p_file_path": fp,
-                    "p_developer_id": DEVELOPER_ID,
-                    "p_branch_name": branch,
-                    "p_reason": "Auto-Watch",
-                    "p_lock_token": SESSION_TOKEN,
-                    "p_is_ephemeral": _is_ephemeral_dev(DEVELOPER_ID),
-                },
+                _acquire_rpc_payload(fp, branch, "Auto-Watch", SESSION_TOKEN),
             ).execute()
             data = getattr(res, "data", None) or []
             if isinstance(data, list) and data and data[0].get("status") == "conflict":
                 owner = data[0].get("owner", "someone")
+                conflict_agent = data[0].get("agent_id")
+                owner_display = agent_identity.format_lock_owner(
+                    str(owner), conflict_agent, None
+                )
                 _active_conflicts.add(fp)
                 msg = (
-                    f"⚠️ CONFLICT: {fp} is locked by @{owner} -- "
+                    f"⚠️ CONFLICT: {fp} is locked by {owner_display} -- "
                     "your changes may cause a merge conflict."
                 )
                 log_msg = _color(msg, Fore.YELLOW) if _HAS_COLORAMA else msg
                 logger.warning(log_msg)
                 notify_msg = (
-                    f"{fp} is locked by @{owner}.\nCoordinate before committing."
+                    f"{fp} is locked by {owner_display}.\nCoordinate before committing."
                 )
                 _notify("Lock Conflict", notify_msg)
             else:
@@ -714,15 +752,44 @@ def _start_dashboard_server() -> str | None:
     return url
 
 
+def _resolve_lock_diff_base_ref() -> str | None:
+    """Return the git ref to diff against for committed-but-not-on-remote work.
+
+    Precedence mirrors ``LockClient._resolve_lock_diff_base_ref``: upstream ``@{u}``,
+    then ``COLLAB_LOCK_BASE_REF``, then ``origin/<branch>``, then origin/main|master.
+    Returns ``None`` when no suitable base ref exists.
+    """
+    if _git_capture_text(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+    ):
+        return "@{u}"
+
+    override = os.getenv("COLLAB_LOCK_BASE_REF", "").strip()
+    if override and _git_capture_text(["git", "rev-parse", "--verify", override]):
+        return override
+
+    branch = _git_capture_text(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch and branch != "HEAD":
+        remote_branch = f"origin/{branch}"
+        if _git_capture_text(["git", "rev-parse", "--verify", remote_branch]):
+            return remote_branch
+
+    for candidate in ("origin/main", "origin/master"):
+        if _git_capture_text(["git", "rev-parse", "--verify", candidate]):
+            return candidate
+    return None
+
+
 def _get_modified_and_unpushed_files() -> set[str]:
     """Return the set of files that are 'in progress' for this developer.
 
     Includes both:
     - Dirty/staged files (git status --porcelain)
-    - Committed but not yet pushed files (git diff @{u}..HEAD)
+    - Committed but not yet on the remote base (git diff <base>..HEAD), where the base
+      is the upstream when configured, otherwise origin/<branch> or origin/main.
 
-    This matches the definition used by lock_client.py to ensure both watchers
-    agree on which files should be locked.
+    This matches the definition used by lock_client.py to ensure both watchers agree on
+    which files should be locked.
     """
     result: set[str] = set()
 
@@ -738,22 +805,20 @@ def _get_modified_and_unpushed_files() -> set[str]:
     except Exception as exc:
         logger.warning("git status failed in file-change detection: %s", exc)
 
-    # Part 2: committed but unpushed files
+    # Part 2: committed but not on remote (upstream, origin/<branch>, or origin/main)
     try:
-        if not _git_capture_text(
-            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
-        ):
-            raise RuntimeError("no upstream")
-        diff_out = _git_capture_text(["git", "diff", "--name-only", "@{u}..HEAD"])
-        if diff_out:
-            for line in diff_out.splitlines():
-                p = _normalize_path(line.strip(), _PROJECT_ROOT)
-                if p and not _should_ignore_path(p):
-                    result.add(p)
+        base_ref = _resolve_lock_diff_base_ref()
+        if base_ref:
+            range_spec = "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
+            diff_out = _git_capture_text(["git", "diff", "--name-only", range_spec])
+            if diff_out:
+                for line in diff_out.splitlines():
+                    p = _normalize_path(line.strip(), _PROJECT_ROOT)
+                    if p and not _should_ignore_path(p):
+                        result.add(p)
     except Exception:
-        # No upstream configured or diff failed — silently fall back to
-        # status-only. This is safe: we just won't lock unpushed files,
-        # which is better than crashing.
+        # No base ref or diff failed — fall back to status-only. This is safe: we
+        # just won't lock committed-but-unpushed files, which beats crashing.
         pass
 
     return result
@@ -783,12 +848,7 @@ def _reconcile_on_startup(client) -> None:
 
     # Step A: Fetch existing owned locks from Supabase
     try:
-        res = (
-            client.table("file_locks")
-            .select("*")
-            .eq("developer_id", DEVELOPER_ID)
-            .execute()
-        )
+        res = _scoped_owned_query(client.table("file_locks").select("*")).execute()
         existing_locks = getattr(res, "data", None) or []
     except Exception as exc:
         logger.warning("Failed to fetch existing locks during reconciliation: %s", exc)
@@ -833,9 +893,11 @@ def _reconcile_on_startup(client) -> None:
                     # Re-adopt silently, but update the token so future checks use the
                     # current session token.
                     try:
-                        client.table("file_locks").update(
-                            {"lock_token": SESSION_TOKEN}
-                        ).eq("file_path", fp).eq("developer_id", DEVELOPER_ID).execute()
+                        _scoped_owned_query(
+                            client.table("file_locks")
+                            .update({"lock_token": SESSION_TOKEN})
+                            .eq("file_path", fp)
+                        ).execute()
                     except Exception as exc:
                         logger.warning(
                             "Failed to update lock_token for %s — "
@@ -856,9 +918,11 @@ def _reconcile_on_startup(client) -> None:
                 # Update the lock_token to the current session so future restarts can
                 # re-adopt this lock without hitting MULTI-SESSION.
                 try:
-                    client.table("file_locks").update({"lock_token": SESSION_TOKEN}).eq(
-                        "file_path", fp
-                    ).eq("developer_id", DEVELOPER_ID).execute()
+                    _scoped_owned_query(
+                        client.table("file_locks")
+                        .update({"lock_token": SESSION_TOKEN})
+                        .eq("file_path", fp)
+                    ).execute()
                 except Exception as exc:
                     logger.warning(
                         "Failed to refresh lock_token for %s — "
@@ -873,8 +937,8 @@ def _reconcile_on_startup(client) -> None:
         else:
             # File is clean — stale lock, release it
             try:
-                client.table("file_locks").delete().eq("file_path", fp).eq(
-                    "developer_id", DEVELOPER_ID
+                _scoped_owned_query(
+                    client.table("file_locks").delete().eq("file_path", fp)
                 ).execute()
                 n_stale_released += 1
                 msg = (
@@ -893,14 +957,7 @@ def _reconcile_on_startup(client) -> None:
         try:
             res = client.rpc(
                 "acquire_lock",
-                {
-                    "p_file_path": fp,
-                    "p_developer_id": DEVELOPER_ID,
-                    "p_branch_name": branch,
-                    "p_reason": "Auto-Watch (resumed)",
-                    "p_lock_token": SESSION_TOKEN,
-                    "p_is_ephemeral": False,
-                },
+                _acquire_rpc_payload(fp, branch, "Auto-Watch (resumed)", SESSION_TOKEN),
             ).execute()
             data = getattr(res, "data", None) or []
             if isinstance(data, list) and data and data[0].get("status") == "conflict":
@@ -976,9 +1033,11 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
 
         if choice == "1":
             try:
-                client.table("file_locks").update({"lock_token": SESSION_TOKEN}).eq(
-                    "file_path", fp
-                ).eq("developer_id", DEVELOPER_ID).execute()
+                _scoped_owned_query(
+                    client.table("file_locks")
+                    .update({"lock_token": SESSION_TOKEN})
+                    .eq("file_path", fp)
+                ).execute()
             except Exception:
                 logger.exception("Failed to update lock_token for %s", fp)
             _local_owned_locks.add(fp)
@@ -990,8 +1049,8 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
             )
         elif choice == "3":
             try:
-                client.table("file_locks").delete().eq("file_path", fp).eq(
-                    "developer_id", DEVELOPER_ID
+                _scoped_owned_query(
+                    client.table("file_locks").delete().eq("file_path", fp)
                 ).execute()
             except Exception:
                 logger.exception("Failed to release lock for %s", fp)
@@ -1132,8 +1191,10 @@ def _graceful_shutdown() -> None:
                 )
 
             if git_failed:
-                # Fallback: blanket release (legacy behavior)
-                client.table("file_locks").delete().eq("developer_id", dev_id).execute()
+                # Fallback: release all locks for this developer + agent only
+                _scope_agent(
+                    client.table("file_locks").delete().eq("developer_id", dev_id)
+                ).execute()
                 logger.info("✅ Released all locks during shutdown (fallback).")
             else:
                 # Smart release: only release locks for clean files
@@ -1148,8 +1209,11 @@ def _graceful_shutdown() -> None:
                         logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
                     else:
                         try:
-                            client.table("file_locks").delete().eq("file_path", fp).eq(
-                                "developer_id", dev_id
+                            _scope_agent(
+                                client.table("file_locks")
+                                .delete()
+                                .eq("file_path", fp)
+                                .eq("developer_id", dev_id)
                             ).execute()
                             n_released += 1
                             msg = f"🔓 [RELEASED] {fp}"
@@ -1166,21 +1230,23 @@ def _graceful_shutdown() -> None:
                 # query Supabase for any locks we might hold
                 if not _local_owned_locks:
                     try:
-                        res = (
+                        res = _scope_agent(
                             client.table("file_locks")
                             .select("file_path")
                             .eq("developer_id", dev_id)
-                            .execute()
-                        )
+                        ).execute()
                         db_locks = [
                             r.get("file_path", "")
                             for r in (getattr(res, "data", None) or [])
                         ]
                         for fp in db_locks:
                             if fp and fp not in still_dirty:
-                                client.table("file_locks").delete().eq(
-                                    "file_path", fp
-                                ).eq("developer_id", dev_id).execute()
+                                _scope_agent(
+                                    client.table("file_locks")
+                                    .delete()
+                                    .eq("file_path", fp)
+                                    .eq("developer_id", dev_id)
+                                ).execute()
                                 n_released += 1
                                 msg = f"🔓 [RELEASED] {fp}"
                                 logger.info(
@@ -1560,16 +1626,21 @@ def main() -> None:
         sys.exit(1)
 
     # Normalize developer ID aggressively to avoid token divergence between IDEs
+    global DEVELOPER_ID, AGENT_ID, AGENT_LABEL, SESSION_TOKEN, PID_FILE
     DEVELOPER_ID = _get_developer_id().strip()
+    AGENT_ID = agent_identity.resolve_agent_id(_COLLAB_ROOT)
+    AGENT_LABEL = agent_identity.resolve_agent_label()
+    if not os.getenv("COLLAB_PID_FILE"):
+        PID_FILE = agent_identity.resolve_daemon_pid_path(_COLLAB_ROOT, AGENT_ID)
 
-    global SESSION_TOKEN
-    SESSION_TOKEN = _get_session_token(DEVELOPER_ID)
+    SESSION_TOKEN = _get_session_token(DEVELOPER_ID, AGENT_ID)
 
     # Log session token (truncated) for debugging cross-IDE token divergence
     logger.debug(
-        "Session token: %s... (dev=%s, host=%s)",
+        "Session token: %s... (dev=%s, agent=%s, host=%s)",
         SESSION_TOKEN[:8],
         DEVELOPER_ID,
+        AGENT_ID or "(human)",
         socket.gethostname(),
     )
 

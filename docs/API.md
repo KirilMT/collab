@@ -179,6 +179,10 @@ collab cleanup
 | `SUPABASE_ANON_KEY`         | Supabase anonymous/public key.                                      |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (for force-release).                      |
 | `DEVELOPER_ID`              | Custom developer identifier (defaults to git user.name).            |
+| `COLLAB_DEVELOPER_ID`       | Same as `DEVELOPER_ID` (preferred name).                            |
+| `COLLAB_AGENT_ID`           | Stable agent identity for multi-agent workflows.                    |
+| `COLLAB_AGENT_LABEL`        | Human-readable agent/task label.                                    |
+| `COLLAB_AGENT_MODE`         | If `1`, auto-generate/persist `agent_id` when unset.                |
 | `COLLAB_STATE_DIR`          | Directory for storing PID and state files (defaults to `.collab/`). |
 | `COLLAB_LOG_LEVEL`          | Logging level (DEBUG, INFO, WARNING, ERROR).                        |
 | `LOCK_STRICT`               | If `1`, block on lock errors during git hooks.                      |

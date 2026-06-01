@@ -308,6 +308,22 @@
             background: var(--primary-soft);
         }
 
+        .agent-chip {
+            display: inline-block;
+            margin-left: 0.35rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: #f1f5f9;
+            color: #475569;
+        }
+
+        .agent-chip-owner {
+            background: #e0e7ff;
+            color: #4338ca;
+        }
+
         code {
             color: #1d4ed8;
             background: #f8fafc;
@@ -656,6 +672,8 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
         let SUPABASE_URL = "";
         let SUPABASE_KEY = "";
         let SUPABASE_USER = null;
+        let SUPABASE_AGENT_ID = null;
+        let SUPABASE_AGENT_LABEL = null;
         let IS_ADMIN = false;
         let SUPABASE_MODE = false;
         let supabaseClientFingerprint = "";
@@ -730,6 +748,33 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             }
         }
 
+        function lockOwnedByMe(lock) {
+            if (!SUPABASE_USER || lock.developer_id !== SUPABASE_USER) {
+                return false;
+            }
+            return (lock.agent_id || null) === (SUPABASE_AGENT_ID || null);
+        }
+
+        function lockOwnedByMyDeveloper(lock) {
+            return !!(SUPABASE_USER && lock.developer_id === SUPABASE_USER);
+        }
+
+        function formatDeveloperCell(lock) {
+            const dev = lock.developer_id || "?";
+            const agentText = lock.agent_label || lock.agent_id;
+            const chip = agentText
+                ? '<span class="agent-chip' + (lockOwnedByMe(lock) ? " agent-chip-owner" : "") + '">' +
+                  agentText +
+                  "</span>"
+                : '<span class="agent-chip">user</span>';
+            return (
+                '<span class="dev-tag ' + (lockOwnedByMe(lock) ? "dev-tag-owner" : "") + '">' +
+                dev +
+                "</span>" +
+                chip
+            );
+        }
+
         function updateTimestamp() {
             const stamp = new Date().toLocaleTimeString([], {
                 hour: "2-digit",
@@ -753,6 +798,8 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             SUPABASE_URL = runtimeCfg.url || "";
             SUPABASE_KEY = runtimeCfg.serviceKey || runtimeCfg.anonKey || "";
             SUPABASE_USER = runtimeCfg.user || null;
+            SUPABASE_AGENT_ID = runtimeCfg.agentId || null;
+            SUPABASE_AGENT_LABEL = runtimeCfg.agentLabel || null;
             IS_ADMIN = !!runtimeCfg.serviceKey;
             SUPABASE_MODE = !!(SUPABASE_URL && SUPABASE_KEY);
             updateProjectInfo();
@@ -941,24 +988,23 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 .map((lock) => {
                     const acquired = new Date(lock.acquired_at);
                     const heldMin = Math.max(0, Math.round((now - acquired) / 60000));
-                    const isMine = !!(SUPABASE_USER && lock.developer_id === SUPABASE_USER);
-                    const canRelease = isMine || IS_ADMIN;
+                    const isMine = lockOwnedByMe(lock);
+                    const isMyDeveloper = lockOwnedByMyDeveloper(lock);
+                    const canRelease = isMyDeveloper || IS_ADMIN;
                     const reason = lock.reason || "No reason";
                     const branch = lock.branch_name || "main";
                     const safePath = String(lock.file_path || "").replace(/'/g, "\\'");
 
                     const action = canRelease
                         ? '<button class="btn btn-sm btn-outline-danger" onclick="initRelease(\'' + safePath + '\',' + (isMine ? "true" : "false") + ')">' +
-                          (isMine ? "Release" : "Force Release") +
+                          (isMine ? "Release" : isMyDeveloper ? "Force Release" : "Force Release") +
                           "</button>"
                         : '<span class="text-muted small">Locked</span>';
 
                     return (
                         "<tr>" +
                         "<td><code>" + lock.file_path + "</code></td>" +
-                        '<td><span class="dev-tag ' + (isMine ? "dev-tag-owner" : "") + '">' +
-                        lock.developer_id +
-                        "</span></td>" +
+                        "<td>" + formatDeveloperCell(lock) + "</td>" +
                         '<td class="text-muted">' + branch + "</td>" +
                         '<td class="text-muted">' + reason + "</td>" +
                         '<td class="text-muted">' +
@@ -1043,12 +1089,12 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     const duration = acq && rel
                         ? formatDurationMinutes(Math.max(0, Math.round((rel - acq) / 60000)))
                         : "-";
-                    const isMine = !!(SUPABASE_USER && h.developer_id === SUPABASE_USER);
+                    const isMine = lockOwnedByMe(h);
 
                     return (
                         "<tr>" +
                         "<td><code>" + h.file_path + "</code></td>" +
-                        '<td><span class="dev-tag ' + (isMine ? "dev-tag-owner" : "") + '">' + h.developer_id + "</span></td>" +
+                        "<td>" + formatDeveloperCell(h) + "</td>" +
                         '<td class="text-muted">' + branch + "</td>" +
                         '<td class="text-muted">' + reason + "</td>" +
                         '<td class="text-muted">' + (acq ? formatDateTime24(acq) : "-") + "</td>" +
@@ -1106,6 +1152,11 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
 
                 if (!IS_ADMIN && SUPABASE_USER) {
                     query = query.eq("developer_id", SUPABASE_USER);
+                    if (SUPABASE_AGENT_ID) {
+                        query = query.eq("agent_id", SUPABASE_AGENT_ID);
+                    } else {
+                        query = query.is("agent_id", null);
+                    }
                 }
 
                 const { error } = await query;

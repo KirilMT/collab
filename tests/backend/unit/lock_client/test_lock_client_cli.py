@@ -198,6 +198,90 @@ def test_cli_active_no_locks(monkeypatch, capsys):
     assert "no active" in captured.out.lower()
 
 
+def test_cli_whoami_human(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.delenv("COLLAB_AGENT_ID", raising=False)
+    monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
+    for env_name, _ in mod.agent_identity._AGENT_RUNTIME_MARKERS:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path / "state"))
+
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "whoami"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Developer: alice" in out
+    assert "Mode:      human" in out
+
+
+def test_cli_whoami_with_agent(monkeypatch, capsys):
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["lock_client.py", "--agent-id", "agent-1", "whoami"]
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Agent ID:    agent-1" in out
+
+
+def test_cli_active_mine_filter(monkeypatch, capsys):
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    response = FakeResponse(
+        status=200,
+        data=[
+            {
+                "file_path": "mine.py",
+                "developer_id": "alice",
+                "agent_id": "agent-a",
+                "branch_name": "main",
+                "reason": "x",
+            },
+            {
+                "file_path": "other.py",
+                "developer_id": "alice",
+                "agent_id": "agent-b",
+                "branch_name": "main",
+                "reason": "y",
+            },
+        ],
+    )
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lock_client.py", "--agent-id", "agent-a", "active", "--mine"],
+    )
+
+    mod._run_cli()
+    out = capsys.readouterr().out
+    assert "mine.py" in out
+    assert "other.py" not in out
+
+
 def test_cli_active_with_locks(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
@@ -652,8 +736,11 @@ def test_cli_no_command(monkeypatch, capsys):
     )
     monkeypatch.setattr(sys, "argv", ["lock_client.py"])
 
-    mod._run_cli()
-    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "usage:" in out.lower()
 
 
 def test_main_entry_point(monkeypatch, capsys):
@@ -665,7 +752,8 @@ def test_main_entry_point(monkeypatch, capsys):
     )
     monkeypatch.setattr(sys, "argv", ["lock_client.py"])
 
-    mod.main()
+    with pytest.raises(SystemExit):
+        mod.main()
 
 
 def test_cli_daemon_start_with_auto_open_env(monkeypatch, tmp_path, capsys):

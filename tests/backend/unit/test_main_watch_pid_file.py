@@ -11,7 +11,7 @@ def test_run_cli_watch_pid_file_sets_namespace(monkeypatch):
     import collab.main as main_mod
 
     class _Client:
-        def __init__(self, local_only=False):
+        def __init__(self, local_only=False, agent_id=None, agent_label=None, **kwargs):
             self.local_only = local_only
 
         def watch(self, **kwargs):
@@ -65,7 +65,7 @@ def test_run_cli_active_auto_starts_and_reconciles(monkeypatch, capsys):
     called = {"status": 0, "start": 0, "reconcile": 0}
 
     class _Client:
-        def __init__(self, local_only=False):
+        def __init__(self, local_only=False, agent_id=None, agent_label=None, **kwargs):
             self.local_only = local_only
 
         def daemon_status(self):
@@ -123,7 +123,7 @@ def test_run_cli_active_auto_start_can_be_disabled(monkeypatch, capsys):
     called = {"status": 0, "start": 0, "reconcile": 0}
 
     class _Client:
-        def __init__(self, local_only=False):
+        def __init__(self, local_only=False, agent_id=None, agent_label=None, **kwargs):
             self.local_only = local_only
 
         def daemon_status(self):
@@ -230,7 +230,7 @@ def test_run_cli_active_reconcile_exception_is_non_fatal(monkeypatch, capsys):
     called = {"start": 0}
 
     class _Client:
-        def __init__(self, local_only=False):
+        def __init__(self, local_only=False, agent_id=None, agent_label=None, **kwargs):
             self.local_only = local_only
 
         def daemon_status(self):

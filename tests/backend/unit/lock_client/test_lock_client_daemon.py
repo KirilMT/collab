@@ -2288,7 +2288,8 @@ def test_run_cli_ignores_stream_reconfigure_errors(monkeypatch):
     monkeypatch.setattr(sys, "stderr", FakeStream())
     monkeypatch.setattr(sys, "argv", ["lock_client.py"])
 
-    mod._run_cli()
+    with pytest.raises(SystemExit):
+        mod._run_cli()
 
 
 def test_assign_to_job_object_windows(monkeypatch):

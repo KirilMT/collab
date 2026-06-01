@@ -7,7 +7,6 @@ conflicts in multi-developer workflows.
 from __future__ import annotations
 
 import atexit
-import hashlib
 import json
 import logging
 import os
@@ -27,7 +26,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from . import platform_probe, safe_subprocess
+from . import agent_identity, platform_probe, safe_subprocess
 from .errors import (
     ConfigurationError,
     DaemonStartError,
@@ -303,11 +302,19 @@ EPHEMERAL_PREFIXES = ["test_dev", "ci"]
 # (Intentionally no repo-level toggle) Do not expose a runtime flag to
 # enable/disable runtime-path locking.
 
-# PID file lives at project root unless overridden.
-# Tests can override this via COLLAB_PID_FILE env var to avoid interfering with
-# the live production watcher.
-# PID file location (transient state)
-PID_FILE = os.getenv("COLLAB_PID_FILE") or os.path.join(_get_state_dir(), ".daemon.pid")
+# PID file lives in the state dir unless overridden. When an agent id is active,
+# each agent gets its own PID file so multiple watchers can coexist.
+# Tests can override via COLLAB_PID_FILE env var.
+PID_FILE = agent_identity.resolve_daemon_pid_path(_get_state_dir(), None)
+
+
+def _refresh_pid_file(agent_id: Optional[str]) -> None:
+    """Update module-level PID_FILE for the resolved agent (unless env override set)."""
+    global PID_FILE
+    if os.getenv("COLLAB_PID_FILE"):
+        return
+    PID_FILE = agent_identity.resolve_daemon_pid_path(_get_state_dir(), agent_id)
+
 
 # Maximum retry attempts for network errors
 MAX_RETRIES = 3
@@ -649,7 +656,11 @@ class LockClient:
     """
 
     def __init__(
-        self, developer_id: Optional[str] = None, local_only: bool = False
+        self,
+        developer_id: Optional[str] = None,
+        local_only: bool = False,
+        agent_id: Optional[str] = None,
+        agent_label: Optional[str] = None,
     ) -> None:
         from typing import cast
 
@@ -657,6 +668,17 @@ class LockClient:
         self.developer_id = (
             developer_id or os.getenv("COLLAB_DEVELOPER_ID") or self._get_git_username()
         )
+        state_dir = _get_state_dir()
+        runtime_label = agent_identity.detect_agent_runtime_label()
+        self.agent_id = agent_identity.resolve_agent_id(
+            state_dir,
+            explicit_agent_id=agent_id,
+        )
+        self.agent_label = agent_identity.resolve_agent_label(
+            explicit_label=agent_label,
+            runtime_label=runtime_label,
+        )
+        _refresh_pid_file(self.agent_id)
         self._client: Optional[Any] = None
         self._branch_name: Optional[str] = None
         self._session_token: Optional[str] = None
@@ -751,8 +773,30 @@ class LockClient:
         except Exception:
             p_root = _PROJECT_ROOT.lower().rstrip("\\/") if _PROJECT_ROOT else "project"
 
-        seed = f"{dev_id}:{hostname}:{p_root}"
-        return hashlib.sha256(seed.encode()).hexdigest()[:16]
+        seed = agent_identity.session_token_seed(
+            dev_id, self.agent_id, hostname, p_root
+        )
+        return agent_identity.session_token_from_seed(seed)
+
+    def _lock_owned_by_me(self, lock: Dict) -> bool:
+        """Return True when *lock* is owned by this client (human + agent)."""
+        return agent_identity.lock_owned_by_client(
+            lock, self.developer_id, self.agent_id
+        )
+
+    def _apply_agent_scope(self, query: Any) -> Any:
+        """Restrict a PostgREST query to this client's agent_id."""
+        return agent_identity.apply_agent_filter(query, self.agent_id)
+
+    def _format_owner(
+        self,
+        developer_id: str,
+        lock_agent_id: Optional[str] = None,
+        lock_agent_label: Optional[str] = None,
+    ) -> str:
+        return agent_identity.format_lock_owner(
+            developer_id, lock_agent_id, lock_agent_label
+        )
 
     def _is_same_machine_token(self, stored_token: str) -> bool:
         """Return True if stored_token looks like it was generated on this machine.
@@ -794,21 +838,28 @@ class LockClient:
         # Also try path variants (with/without trailing slash)
         path_variants = [p_root, p_root.rstrip("/\\"), p_root + "/", p_root + "\\"]
 
+        agent_candidates: list[Optional[str]] = [self.agent_id]
+        if self.agent_id is not None:
+            agent_candidates.append(None)
+
         seen_seeds: set[str] = set()
         for dev_id in set(candidates):
-            for p in path_variants:
-                seed = f"{dev_id}:{hostname}:{p}"
-                if seed in seen_seeds:
-                    continue
-                seen_seeds.add(seed)
-                token = hashlib.sha256(seed.encode()).hexdigest()[:16]
-                if token == stored_token:
-                    logger.debug(
-                        "Token matched same-machine variant: dev_id=%r path=%r",
-                        dev_id,
-                        p,
-                    )
-                    return True
+            for agent in agent_candidates:
+                for p in path_variants:
+                    seed = agent_identity.session_token_seed(dev_id, agent, hostname, p)
+                    if seed in seen_seeds:
+                        continue
+                    seen_seeds.add(seed)
+                    token = agent_identity.session_token_from_seed(seed)
+                    if token == stored_token:
+                        logger.debug(
+                            "Token matched same-machine variant: dev_id=%r "
+                            "agent=%r path=%r",
+                            dev_id,
+                            agent,
+                            p,
+                        )
+                        return True
         return False
 
     # ------------------------------------------------------------------
@@ -884,8 +935,10 @@ class LockClient:
                 if not fp:
                     continue
 
-                # Only log locks owned by this developer
-                if owner == self.developer_id:
+                # Only log locks owned by this developer + agent
+                if owner == self.developer_id and agent_identity.agent_ids_match(
+                    lock.get("agent_id"), self.agent_id
+                ):
                     br = lock.get("branch_name") or "main"
                     reason = lock.get("reason") or "Auto-Watch Sync"
                     logger.debug(
@@ -977,6 +1030,8 @@ class LockClient:
             "p_reason": reason,
             "p_lock_token": token,
             "p_is_ephemeral": bool(getattr(self, "_is_ephemeral", False)),
+            "p_agent_id": self.agent_id,
+            "p_agent_label": self.agent_label,
         }
 
         client = self._require_client()
@@ -985,7 +1040,7 @@ class LockClient:
                 lambda: client.rpc("acquire_lock", rpc_params).execute()
             )
         except Exception as e:
-            return False, f"API Error: {e}"
+            return False, self._format_acquire_failure(f"API Error: {e}")
 
         status, data, error = self._parse_response(res)
 
@@ -995,7 +1050,7 @@ class LockClient:
                 if isinstance(error, dict)
                 else str(error)
             )
-            return False, f"API Error: {msg}"
+            return False, self._format_acquire_failure(f"API Error: {msg}")
 
         # Parse RPC result
         if isinstance(data, list) and len(data) > 0:
@@ -1011,16 +1066,25 @@ class LockClient:
                 return True, token
             if row.get("status") == "conflict":
                 owner = row.get("owner", "another developer")
+                conflict_agent = row.get("agent_id")
+                owner_display = self._format_owner(
+                    str(owner),
+                    conflict_agent,
+                    None,
+                )
                 logger.warning(
                     (
-                        "⚠️ CONFLICT: %s is locked by @%s — your changes may "
+                        "⚠️ CONFLICT: %s is locked by %s — your changes may "
                         "cause a merge conflict."
                     ),
                     self._normalize_file_path(file_path),
-                    owner,
+                    owner_display,
                 )
-                return False, (
-                    f"⚠ {file_path} is locked by @{owner}. Editing is not recommended."
+                return False, agent_identity.format_conflict_message(
+                    file_path,
+                    str(owner),
+                    conflict_agent,
+                    None,
                 )
 
         if status in (200, 201):
@@ -1050,15 +1114,14 @@ class LockClient:
         client = self._require_client()
         try:
             norm = self._normalize_file_path(file_path)
-            res = _retry_on_network_error(
-                lambda: (
-                    client.table("file_locks")
-                    .delete()
-                    .eq("file_path", norm)
-                    .eq("developer_id", self.developer_id)
-                    .execute()
-                )
+            delete_query = (
+                client.table("file_locks")
+                .delete()
+                .eq("file_path", norm)
+                .eq("developer_id", self.developer_id)
             )
+            delete_query = self._apply_agent_scope(delete_query)
+            res = _retry_on_network_error(lambda: delete_query.execute())
         except Exception as e:
             return False, f"API Error: {e}"
 
@@ -1140,9 +1203,11 @@ class LockClient:
         return {
             "is_locked": True,
             "locked_by": lock.get("developer_id"),
+            "locked_by_agent_id": lock.get("agent_id"),
+            "locked_by_agent_label": lock.get("agent_label"),
             "acquired_at": lock.get("acquired_at"),
             "reason": lock.get("reason"),
-            "can_edit": lock.get("developer_id") == self.developer_id,
+            "can_edit": self._lock_owned_by_me(lock),
         }
 
     def release_all(self) -> int:
@@ -1155,7 +1220,7 @@ class LockClient:
         except LockServiceUnavailableError as exc:
             logger.error("release_all skipped — lock service unavailable: %s", exc)
             return 0
-        my_locks = [lk for lk in locks if lk.get("developer_id") == self.developer_id]
+        my_locks = [lk for lk in locks if self._lock_owned_by_me(lk)]
         count = 0
         for lk in my_locks:
             ok, _ = self.release(lk.get("file_path", ""))
@@ -1172,7 +1237,7 @@ class LockClient:
         Returns (success: bool, message: str).
         """
         if not self._is_admin:
-            # Non-admin: verify the lock belongs to this developer
+            # Non-admin: may force-release own developer_id (any agent) but not others'.
             status_info = self.get_lock_status(file_path)
             if (
                 status_info.get("is_locked")
@@ -1186,7 +1251,8 @@ class LockClient:
 
         client = self._require_client()
         try:
-            query = client.table("file_locks").delete().eq("file_path", file_path)
+            norm = self._normalize_file_path(file_path)
+            query = client.table("file_locks").delete().eq("file_path", norm)
             if not self._is_admin:
                 query = query.eq("developer_id", self.developer_id)
             res = _retry_on_network_error(lambda: query.execute())
@@ -1264,6 +1330,19 @@ class LockClient:
             logger.error("Failed to force_release_all: %s", e)
             return 0
 
+    @staticmethod
+    def _format_acquire_failure(message: str) -> str:
+        """Add actionable context for common Supabase RPC / schema failures."""
+        text = message or ""
+        if "PGRST202" in text and "acquire_lock" in text:
+            return (
+                f"{text} — PostgREST does not see the agent-aware acquire_lock RPC. "
+                "Re-run the full supabase/schema.sql in the Supabase SQL Editor "
+                "(including CREATE OR REPLACE FUNCTION acquire_lock), then reload "
+                "the API schema cache (Project Settings → API → Reload schema)."
+            )
+        return text
+
     def acquire_multiple(
         self,
         file_paths: List[str],
@@ -1279,7 +1358,12 @@ class LockClient:
             ok, msg = self.acquire(fp, reason=reason, branch_name=branch_name)
             if not ok:
                 failed.append(fp)
-                logger.warning("Lock conflict: %s — %s", fp, msg)
+                level = (
+                    "Lock acquire failed"
+                    if str(msg).startswith("API Error")
+                    else "Lock conflict"
+                )
+                logger.warning("%s: %s — %s", level, fp, msg)
         if failed:
             return False, failed, "Conflicts or errors"
         return True, [], "Success"
@@ -2881,9 +2965,7 @@ class LockClient:
                 len(active_locks),
                 self.developer_id,
             )
-            my_locks = [
-                lk for lk in active_locks if lk.get("developer_id") == self.developer_id
-            ]
+            my_locks = [lk for lk in active_locks if self._lock_owned_by_me(lk)]
             for lock in sorted(my_locks, key=lambda x: x.get("file_path", "")):
                 fp = lock.get("file_path", "")
                 if fp:
@@ -3030,11 +3112,7 @@ class LockClient:
             # known locks so reconciliation essentially becomes a no-op for this cycle.
             try:
                 active = self.active()
-                return {
-                    lk["file_path"]
-                    for lk in active
-                    if lk.get("developer_id") == self.developer_id
-                }
+                return {lk["file_path"] for lk in active if self._lock_owned_by_me(lk)}
             except LockServiceUnavailableError:
                 return set()
             except Exception:
@@ -3042,15 +3120,11 @@ class LockClient:
 
         try:
             active = self.active()
-            my_locks = {
-                lk["file_path"]
-                for lk in active
-                if lk.get("developer_id") == self.developer_id
-            }
+            my_locks = {lk["file_path"] for lk in active if self._lock_owned_by_me(lk)}
             # Build lock_map for token checking
             lock_map: dict[str, dict] = {}
             for lk in active:
-                if lk.get("developer_id") == self.developer_id:
+                if self._lock_owned_by_me(lk):
                     fp = lk.get("file_path", "")
                     if fp:
                         lock_map[fp] = lk
@@ -3114,9 +3188,14 @@ class LockClient:
                 try:
                     # Use direct update to ONLY change lock_token, NOT acquired_at
                     client = self._require_client()
-                    client.table("file_locks").update({"lock_token": current_token}).eq(
-                        "file_path", fp
-                    ).eq("developer_id", self.developer_id).execute()
+                    update_q = (
+                        client.table("file_locks")
+                        .update({"lock_token": current_token})
+                        .eq("file_path", fp)
+                        .eq("developer_id", self.developer_id)
+                    )
+                    update_q = self._apply_agent_scope(update_q)
+                    update_q.execute()
                 except Exception:
                     logger.debug("Failed to update lock_token for %s (non-fatal)", fp)
 
@@ -3258,6 +3337,88 @@ class LockClient:
             return ""
         return safe_subprocess.decode_output(captured.stdout).strip()
 
+    @staticmethod
+    def _git_ref_exists(ref: str) -> bool:
+        """Return True when *ref* resolves in the project repository."""
+        captured = safe_subprocess.capture(
+            ["git", "rev-parse", "--verify", ref],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        return captured.ok and not captured.timed_out
+
+    @classmethod
+    def _resolve_lock_diff_base_ref(cls) -> Optional[str]:
+        """Return git ref for unpushed work: @{u}, env override, or origin/main."""
+        upstream = safe_subprocess.capture(
+            [
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{u}",
+            ],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if upstream.ok and not upstream.timed_out:
+            if safe_subprocess.decode_output(upstream.stdout).strip():
+                return "@{u}"
+
+        override = os.getenv("COLLAB_LOCK_BASE_REF", "").strip()
+        if override and cls._git_ref_exists(override):
+            return override
+
+        branch_capture = safe_subprocess.capture(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if branch_capture.ok and not branch_capture.timed_out:
+            branch = safe_subprocess.decode_output(branch_capture.stdout).strip()
+            if branch and branch != "HEAD":
+                remote_branch = f"origin/{branch}"
+                if cls._git_ref_exists(remote_branch):
+                    return remote_branch
+
+        for candidate in ("origin/main", "origin/master"):
+            if cls._git_ref_exists(candidate):
+                return candidate
+        return None
+
+    @staticmethod
+    def _paths_from_git_diff_name_status(range_spec: str) -> List[str]:
+        """Parse ``git diff --name-status`` output into normalized path strings."""
+        diff_capture = safe_subprocess.capture(
+            ["git", "diff", "--name-status", range_spec],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=_GIT_REF_TIMEOUT_S,
+        )
+        if not diff_capture.ok or diff_capture.timed_out:
+            return []
+
+        paths: List[str] = []
+        diff_out = safe_subprocess.decode_output(diff_capture.stdout).strip()
+        for line in diff_out.splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            parts = raw.split(None, 1)
+            if len(parts) != 2:
+                continue
+            payload = parts[1].strip()
+            if "\t" in payload:
+                payload = payload.split("\t")[-1].strip()
+            if " -> " in payload:
+                payload = payload.split(" -> ")[-1].strip()
+            if payload and not payload.endswith("/"):
+                paths.append(payload)
+        return paths
+
     def _get_modified_and_unpushed_files(self) -> List[str]:
         """Return files that are either dirty (status) or have unpushed commits
         (diff)."""
@@ -3277,63 +3438,24 @@ class LockClient:
         except Exception as e:
             logger.debug("Git status failed: %s", e)
 
-        # 2. Get Unpushed Files (diff against upstream)
+        # 2. Committed-but-not-on-remote (upstream, origin/main, or base-ref override)
         try:
-            # Check if upstream exists
-            args_rev = [
-                "git",
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                "@{u}",
-            ]
-            upstream = safe_subprocess.capture(
-                args_rev,
-                policy="git",
-                cwd=_PROJECT_ROOT,
-                timeout=_GIT_REF_TIMEOUT_S,
-            )
-            if upstream.timed_out or not upstream.ok:
-                return sorted(modified)
-
-            # If upstream exists, get names/statuses of files that differ from it.
-            # Keep deleted paths as "in progress" so lock ownership remains
-            # visible in the dashboard until explicit release.
-            args_diff = ["git", "diff", "--name-status", "@{u}..HEAD"]
-            diff_capture = safe_subprocess.capture(
-                args_diff,
-                policy="git",
-                cwd=_PROJECT_ROOT,
-                timeout=_GIT_REF_TIMEOUT_S,
-            )
-            diff_out = (
-                safe_subprocess.decode_output(diff_capture.stdout).strip()
-                if diff_capture.ok
-                else ""
-            )
-
-            if diff_out:
-                for line in diff_out.splitlines():
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    parts = raw.split(None, 1)
-                    if len(parts) != 2:
-                        continue
-                    status, payload = parts
-                    payload = payload.strip()
-                    if "\t" in payload:
-                        payload = payload.split("\t")[-1].strip()
-                    if " -> " in payload:
-                        payload = payload.split(" -> ")[-1].strip()
-                    path = self._normalize_file_path(payload)
-                    if path.endswith("/"):
-                        continue
-                    if path and not self._should_ignore_path(path):
-                        modified.add(path)
-        except Exception:
-            # No upstream or command failed - fallback to status-only
-            pass
+            base_ref = self._resolve_lock_diff_base_ref()
+            if base_ref:
+                if base_ref != "@{u}":
+                    logger.info(
+                        "No upstream (@{u}); locking in-progress files vs %s",
+                        base_ref,
+                    )
+                range_spec = (
+                    "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
+                )
+                for path in self._paths_from_git_diff_name_status(range_spec):
+                    norm = self._normalize_file_path(path)
+                    if norm and not self._should_ignore_path(norm):
+                        modified.add(norm)
+        except Exception as exc:
+            logger.debug("Git diff for in-progress files failed: %s", exc)
 
         return list(modified)
 
