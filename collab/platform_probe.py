@@ -20,6 +20,11 @@ logger = logging.getLogger("collab.platform_probe")
 
 _WIN_CREATION_FLAGS = 0x08000000
 _PYTHON_IMAGE_NAMES = frozenset({"python.exe", "pythonw.exe", "python3.exe"})
+# pip-generated console-script wrappers for the collab runtime. On Windows these
+# ``.exe`` launchers hold their own image file open for the life of the process,
+# which can block deletion of the virtualenv when a watcher was started through
+# the wrapper (older IDE extensions) and the wrapper is left orphaned.
+_COLLAB_LAUNCHER_IMAGE_NAMES = frozenset({"collab.exe", "collab-watcher.exe"})
 
 
 def _require_pid(pid: int) -> int:
@@ -281,6 +286,41 @@ def ps_aux() -> str:
         return ""
     exe = _resolve("ps") or "ps"
     return _run_platform([exe, "aux"], timeout=60.0)
+
+
+def iter_collab_launcher_pids() -> list[int]:
+    """Collect PIDs for collab console-script launcher images (Windows).
+
+    Enumerates ``collab.exe`` and ``collab-watcher.exe`` processes via tasklist so
+    callers can reap orphaned wrappers that keep the virtualenv ``.exe`` locked. Returns
+    an empty list off Windows or when tasklist is unavailable.
+    """
+    if sys.platform != "win32":
+        return []
+    pids: list[int] = []
+    seen: set[int] = set()
+    exe = _resolve("tasklist")
+    if not exe:
+        return []
+    for image in sorted(_COLLAB_LAUNCHER_IMAGE_NAMES):
+        out = _run_platform(
+            [exe, "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
+            timeout=30.0,
+        )
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.strip().strip('"').split('","')
+            if len(parts) >= 2:
+                try:
+                    pid = int(parts[1])
+                    if pid not in seen:
+                        seen.add(pid)
+                        pids.append(pid)
+                except (ValueError, IndexError):
+                    continue
+    return pids
 
 
 def iter_tasklist_python_pids() -> list[int]:

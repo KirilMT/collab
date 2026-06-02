@@ -1720,9 +1720,11 @@ class LockClient:
             # processes for this workspace if the PID file is missing or stale.
             pid = self._read_pid()
             pids_to_stop: List[int] = []
+            watcher_found = False
 
             if pid and self._is_process_alive(pid):
                 pids_to_stop = [pid]
+                watcher_found = True
             else:
                 # Safety rail: during tests, never discover/stop external watcher
                 # processes when the module is still using the production PID file.
@@ -1740,21 +1742,17 @@ class LockClient:
                     self._remove_pid()
                     return
 
-                # Attempt to discover live watcher processes related to this repo
+                # Attempt to discover live watcher processes related to this repo.
+                # Note: even when no Python watcher is found we still fall through
+                # to the launcher-reaping step below, because an orphaned
+                # ``collab.exe`` wrapper can outlive the watcher it spawned.
                 try:
                     found = self._discover_running_watchers()
                     if found:
                         pids_to_stop = found
-                    else:
-                        print("No running watcher found.")
-                        logger.info("No running watcher found for this workspace")
-                        self._remove_pid()
-                        return
+                        watcher_found = True
                 except Exception as e:
                     logger.debug("Watcher discovery failed: %s", e)
-                    print("No running watcher found.")
-                    self._remove_pid()
-                    return
 
             # Stop each discovered watcher PID (soft stop first, then force)
             for target_pid in pids_to_stop:
@@ -1863,6 +1861,25 @@ class LockClient:
 
                 logger.info("Stopped watcher (PID: %d) (forced)", target_pid)
                 print("✅ Stopped.")
+
+            # Defense-in-depth (Windows): reap orphaned ``collab.exe`` /
+            # ``collab-watcher.exe`` console-script wrappers in this namespace.
+            # These keep the venv ``.exe`` image locked (EBUSY on delete) and can
+            # outlive the Python watcher when started by an older IDE extension.
+            # Give a well-behaved wrapper a brief moment to exit on its own first.
+            if pids_to_stop:
+                time.sleep(0.5)
+            reaped = self._reap_collab_launchers()
+            if reaped:
+                logger.info("Reaped %d orphaned collab launcher wrapper(s)", reaped)
+                print(
+                    f"✅ Cleaned up {reaped} leftover collab launcher "
+                    f"process(es) locking the virtualenv."
+                )
+
+            if not watcher_found and not reaped:
+                print("No running watcher found.")
+                logger.info("No running watcher found for this workspace")
 
             # Final cleanup: ensure canonical PID file removed
             try:
@@ -3955,6 +3972,123 @@ class LockClient:
             except Exception:
                 continue
         return found
+
+    def _launcher_cmdline_in_namespace(self, cmdline: str) -> bool:
+        """Return True for a watcher-launcher cmdline in this PID-file namespace.
+
+        Used to identify pip console-script wrappers (``collab.exe`` / ``collab-
+        watcher.exe``) that launched *this* workspace's watcher. Requires a ``watch``
+        invocation and a ``--pid-file`` matching the current namespace so launchers from
+        unrelated workspaces are never targeted.
+        """
+        if not cmdline:
+            return False
+        if "watch" not in cmdline.lower():
+            return False
+        return self._cmdline_matches_current_pid_namespace(cmdline)
+
+    def _discover_collab_launcher_pids(self) -> List[int]:
+        """Find running collab console-script launcher wrappers for this namespace.
+
+        Windows-only. The pip-generated ``collab.exe`` / ``collab-watcher.exe`` wrappers
+        keep their own image file open for their entire lifetime, so an orphaned wrapper
+        (e.g. spawned by an older IDE extension) blocks deletion of the virtualenv long
+        after the underlying Python watcher has exited. Returns candidate launcher PIDs
+        to reap (may be empty).
+        """
+        if sys.platform != "win32":
+            return []
+
+        launcher_names = {"collab.exe", "collab-watcher.exe"}
+        candidates: set[int] = set()
+        self_pid = os.getpid()
+
+        # Fast path: psutil enumeration.
+        try:
+            import psutil
+
+            for p in psutil.process_iter(attrs=("pid", "name", "cmdline")):
+                try:
+                    pid = int(p.info.get("pid") or 0)
+                    if pid <= 0 or pid == self_pid:
+                        continue
+                    name = (p.info.get("name") or "").lower()
+                    if name not in launcher_names:
+                        continue
+                    cmdline = p.info.get("cmdline")
+                    cmd_str = (
+                        " ".join(cmdline)
+                        if isinstance(cmdline, (list, tuple))
+                        else str(cmdline or "")
+                    )
+                    if self._launcher_cmdline_in_namespace(cmd_str):
+                        candidates.add(pid)
+                except Exception:
+                    continue
+            return sorted(candidates)
+        except Exception as exc:
+            logger.debug("psutil launcher discovery unavailable/failed: %s", exc)
+
+        # Fallback: tasklist enumeration + per-PID cmdline lookup.
+        try:
+            for pid in platform_probe.iter_collab_launcher_pids():
+                if pid == self_pid:
+                    continue
+                cmd = self._get_cmdline_for_pid(pid)
+                if cmd and self._launcher_cmdline_in_namespace(cmd):
+                    candidates.add(pid)
+        except Exception as exc:
+            logger.debug("tasklist launcher discovery failed: %s", exc)
+        return sorted(candidates)
+
+    def _reap_collab_launchers(self) -> int:
+        """Force-terminate orphaned collab launcher wrappers in this namespace.
+
+        Windows-only defense-in-depth for ``daemon_stop``. The Python watcher is now
+        launched via the interpreter, but older/already-deployed IDE extensions launched
+        it through the ``collab.exe`` console-script wrapper. That wrapper can be left
+        running (holding the venv ``.exe`` locked) even after the watcher PID is
+        stopped. Reaping it makes the virtualenv deletable. Returns the number of
+        wrappers terminated.
+        """
+        if sys.platform != "win32" or _is_test_mode():
+            return 0
+
+        try:
+            launchers = self._discover_collab_launcher_pids()
+        except Exception as exc:
+            logger.debug("collab launcher discovery failed: %s", exc)
+            return 0
+
+        skip = {os.getpid()}
+        try:
+            skip.add(os.getppid())
+        except Exception:
+            pass
+
+        reaped = 0
+        for lpid in launchers:
+            if lpid in skip:
+                continue
+            if not self._is_process_alive(lpid):
+                continue
+            logger.info(
+                "Reaping orphaned collab launcher wrapper (PID: %d) holding venv .exe",
+                lpid,
+            )
+            platform_probe.taskkill_force(lpid, tree=True)
+            # Confirm termination; log if it stubbornly survives.
+            for _ in range(10):
+                if not self._is_process_alive(lpid):
+                    break
+                time.sleep(0.2)
+            if self._is_process_alive(lpid):
+                logger.warning(
+                    "Collab launcher wrapper (PID: %d) survived reap attempt", lpid
+                )
+            else:
+                reaped += 1
+        return reaped
 
     def _read_pid_file(self) -> Optional[Dict[str, Any]]:
         """Read the PID file and return the metadata dictionary if available."""
