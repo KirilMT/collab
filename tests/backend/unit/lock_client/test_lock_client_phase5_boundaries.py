@@ -327,6 +327,38 @@ def test_run_git_status_timeout_and_failure(monkeypatch):
     assert mod.LockClient._run_git_status() == ""
 
 
+def test_run_git_status_preserves_leading_status_space(monkeypatch):
+    """Regression: the leading porcelain status space must survive.
+
+    ``git status --porcelain`` prefixes each line with a 2-column status field (XY). For
+    worktree-only changes the first column is a space (e.g. ``" M path"``). A full
+    ``.strip()`` of the output blob would remove the leading space of the FIRST line,
+    shifting the ``line[3:]`` parse and dropping the first character of that path
+    (``collab/...`` -> ``ollab/...``).
+    """
+    raw = b" M collab/dashboard_server.py\n M pyproject.toml\n"
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: CaptureResult(
+            argv=("git", "status", "--porcelain"),
+            returncode=0,
+            stdout=raw,
+            stderr=b"",
+        ),
+    )
+
+    out = mod.LockClient._run_git_status()
+    first_line = out.splitlines()[0]
+
+    # Leading status space must be intact so the fixed-width parse is correct.
+    assert first_line.startswith(" M ")
+    assert (
+        mod.LockClient._parse_git_status_path(first_line)
+        == "collab/dashboard_server.py"
+    )
+
+
 def test_reconcile_lock_service_unavailable_fallbacks(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")

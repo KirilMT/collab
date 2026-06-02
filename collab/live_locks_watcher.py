@@ -282,6 +282,27 @@ def _git_capture_text(argv: list[str], *, cwd: str | None = None) -> str:
     return ""
 
 
+def _git_capture_status_porcelain() -> str:
+    """Return ``git status --porcelain`` stdout, preserving leading whitespace.
+
+    Unlike :func:`_git_capture_text`, this trims only surrounding newlines and never
+    performs a full ``.strip()``. Porcelain lines begin with a 2-column status field
+    (XY) whose first column is a space for worktree-only changes (e.g. ``" M path"``).
+    Stripping the whole blob would remove the leading space of the FIRST line, shifting
+    the fixed-width parse in :func:`_parse_git_status_path` and silently dropping the
+    first character of that path.
+    """
+    try:
+        captured = safe_subprocess.capture(
+            ["git", "status", "--porcelain"], policy="git", cwd=_PROJECT_ROOT
+        )
+        if captured.ok:
+            return safe_subprocess.decode_output(captured.stdout).strip("\r\n")
+    except Exception as exc:
+        logger.debug("git status --porcelain failed: %s", exc)
+    return ""
+
+
 def _get_developer_id() -> str:
     """Derive developer identity from git config or environment."""
     try:
@@ -795,7 +816,7 @@ def _get_modified_and_unpushed_files() -> set[str]:
 
     # Part 1: dirty/staged files
     try:
-        out = _git_capture_text(["git", "status", "--porcelain"])
+        out = _git_capture_status_porcelain()
         if out:
             for line in out.splitlines():
                 if len(line) > 3:
