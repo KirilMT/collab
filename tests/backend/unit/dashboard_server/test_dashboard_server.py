@@ -8,9 +8,17 @@ import json
 import os
 import threading
 import urllib.request
+import zipfile
+from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from collab import dashboard_server as mod
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_COLLAB_PKG = str(_REPO_ROOT / "collab")
+_PYPROJECT = str(_REPO_ROOT / "pyproject.toml")
 
 
 def test_prepare_dashboard_server_serves_sibling_static_assets(monkeypatch, tmp_path):
@@ -344,3 +352,122 @@ def test_start_dashboard_http_server_failure_unlinks_html(monkeypatch, tmp_path)
     )
     assert url is None
     assert not html.exists()
+
+
+# --- Dashboard static-asset packaging guards -------------------------------
+
+
+def test_local_static_refs_from_html_finds_dashboard_format():
+    html = '<script src="dashboard-format.js"></script>'
+    assert mod.local_static_refs_from_html(html) == ("dashboard-format.js",)
+
+
+def test_local_static_refs_ignore_cdn_absolute_and_protocol_relative():
+    html = """
+    <link href="https://cdn.example.com/app.css" rel="stylesheet">
+    <script src="https://cdn.example.com/app.js"></script>
+    <script src="/absolute.js"></script>
+    <script src="//cdn.example.com/proto.js"></script>
+    <script src="local.js?v=1#frag"></script>
+    """
+    assert mod.local_static_refs_from_html(html) == ("local.js",)
+
+
+@pytest.mark.parametrize(
+    "patterns,rel,expected",
+    [
+        (("dashboard/**",), "dashboard-format.js", True),
+        (("dashboard/**",), "nested/asset.js", True),
+        (("dashboard/*.js",), "dashboard-format.js", True),
+        (("dashboard/index.html",), "index.html", True),
+        (("dashboard/index.html",), "dashboard-format.js", False),
+        ((), "dashboard-format.js", False),
+    ],
+)
+def test_package_data_covers_parametrized(patterns, rel, expected):
+    assert mod.package_data_covers(rel, patterns) is expected
+
+
+def test_shipped_dashboard_relative_paths_excludes_hidden(tmp_path):
+    dash = tmp_path / "dashboard"
+    dash.mkdir()
+    (dash / "index.html").write_text("<html></html>", encoding="utf-8")
+    (dash / "dashboard-format.js").write_text("{}", encoding="utf-8")
+    (dash / ".collab-dashboard-tmp.html").write_text("x", encoding="utf-8")
+    assert mod.shipped_dashboard_relative_paths(str(tmp_path)) == (
+        "dashboard-format.js",
+        "index.html",
+    )
+
+
+def test_source_tree_index_html_references_exist():
+    """Every local asset referenced by the shipped index.html exists on disk."""
+    index = Path(_COLLAB_PKG, "dashboard", "index.html").read_text(encoding="utf-8")
+    assert mod.missing_local_static_files(_COLLAB_PKG, index) == ()
+
+
+def test_pyproject_package_data_covers_all_dashboard_files():
+    """Regression: every shipped dashboard file is matched by package-data."""
+    patterns = mod.read_package_data_patterns(_PYPROJECT)
+    assert patterns, "package-data.collab must not be empty"
+    missing = mod.missing_package_data_coverage(_COLLAB_PKG, patterns)
+    assert missing == (), f"package-data omits dashboard files: {missing}"
+
+
+def test_dashboard_format_js_is_shipped_and_referenced():
+    """dashboard-format.js must be on disk, referenced, and packaged (0.4.1 bug)."""
+    shipped = mod.shipped_dashboard_relative_paths(_COLLAB_PKG)
+    assert "dashboard-format.js" in shipped
+    index = Path(_COLLAB_PKG, "dashboard", "index.html").read_text(encoding="utf-8")
+    assert "dashboard-format.js" in mod.local_static_refs_from_html(index)
+    patterns = mod.read_package_data_patterns(_PYPROJECT)
+    assert mod.package_data_covers("dashboard-format.js", patterns)
+
+
+def test_verify_dashboard_static_assets_reports_missing(tmp_path, caplog):
+    dash = tmp_path / "dashboard"
+    dash.mkdir()
+    (dash / "index.html").write_text(
+        '<script src="missing.js"></script>', encoding="utf-8"
+    )
+    with caplog.at_level("ERROR"):
+        missing = mod.verify_dashboard_static_assets(str(tmp_path))
+    assert missing == ("missing.js",)
+    assert any("missing.js" in rec.message for rec in caplog.records)
+
+
+def test_verify_dashboard_static_assets_missing_index(tmp_path):
+    (tmp_path / "dashboard").mkdir()
+    assert mod.verify_dashboard_static_assets(str(tmp_path)) == ("index.html",)
+
+
+def test_verify_dashboard_static_assets_ok(tmp_path):
+    dash = tmp_path / "dashboard"
+    dash.mkdir()
+    (dash / "index.html").write_text('<script src="ok.js"></script>', encoding="utf-8")
+    (dash / "ok.js").write_text("{}", encoding="utf-8")
+    assert mod.verify_dashboard_static_assets(str(tmp_path)) == ()
+
+
+def test_read_package_data_patterns_string_value(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.setuptools.package-data]\ncollab = "dashboard/**"\n',
+        encoding="utf-8",
+    )
+    assert mod.read_package_data_patterns(str(pyproject)) == ("dashboard/**",)
+
+
+def test_wheel_dashboard_helpers_with_synthetic_wheel(tmp_path):
+    wheel = tmp_path / "collab_runtime-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("collab/__init__.py", "")
+        archive.writestr("collab/dashboard/index.html", "<html></html>")
+        archive.writestr("collab/dashboard/dashboard-format.js", "{}")
+        archive.writestr("collab/dashboard/", "")
+    members = mod.wheel_dashboard_member_paths(str(wheel))
+    assert members == ("dashboard-format.js", "index.html")
+    assert mod.missing_wheel_dashboard_files(str(wheel), members) == ()
+    assert mod.missing_wheel_dashboard_files(str(wheel), ["absent.js"]) == (
+        "absent.js",
+    )
