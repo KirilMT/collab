@@ -207,6 +207,55 @@ function _getPythonCommand(workspaceRoot) {
 }
 
 /**
+ * Resolve the Python interpreter used to launch the watcher.
+ *
+ * CRITICAL (Windows file-lock safety): the watcher MUST be launched through the
+ * Python interpreter via `python -m collab.lock_client` rather than through the
+ * `collab.exe` console-script wrapper. On Windows a running `.exe` image is held
+ * open by the OS for the entire lifetime of the process, which makes the
+ * pip-installed `.venv\Scripts\collab.exe` impossible to delete (EBUSY) and
+ * leaves an extra launcher process in the tree that complicates clean shutdown.
+ * Using the interpreter directly means the tracked PID is the real watcher and
+ * no console-script wrapper is held open. Mirrors LockClient.daemon_start in
+ * collab/lock_client.py.
+ *
+ * Resolution order:
+ *   1. Sibling interpreter next to a detected absolute collab/collab-watcher
+ *      executable (the venv that actually contains the package).
+ *   2. The workspace .venv interpreter.
+ *   3. python / python3 from PATH as a last resort.
+ *
+ * @param {string} workspaceRoot
+ * @param {string|null} collabCommand Absolute path returned by detectCollab.
+ * @returns {string} Path or name of the Python interpreter to spawn.
+ */
+function resolveWatcherPython(workspaceRoot, collabCommand) {
+  const isWin = process.platform === "win32";
+  const pyName = isWin ? "python.exe" : "python";
+
+  // 1. Interpreter sibling to the detected venv executable.
+  if (collabCommand && path.isAbsolute(collabCommand)) {
+    try {
+      const sibling = path.join(path.dirname(collabCommand), pyName);
+      if (fs.existsSync(sibling)) return sibling;
+    } catch (e) {
+      logToCollab(`Sibling python resolution failed: ${e.message}`, "DEBUG");
+    }
+  }
+
+  // 2. Workspace .venv interpreter.
+  if (workspaceRoot) {
+    const venvPython = isWin
+      ? path.join(workspaceRoot, ".venv", "Scripts", pyName)
+      : path.join(workspaceRoot, ".venv", "bin", "python");
+    if (fs.existsSync(venvPython)) return venvPython;
+  }
+
+  // 3. PATH fallback.
+  return isWin ? "python" : "python3";
+}
+
+/**
  * Detect installed collab runtime.
  * Returns { command: string, version: string | null } if found,
  * or { command: null, error: string } if not found.
@@ -920,15 +969,28 @@ function startWatcher() {
       path.join(stateDir, ".daemon.pid"),
     ];
 
-    logToCollab(`Spawning watcher: ${collabRuntime.command} ${args.join(" ")}`);
+    // Launch the watcher through the Python interpreter (`python -m
+    // collab.lock_client watch ...`) instead of the `collab.exe` console-script
+    // wrapper. On Windows the running `.exe` image is locked by the OS for the
+    // life of the process, which makes `.venv\Scripts\collab.exe` undeletable
+    // (EBUSY) and adds a launcher process that breaks clean shutdown. Spawning
+    // the interpreter directly makes the tracked PID the real watcher and holds
+    // no console-script wrapper open. Mirrors LockClient.daemon_start in Python.
+    const pythonExe = resolveWatcherPython(workspaceRoot, collabRuntime.command);
+    const moduleArgs = ["-m", "collab.lock_client", ...args];
+
+    logToCollab(`Spawning watcher: ${pythonExe} ${moduleArgs.join(" ")}`);
 
     watcherProcess = spawn(
-      collabRuntime.command,
-      args,
+      pythonExe,
+      moduleArgs,
       {
         cwd: workspaceRoot,
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
+        // Prevent a console window from flashing on Windows while still keeping
+        // stdout/stderr pipes available for conflict/summary parsing.
+        windowsHide: true,
       },
     );
 
@@ -1090,8 +1152,22 @@ async function cmdOpenDashboard() {
     return;
   }
 
+  // Launch via the interpreter (`python -m collab.lock_client dashboard`) so the
+  // long-lived dashboard server never holds the `collab.exe` console-script
+  // wrapper open. On Windows that wrapper would otherwise be locked for the life
+  // of the server and block deletion of `.venv`.
+  //
+  // Quote the interpreter path so paths with spaces work. On Windows the default
+  // integrated terminal is PowerShell, where a quoted command must be invoked
+  // via the call operator (`& "<path>"`); Unix shells run the quoted path as-is.
+  const pythonExe = resolveWatcherPython(workspaceRoot, collabRuntime.command);
+  const quoted = `"${pythonExe}"`;
+  const invocation =
+    process.platform === "win32"
+      ? `& ${quoted} -m collab.lock_client dashboard`
+      : `${quoted} -m collab.lock_client dashboard`;
   const terminal = vscode.window.createTerminal("Collab Dashboard");
-  terminal.sendText(`${collabRuntime.command} dashboard`);
+  terminal.sendText(invocation);
   terminal.show();
 }
 

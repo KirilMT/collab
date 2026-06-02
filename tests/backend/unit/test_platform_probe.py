@@ -251,3 +251,67 @@ def test_iter_tasklist_skips_blank_csv_lines(monkeypatch):
 
     patch_subprocess(monkeypatch, run=_run)
     assert platform_probe.iter_tasklist_python_pids() == [77]
+
+
+def test_iter_collab_launcher_pids_non_windows(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
+    assert platform_probe.iter_collab_launcher_pids() == []
+
+
+def test_iter_collab_launcher_pids_no_tasklist(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(platform_probe.safe_subprocess, "is_test_mode", lambda: False)
+    assert platform_probe.iter_collab_launcher_pids() == []
+
+
+def test_iter_collab_launcher_pids_parses_both_images(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: "tasklist")
+
+    def _run(argv, **kwargs):
+        joined = " ".join(argv)
+        if "collab.exe" in joined:
+            return _completed(stdout='"collab.exe","321","Console","1","10 K"\n')
+        if "collab-watcher.exe" in joined:
+            return _completed(
+                stdout='"collab-watcher.exe","654","Console","1","10 K"\n'
+            )
+        return _completed(stdout="")
+
+    patch_subprocess(monkeypatch, run=_run)
+    pids = platform_probe.iter_collab_launcher_pids()
+    assert 321 in pids
+    assert 654 in pids
+
+
+def test_iter_collab_launcher_pids_skips_blank_lines(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: "tasklist")
+
+    def _run(argv, **kwargs):
+        if "collab.exe" in " ".join(argv):
+            return _completed(stdout="\n\n")
+        return _completed(stdout="")
+
+    patch_subprocess(monkeypatch, run=_run)
+    assert platform_probe.iter_collab_launcher_pids() == []
+
+
+def test_iter_collab_launcher_pids_skips_malformed_and_dedupes(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "win32")
+    monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: "tasklist")
+
+    def _run(argv, **kwargs):
+        if "collab.exe" in " ".join(argv):
+            return _completed(
+                stdout=(
+                    '\n"bad","notint","x"\n'
+                    '"collab.exe","88","Console","1","1 K"\n'
+                    '"collab.exe","88","Console","1","1 K"\n'
+                )
+            )
+        return _completed(stdout="")
+
+    patch_subprocess(monkeypatch, run=_run)
+    assert platform_probe.iter_collab_launcher_pids() == [88]
