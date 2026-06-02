@@ -11,10 +11,9 @@ and this project adheres to
 
 ## [0.4.2](https://github.com/KirilMT/collab/compare/v0.4.1...v0.4.2) (2026-06-02)
 
-
 ### Bug Fixes
 
-* **dashboard:** ship dashboard static assets in the wheel ([#62](https://github.com/KirilMT/collab/issues/62)) ([79e4073](https://github.com/KirilMT/collab/commit/79e407389f1a1cda8fb9ad13c9abc033820fbed0))
+- **dashboard:** ship dashboard static assets in the wheel ([#62](https://github.com/KirilMT/collab/issues/62)) ([79e4073](https://github.com/KirilMT/collab/commit/79e407389f1a1cda8fb9ad13c9abc033820fbed0))
 
 ## [0.4.1](https://github.com/KirilMT/collab/compare/v0.4.0...v0.4.1) (2026-06-01)
 
