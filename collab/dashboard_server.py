@@ -8,16 +8,20 @@ from that directory — not from a lone temp file in ``/tmp``.
 from __future__ import annotations
 
 import atexit
+import fnmatch
 import http.server
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
 import tomllib
 import urllib.parse
-from typing import Any, Callable, Optional, Tuple
+import zipfile
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +210,161 @@ def dashboard_directory(resource_root: str) -> str:
     return os.path.join(resource_root, "dashboard")
 
 
+# --- Dashboard static-asset packaging guards -------------------------------
+#
+# index.html loads sibling assets (e.g. ``dashboard-format.js``). If those files
+# are not shipped in the wheel ``[tool.setuptools.package-data]`` the browser gets
+# a 404 and the dashboard renders blank. The helpers below let the runtime warn on
+# a broken install and let tests prove every referenced/shipped asset is packaged.
+
+_PACKAGE_DASHBOARD_PREFIX = "dashboard/"
+_WHEEL_DASHBOARD_PREFIX = "collab/dashboard/"
+
+_LOCAL_SCRIPT_SRC = re.compile(
+    r'<script[^>]+src=["\'](?!https?://)([^"\']+)["\']',
+    re.IGNORECASE,
+)
+_LOCAL_LINK_HREF = re.compile(
+    r'<link[^>]+href=["\'](?!https?://)([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
+
+def _normalize_static_ref(ref: str) -> Optional[str]:
+    """Strip query/fragment and reject absolute or protocol-relative refs."""
+    path = ref.split("?", 1)[0].split("#", 1)[0].strip()
+    if not path or path.startswith("/"):
+        return None
+    return path.replace("\\", "/")
+
+
+def local_static_refs_from_html(html: str) -> Tuple[str, ...]:
+    """Return sorted relative script/link paths referenced by dashboard HTML.
+
+    CDN (``https://``) and absolute (``/foo``) references are ignored; only assets
+    that must ship inside the package are returned.
+    """
+    refs: list[str] = []
+    for pattern in (_LOCAL_SCRIPT_SRC, _LOCAL_LINK_HREF):
+        for raw in pattern.findall(html):
+            normalized = _normalize_static_ref(raw)
+            if normalized:
+                refs.append(normalized)
+    return tuple(sorted(set(refs)))
+
+
+def shipped_dashboard_relative_paths(resource_root: str) -> Tuple[str, ...]:
+    """Return dashboard-relative paths of files that must ship in the wheel.
+
+    Hidden files (e.g. injected ``.collab-dashboard-*`` temp HTML) are excluded.
+    """
+    dash_dir = Path(dashboard_directory(resource_root))
+    if not dash_dir.is_dir():
+        return ()
+    return tuple(
+        path.relative_to(dash_dir).as_posix()
+        for path in sorted(dash_dir.rglob("*"))
+        if path.is_file() and not path.name.startswith(".")
+    )
+
+
+def missing_local_static_files(resource_root: str, html: str) -> Tuple[str, ...]:
+    """Return local refs in *html* that are absent on disk under the dashboard dir."""
+    dash_dir = Path(dashboard_directory(resource_root))
+    return tuple(
+        rel
+        for rel in local_static_refs_from_html(html)
+        if not (dash_dir / rel).is_file()
+    )
+
+
+def verify_dashboard_static_assets(resource_root: str) -> Tuple[str, ...]:
+    """Log and return any local assets referenced by index.html but missing.
+
+    Called on each template read so a broken wheel (or partial dev tree) surfaces a
+    clear error instead of a silent blank dashboard.
+    """
+    dash_dir = Path(dashboard_directory(resource_root))
+    index_path = dash_dir / "index.html"
+    if not index_path.is_file():
+        logger.error("Dashboard template missing at %s", index_path)
+        return ("index.html",)
+    missing = missing_local_static_files(
+        resource_root, index_path.read_text(encoding="utf-8")
+    )
+    for rel in missing:
+        logger.error(
+            "Dashboard static asset missing at %s (broken wheel or dev tree)",
+            dash_dir / rel,
+        )
+    return missing
+
+
+def read_package_data_patterns(pyproject_path: str) -> Tuple[str, ...]:
+    """Return ``[tool.setuptools.package-data].collab`` glob patterns."""
+    with open(pyproject_path, "rb") as fh:
+        data = tomllib.load(fh)
+    patterns = (
+        data.get("tool", {})
+        .get("setuptools", {})
+        .get("package-data", {})
+        .get("collab", [])
+    )
+    if isinstance(patterns, str):
+        return (patterns,)
+    if isinstance(patterns, list):
+        return tuple(str(p) for p in patterns)
+    return ()
+
+
+def package_data_covers(relative_path: str, patterns: Sequence[str]) -> bool:
+    """Return True when a dashboard-relative path matches a package-data glob."""
+    for pattern in patterns:
+        if not pattern.startswith(_PACKAGE_DASHBOARD_PREFIX):
+            continue
+        suffix = pattern[len(_PACKAGE_DASHBOARD_PREFIX) :]
+        if suffix == "**":
+            return True
+        if fnmatch.fnmatch(relative_path, suffix):
+            return True
+    return False
+
+
+def missing_package_data_coverage(
+    resource_root: str, patterns: Sequence[str]
+) -> Tuple[str, ...]:
+    """Return shipped dashboard files not matched by any package-data glob."""
+    return tuple(
+        rel
+        for rel in shipped_dashboard_relative_paths(resource_root)
+        if not package_data_covers(rel, patterns)
+    )
+
+
+def wheel_dashboard_member_paths(wheel_path: str) -> Tuple[str, ...]:
+    """Return dashboard-relative paths contained in a built wheel archive."""
+    members: set[str] = set()
+    with zipfile.ZipFile(wheel_path) as archive:
+        for name in archive.namelist():
+            normalized = name.replace("\\", "/")
+            if normalized.startswith(_WHEEL_DASHBOARD_PREFIX) and not (
+                normalized.endswith("/")
+            ):
+                members.add(normalized[len(_WHEEL_DASHBOARD_PREFIX) :])
+    return tuple(sorted(members))
+
+
+def missing_wheel_dashboard_files(
+    wheel_path: str, required: Iterable[str]
+) -> Tuple[str, ...]:
+    """Return required dashboard paths absent from a built wheel."""
+    present = set(wheel_dashboard_member_paths(wheel_path))
+    return tuple(sorted(set(required) - present))
+
+
 def read_dashboard_template(resource_root: str) -> Optional[str]:
     """Read ``index.html`` from the dashboard package directory."""
+    verify_dashboard_static_assets(resource_root)
     html_path = os.path.join(dashboard_directory(resource_root), "index.html")
     if not os.path.exists(html_path):
         logger.error("Dashboard file not found at %s", html_path)

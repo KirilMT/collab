@@ -40,7 +40,10 @@ where = ["."]
 include = ["collab*"]
 
 [tool.setuptools.package-data]
-collab = ["dashboard/index.html"]
+# Ship every dashboard static asset (HTML/JS/CSS) recursively so a wheel can never
+# be missing a file referenced by index.html. A recursive glob means new assets are
+# packaged automatically without re-listing each filename.
+collab = ["dashboard/**"]
 
 [tool.black]
 line-length = 88
