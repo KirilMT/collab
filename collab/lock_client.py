@@ -3335,7 +3335,13 @@ class LockClient:
             return ""
         if not captured.ok:
             return ""
-        return safe_subprocess.decode_output(captured.stdout).strip()
+        # NOTE: Only trim surrounding newlines, never a full ``.strip()``.
+        # ``git status --porcelain`` lines begin with a 2-column status field
+        # (XY) whose first column is a space for worktree-only changes (e.g.
+        # " M path"). A full strip would remove the leading space of the FIRST
+        # line, shifting the fixed-width parse in ``_parse_git_status_path`` and
+        # silently dropping the first character of that path.
+        return safe_subprocess.decode_output(captured.stdout).strip("\r\n")
 
     @staticmethod
     def _git_ref_exists(ref: str) -> bool:

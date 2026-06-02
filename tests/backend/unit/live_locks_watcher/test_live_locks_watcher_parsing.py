@@ -7,6 +7,67 @@ import os
 from ._helpers import load_watcher_module
 
 
+def test_capture_git_status_porcelain_preserves_leading_space(monkeypatch):
+    """Regression: leading porcelain status space must survive capture.
+
+    A full ``.strip()`` of the output would drop the leading space of the FIRST line
+    (e.g. ``" M collab/dashboard_server.py"``), shifting the fixed-width parse so
+    ``collab/...`` becomes ``ollab/...`` and the extension can no longer match the
+    locked path.
+    """
+    from collab.safe_subprocess import CaptureResult
+
+    mod = load_watcher_module()
+    raw = b" M collab/dashboard_server.py\n M pyproject.toml\n"
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: CaptureResult(
+            argv=("git", "status", "--porcelain"),
+            returncode=0,
+            stdout=raw,
+            stderr=b"",
+        ),
+    )
+
+    out = mod._git_capture_status_porcelain()
+    first_line = out.splitlines()[0]
+
+    assert first_line.startswith(" M ")
+    assert mod._parse_git_status_path(first_line) == "collab/dashboard_server.py"
+
+
+def test_capture_git_status_porcelain_returns_empty_on_failure(monkeypatch):
+    """A non-ok capture yields an empty string rather than raising."""
+    from collab.safe_subprocess import CaptureResult
+
+    mod = load_watcher_module()
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: CaptureResult(
+            argv=("git", "status", "--porcelain"),
+            returncode=1,
+            stdout=b"",
+            stderr=b"fatal",
+        ),
+    )
+
+    assert mod._git_capture_status_porcelain() == ""
+
+
+def test_capture_git_status_porcelain_swallows_exceptions(monkeypatch):
+    """An exception from the subprocess layer is logged and yields ""."""
+    mod = load_watcher_module()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("git exploded")
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _boom)
+
+    assert mod._git_capture_status_porcelain() == ""
+
+
 def test_parse_git_status_path_rename_and_quotes():
     mod = load_watcher_module()
     sample = 'R  "src/old.py -> src/new.py"'
