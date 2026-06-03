@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1](https://github.com/KirilMT/collab/compare/v0.5.0...v0.5.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **ide:** ship init-hooks and IDE-safe git hooks for VS Code/Cursor ([#76](https://github.com/KirilMT/collab/issues/76)) ([#77](https://github.com/KirilMT/collab/issues/77)) ([9f25996](https://github.com/KirilMT/collab/commit/9f25996a7c992e70f5a08c654e8a2aae230ef023))
+
 ## [0.5.0](https://github.com/KirilMT/collab/compare/v0.4.2...v0.5.0) (2026-06-03)
 
 ### Features
