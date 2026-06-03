@@ -197,6 +197,17 @@ def _run_cli() -> None:
     # dashboard
     sub.add_parser("dashboard", help="Open the collaborative dashboard")
 
+    # init-hooks (offline: installs bundled git hooks into the current repo)
+    ih = sub.add_parser(
+        "init-hooks",
+        help="Install collab git hooks into the current repository",
+    )
+    ih.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing non-collab hooks",
+    )
+
     # reconcile
     sub.add_parser("reconcile", help="Sync local git status with Supabase")
 
@@ -261,6 +272,24 @@ def _run_cli() -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # init-hooks is a purely local filesystem operation: install the bundled
+    # git hooks without constructing a LockClient or touching Supabase.
+    if args.command == "init-hooks":
+        from .githooks import install_hooks
+
+        hooks_summary = install_hooks(force=getattr(args, "force", False))
+        installed = hooks_summary.get("installed") or []
+        skipped = hooks_summary.get("skipped") or []
+        print(f"✓ Installed collab git hooks into {hooks_summary.get('hooks_dir')}")
+        if installed:
+            print(f"  Installed: {', '.join(installed)}")
+        if skipped:
+            print(
+                "  Skipped (existing non-collab hooks; rerun with --force): "
+                f"{', '.join(skipped)}"
+            )
+        sys.exit(0)
 
     local_only = args.command in ("daemon-status", "daemon-stop")
 

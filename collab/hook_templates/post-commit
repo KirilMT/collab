@@ -1,0 +1,30 @@
+#!/bin/sh
+# Collab git hook (installed by `collab init-hooks`).
+# Locks remain active until push.
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "[collab] Commit detected. Locks remain active until files are pushed."
+
+VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
+VENV_BIN="$PROJECT_ROOT/.venv/bin"
+if [ -d "$VENV_SCRIPTS" ]; then
+    export PATH="$VENV_SCRIPTS:$PATH"
+fi
+if [ -d "$VENV_BIN" ]; then
+    export PATH="$VENV_BIN:$PATH"
+fi
+
+PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/Scripts/pre-commit.exe"
+if [ ! -x "$PRE_COMMIT_BIN" ]; then
+    PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/bin/pre-commit"
+fi
+if [ ! -x "$PRE_COMMIT_BIN" ]; then
+    PRE_COMMIT_BIN="$(command -v pre-commit 2>/dev/null || true)"
+fi
+
+if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
+    "$PRE_COMMIT_BIN" run --hook-stage post-commit "$@" 2>/dev/null || true
+fi
+
+exit 0

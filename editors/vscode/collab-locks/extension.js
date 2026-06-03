@@ -256,22 +256,53 @@ function resolveWatcherPython(workspaceRoot, collabCommand) {
 }
 
 /**
+ * Resolve collab.cliPath setting (${workspaceFolder} expansion).
+ * @param {string} cliPath Raw setting value
+ * @param {string|null} workspaceRoot
+ * @returns {string}
+ */
+function resolveConfiguredCliPath(cliPath, workspaceRoot) {
+  let resolved = String(cliPath || "").trim();
+  if (!resolved) return "";
+  if (workspaceRoot) {
+    resolved = resolved.replace(/\$\{workspaceFolder\}/g, workspaceRoot);
+  }
+  return path.normalize(resolved);
+}
+
+/**
  * Detect installed collab runtime.
  * Returns { command: string, version: string | null } if found,
  * or { command: null, error: string } if not found.
  *
  * Tries:
- * 1. collab command in PATH
- * 2. collab-watcher command in PATH
- * 3. Workspace .venv/Scripts/collab.exe or collab-watcher.exe
+ * 1. collab.cliPath workspace setting (when set and file exists)
+ * 2. Workspace .venv/Scripts/collab.exe or collab-watcher.exe
+ * 3. collab / collab-watcher on PATH
  */
 function detectCollab(workspaceRoot) {
+  try {
+    const folder = workspaceRoot
+      ? vscode.Uri.file(workspaceRoot)
+      : vscode.workspace.workspaceFolders?.[0]?.uri;
+    const configured = vscode.workspace.getConfiguration("collab", folder).get("cliPath");
+    const resolved = resolveConfiguredCliPath(configured, workspaceRoot);
+    if (resolved && fs.existsSync(resolved)) {
+      return { command: resolved, version: null };
+    }
+    if (resolved) {
+      logToCollab(`collab.cliPath not found: ${resolved}`, "WARN");
+    }
+  } catch (e) {
+    logToCollab(`collab.cliPath lookup failed: ${e.message}`, "DEBUG");
+  }
+
   const candidates = [
     { name: "collab", cmd: "collab" },
     { name: "collab-watcher", cmd: "collab-watcher" },
   ];
 
-  // If workspace has venv, check there first
+  // Prefer project-local venv before global PATH (matches git hook resolution).
   if (workspaceRoot) {
     const isWin = process.platform === "win32";
     const venvBin = isWin ? "Scripts" : "bin";

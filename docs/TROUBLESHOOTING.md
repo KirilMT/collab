@@ -128,6 +128,38 @@ If the watcher works from your IDE but not CLI, compare which Python binary each
 
 ---
 
+## Commit works in terminal but fails in VS Code / Cursor Source Control
+
+**Symptoms:** **Commit** or **Commit & Push** from the IDE shows `Git: [collab] Checking locks for staged files...` and then fails or appears hung. The same commit from an integrated terminal (often with `.venv` activated) succeeds.
+
+**Cause:** IDE git runs hooks in a subprocess that usually does **not** inherit your activated virtual environment. Collab lock checks may succeed, but chained hooks (`pre-commit run`, `language: system` validators) can still resolve **system** `python` and miss venv-only tools (`yamllint`, project linters, etc.). Cursor’s git UI also tends to show only the **last collab-branded line**, which can look like a collab-only failure while validation failed later.
+
+**Fix:**
+
+1. **Reinstall the packaged hooks** from a current runtime so the IDE-safe templates are in place:
+
+   ```bash
+   pip install -U collab-runtime
+   collab init-hooks --force
+   ```
+
+   These hooks prepend the project `.venv` to `PATH` **before** lock checks and validations, print `[collab] Locks OK - running project validations...` at the lock/validation handoff, and call `python -m collab.githooks` (no collab-repo files required in the consumer).
+
+2. Open **View → Output → Git** (or **Show Command Output** in the error dialog) for the full hook log—not only the modal title.
+3. Pin the extension CLI if needed: set `collab.cliPath` to `${workspaceFolder}/.venv/Scripts/collab.exe` (Windows) or `${workspaceFolder}/.venv/bin/collab` (macOS/Linux) in workspace settings. (This affects the extension's watcher/dashboard detection, **not** the git commit path.)
+4. Confirm **Python: Select Interpreter** points at this repo’s `.venv` (affects terminals and tasks, not git hooks directly).
+5. If you maintain a **custom** `scripts/hooks/pre-commit` overlay instead of `collab init-hooks`, mirror the same **venv-first `PATH`** export and `python -m collab.githooks acquire-staged` call.
+
+**Still failing?** Run the same commit from Git Bash without activating venv:
+
+```powershell
+git commit -m "test: hook probe"
+```
+
+If that fails too, fix hook/`PATH` resolution before blaming the IDE.
+
+---
+
 ## Extension cannot find runtime
 
 **Symptoms:** VS Code collab-locks extension reports missing `collab`.

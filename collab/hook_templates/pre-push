@@ -1,16 +1,19 @@
 #!/bin/sh
-# Collaborative file lock - pre-push hook
+# Collab git hook (installed by `collab init-hooks`).
 # Runs pre-push validation first, then releases locks only on success.
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+LOCK_STRICT="${LOCK_STRICT:-0}"
 
 VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
 VENV_BIN="$PROJECT_ROOT/.venv/bin"
 if [ -d "$VENV_SCRIPTS" ]; then
-    export PATH="$VENV_SCRIPTS:$PATH"
+    PATH="$VENV_SCRIPTS:$PATH"
+    export PATH
 fi
 if [ -d "$VENV_BIN" ]; then
-    export PATH="$VENV_BIN:$PATH"
+    PATH="$VENV_BIN:$PATH"
+    export PATH
 fi
 
 PYTHON="$PROJECT_ROOT/.venv/Scripts/python.exe"
@@ -33,12 +36,23 @@ if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
     "$PRE_COMMIT_BIN" run --hook-stage pre-push
     VALIDATION_EXIT=$?
     if [ $VALIDATION_EXIT -ne 0 ]; then
-        echo "[collab] Pre-push validation failed - keeping locks active."
+        echo "[collab] Pre-push validation failed - keeping locks active." >&2
         exit $VALIDATION_EXIT
     fi
 fi
 
-echo "[collab] Releasing all locks after successful pre-push validation..."
-"$PYTHON" "$PROJECT_ROOT/scripts/collab_git_hook.py" release-all
+# Verify the canonical runtime is importable before attempting to release.
+if ! "$PYTHON" -c "import collab.githooks" >/dev/null 2>&1; then
+    echo "[collab] Warning: collab-runtime not importable; locks were not released." >&2
+    echo "[collab]   pip install collab-runtime" >&2
+    if [ "$LOCK_STRICT" = "1" ]; then
+        echo "[collab] LOCK_STRICT=1 -> blocking push." >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+echo "[collab] Releasing all locks after successful pre-push validation..." >&2
+"$PYTHON" -m collab.githooks release-all
 
 exit 0

@@ -105,6 +105,19 @@ collab active
 
 If connected, this lists all currently active locks (empty on a fresh setup).
 
+### 4 — Install Git Hooks (optional)
+
+```bash
+collab init-hooks
+```
+
+This installs `pre-commit`, `post-commit`, `pre-push`, and `commit-msg` hooks into the current
+repository. The hooks acquire locks for staged files, block commits that conflict with another
+developer's lock, and release locks after a successful push. They resolve the project `.venv` first,
+so **commits from VS Code / Cursor Source Control behave the same as a venv-activated terminal**.
+
+Existing non-collab hooks are preserved; pass `--force` to overwrite them.
+
 ---
 
 ## CLI Reference
@@ -136,6 +149,10 @@ collab force-release-all
 # Batch operations
 collab acquire-batch path/to/a.py path/to/b.py --reason "Refactoring"
 collab release-batch path/to/a.py path/to/b.py
+
+# Install git hooks into the current repo (offline)
+collab init-hooks
+collab init-hooks --force
 
 # Reconcile local and remote lock state
 collab reconcile

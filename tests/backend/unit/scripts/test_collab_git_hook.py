@@ -224,7 +224,25 @@ def test_acquire_staged_success(monkeypatch):
     with redirect_stderr(err):
         rc = hook.acquire_staged()
     assert rc == 0
-    assert "Locks acquired" in err.getvalue()
+    out = err.getvalue()
+    assert "Checking locks for 2 staged files" in out
+    assert "Locks acquired" in out
+
+
+def test_hook_log_flushes_stderr(monkeypatch):
+    flushed = {"count": 0}
+    real_stderr = sys.stderr
+
+    class _Stderr:
+        def write(self, text):
+            real_stderr.write(text)
+
+        def flush(self):
+            flushed["count"] += 1
+
+    monkeypatch.setattr(sys, "stderr", _Stderr())
+    hook._hook_log("[collab] probe")
+    assert flushed["count"] >= 1
 
 
 def test_release_all_success_and_failure(monkeypatch):

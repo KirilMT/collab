@@ -19,6 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _hook_log(message: str) -> None:
+    """Emit hook progress on stderr and flush for IDE git UIs (VS Code/Cursor)."""
+    print(message, file=sys.stderr)
+    sys.stderr.flush()
+
+
 def _git_output(*args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -99,12 +105,15 @@ def acquire_staged() -> int:
 
     watcher_pid = _watcher_pid()
     if watcher_pid is not None:
-        print(
+        _hook_log(
             "[collab] Watcher running "
-            f"(PID: {watcher_pid}) — skipping pre-commit lock acquisition.",
-            file=sys.stderr,
+            f"(PID: {watcher_pid}) — skipping pre-commit lock acquisition."
         )
         return 0
+
+    count = len(staged_files)
+    file_word = "file" if count == 1 else "files"
+    _hook_log(f"[collab] Checking locks for {count} staged {file_word}...")
 
     try:
         client = LockClient()
@@ -112,24 +121,23 @@ def acquire_staged() -> int:
             staged_files, reason="pre-commit"
         )
     except Exception as exc:
-        print(f"[collab] Warning: lock check failed: {exc}", file=sys.stderr)
+        _hook_log(f"[collab] Warning: lock check failed: {exc}")
         return 1 if os.getenv("LOCK_STRICT", "0") == "1" else 0
 
     if ok:
-        print(
-            f"[collab] Locks acquired for {len(staged_files)} staged file(s).",
-            file=sys.stderr,
+        _hook_log(
+            f"[collab] Locks acquired for {count} staged {file_word}.",
         )
         return 0
 
-    print("[collab] Commit blocked due to lock conflicts:", file=sys.stderr)
+    _hook_log("[collab] Commit blocked due to lock conflicts:")
     for file_path in failed:
         try:
             status = client.get_lock_status(file_path)
         except Exception:
             status = {}
         owner = status.get("locked_by") or status.get("developer_id") or "unknown"
-        print(f"  - {file_path} (locked by @{owner})", file=sys.stderr)
+        _hook_log(f"  - {file_path} (locked by @{owner})")
     return 1
 
 
