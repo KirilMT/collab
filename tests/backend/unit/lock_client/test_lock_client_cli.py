@@ -282,6 +282,128 @@ def test_cli_active_mine_filter(monkeypatch, capsys):
     assert "other.py" not in out
 
 
+def test_cli_claim_runs_as_agent(monkeypatch, capsys):
+    """`collab claim` attributes to an AI agent even without explicit env."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.delenv("COLLAB_AGENT_ID", raising=False)
+    monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+
+    captured: dict = {}
+
+    def fake_acquire_multiple(self, paths, **kwargs):
+        captured["origin"] = self.origin
+        captured["agent_id"] = self.agent_id
+        captured["agent_kind"] = self.agent_kind
+        captured["agent_label"] = self.agent_label
+        captured["paths"] = list(paths)
+        return True, [], "ok"
+
+    monkeypatch.setattr(mod.LockClient, "acquire_multiple", fake_acquire_multiple)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lock_client.py", "claim", "collab/app.py", "--label", "fix-ci"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    assert captured["origin"] == "agent"
+    assert captured["agent_id"]  # auto-generated, non-empty
+    assert captured["agent_label"] == "fix-ci"
+    assert captured["paths"] == ["collab/app.py"]
+
+
+def test_cli_claim_reports_failures(monkeypatch, capsys):
+    """The claim command surfaces files it could not claim and exits non-zero."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "acquire_multiple",
+        lambda self, paths, **k: (False, ["b.py"], "conflict"),
+    )
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "claim", "a.py", "b.py"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Could not claim" in out
+    assert "b.py" in out
+
+
+def test_cli_watch_forces_human_identity(monkeypatch):
+    """The watcher must run as the human even when COLLAB_AGENT_ID is set."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setenv("COLLAB_AGENT_ID", "agent-explicit")
+    monkeypatch.delenv("COLLAB_WATCHER_AGENT_ID", raising=False)
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+
+    captured: dict = {}
+
+    def fake_watch(self, **kwargs):
+        captured["agent_id"] = self.agent_id
+        captured["origin"] = self.origin
+        captured["agent_kind"] = self.agent_kind
+
+    monkeypatch.setattr(mod.LockClient, "watch", fake_watch)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "watch"])
+
+    mod._run_cli()
+
+    assert captured["agent_id"] is None
+    assert captured["origin"] == "human"
+    assert captured["agent_kind"] is None
+
+
+def test_cli_watch_respects_dedicated_agent_watcher(monkeypatch):
+    """COLLAB_WATCHER_AGENT_ID opts into a dedicated agent watcher."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setenv("COLLAB_AGENT_ID", "agent-explicit")
+    monkeypatch.setenv("COLLAB_WATCHER_AGENT_ID", "agent-explicit")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
+    )
+
+    captured: dict = {}
+
+    def fake_watch(self, **kwargs):
+        captured["agent_id"] = self.agent_id
+        captured["origin"] = self.origin
+
+    monkeypatch.setattr(mod.LockClient, "watch", fake_watch)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "watch"])
+
+    mod._run_cli()
+
+    assert captured["agent_id"] == "agent-explicit"
+    assert captured["origin"] == "agent"
+
+
 def test_cli_active_with_locks(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")

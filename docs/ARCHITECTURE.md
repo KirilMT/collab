@@ -67,16 +67,38 @@ Local state is stored in the `COLLAB_STATE_DIR` (default: `.collab/` or a tempor
 
 Lock ownership is keyed on **`(developer_id, agent_id)`**:
 
-| Field          | Role                                                           |
-| -------------- | -------------------------------------------------------------- |
-| `developer_id` | Human / GitHub user (git `user.name` or `COLLAB_DEVELOPER_ID`) |
-| `agent_id`     | Stable per-agent run id (`COLLAB_AGENT_ID` or auto-generated)  |
-| `agent_label`  | Optional display name (`COLLAB_AGENT_LABEL`)                   |
+| Field          | Role                                                                     |
+| -------------- | ------------------------------------------------------------------------ |
+| `developer_id` | Human / GitHub user (git `user.name` or `COLLAB_DEVELOPER_ID`)           |
+| `agent_id`     | Stable per-agent run id (`COLLAB_AGENT_ID` or auto-generated). Internal. |
+| `agent_label`  | Human task description ("why / what for"), e.g. `fix-ci-dashboard`       |
+| `origin`       | Authoritative attribution: `human` or `agent`                            |
+| `agent_kind`   | AI runtime family for display (`cursor`, `claude-code`, `copilot`, ...)  |
 
 When `agent_id` is `NULL`, behavior matches the original human-only model. Two agents under the same
-human conflict on acquire; each agent has its own watcher PID file (`.daemon.<agent_id>.pid`) and
-session token seed. A human may `force-release` any lock held under their own `developer_id`
+human conflict on acquire; a human may `force-release` any lock held under their own `developer_id`
 (including other agents' locks) without an admin key.
+
+### Strict attribution (who actually edited)
+
+`origin` is the source of truth for the dashboard and is decided by an **explicit** signal, never by
+ambient IDE environment variables:
+
+- The **background watcher** attributes bulk git-status auto-locks to the **human** (`origin=human`,
+  `agent_id=NULL`) — even when launched from a terminal that exported `CURSOR_TRACE_ID` etc. This
+  applies to **both** watcher entrypoints: the `collab watch` daemon (VS Code / Cursor) and
+  `python -m collab.live_locks_watcher` (PyCharm). A dedicated agent watcher can opt in with
+  `COLLAB_WATCHER_AGENT_ID`.
+- An **AI agent** claims the files it edits via `collab claim` (or an IDE edit hook), producing
+  `origin=agent` with a unique `agent_id`.
+- The `acquire_lock` RPC lets an agent claim atomically **take over** a same-developer human
+  auto-lock (attribution upgrade), but a human/watcher lock can **never** take over an agent lock of
+  the same developer. The watcher also skips files already held by the developer's agent and cleans
+  up the developer's agent locks once the work is pushed.
+
+The dashboard renders `origin`/`agent_kind`/`agent_label` as a friendly **"AI Agent"** badge (runtime
+icon + task) for agent locks and a **"User"** chip for human locks. The raw `agent_id` is shown only
+in a hover tooltip, never as the primary label.
 
 ---
 

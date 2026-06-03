@@ -87,9 +87,57 @@ def test_detect_agent_runtime_label_cursor(monkeypatch):
 def test_identity_summary_modes():
     human = agent_identity.identity_summary("alice", None, None)
     assert human["mode"] == "human"
-    agent = agent_identity.identity_summary("alice", "agent-1", "task")
+    assert human["agent_kind"] is None
+    agent = agent_identity.identity_summary("alice", "agent-1", "task", "cursor")
     assert agent["mode"] == "agent"
     assert agent["agent_id"] == "agent-1"
+    assert agent["agent_kind"] == "cursor"
+
+
+def test_runtime_marker_alone_does_not_enable_agent_mode(monkeypatch):
+    """Strict attribution: ambient IDE markers must not flip on agent mode."""
+    monkeypatch.delenv("COLLAB_AGENT_ID", raising=False)
+    monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
+    monkeypatch.setenv("CURSOR_TRACE_ID", "trace-xyz")
+    assert agent_identity.is_agent_mode_requested() is False
+
+
+def test_resolve_agent_kind_precedence(monkeypatch):
+    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
+    for env_name, _ in agent_identity._AGENT_RUNTIME_MARKERS:
+        monkeypatch.delenv(env_name, raising=False)
+
+    # Explicit wins.
+    assert (
+        agent_identity.resolve_agent_kind(explicit_kind="Cursor", agent_id="a")
+        == "cursor"
+    )
+    # Detected runtime marker.
+    monkeypatch.setenv("CURSOR_TRACE_ID", "t")
+    assert agent_identity.resolve_agent_kind(agent_id="a") == "cursor"
+    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
+    # Unknown runtime but an agent id → generic "other".
+    assert agent_identity.resolve_agent_kind(agent_id="agent-x") == "other"
+    # Human (no agent) → None.
+    assert agent_identity.resolve_agent_kind(agent_id=None) is None
+
+
+def test_resolve_agent_kind_env(monkeypatch):
+    monkeypatch.setenv("COLLAB_AGENT_KIND", "claude-code")
+    assert agent_identity.resolve_agent_kind(agent_id="a") == "claude-code"
+
+
+def test_resolve_origin():
+    assert agent_identity.resolve_origin(None) == "human"
+    assert agent_identity.resolve_origin("agent-1") == "agent"
+
+
+def test_resolve_agent_label_no_runtime_fallback(monkeypatch):
+    """The task label must not be polluted with the runtime name."""
+    monkeypatch.delenv("COLLAB_AGENT_LABEL", raising=False)
+    monkeypatch.setenv("CURSOR_TRACE_ID", "trace")
+    assert agent_identity.resolve_agent_label() is None
+    assert agent_identity.resolve_agent_label(explicit_label="fix-bug") == "fix-bug"
 
 
 def test_read_clean_env_strips_inline_comment(monkeypatch):
@@ -192,11 +240,16 @@ def test_is_truthy_env_and_agent_mode_from_collab_agent_mode(monkeypatch):
     assert agent_identity.is_agent_mode_requested() is True
 
 
-def test_is_agent_mode_requested_from_runtime_marker(monkeypatch):
+def test_is_agent_mode_requested_ignores_runtime_marker(monkeypatch):
+    """Strict attribution: a runtime marker alone must NOT enable agent mode.
+
+    Only an explicit COLLAB_AGENT_ID / COLLAB_AGENT_MODE turns on agent attribution; the
+    detected runtime is used for display only.
+    """
     monkeypatch.delenv("COLLAB_AGENT_ID", raising=False)
     monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
     monkeypatch.setenv("COMPOSER_SESSION_ID", "sess-1")
-    assert agent_identity.is_agent_mode_requested() is True
+    assert agent_identity.is_agent_mode_requested() is False
 
 
 def test_resolve_agent_label_returns_none_when_empty(monkeypatch):

@@ -16,7 +16,14 @@ create table if not exists file_locks (
   acquired_at timestamptz not null default now(),
   is_ephemeral boolean not null default false,
   agent_id text,
-  agent_label text
+  agent_label text,
+  -- ``origin`` records WHO performed the change: a human developer or an AI
+  -- agent. It is the authoritative attribution signal for the dashboard and is
+  -- independent of ``agent_id`` (which is the unique-but-internal owner key).
+  origin text not null default 'human',
+  -- ``agent_kind`` is the AI runtime family (cursor, claude-code, copilot, ...)
+  -- used purely for friendly display (icon/name). Never shown as a raw id.
+  agent_kind text
 );
 
 create table if not exists file_locks_history (
@@ -31,8 +38,42 @@ create table if not exists file_locks_history (
   outcome text,
   is_ephemeral boolean,
   agent_id text,
-  agent_label text
+  agent_label text,
+  origin text,
+  agent_kind text
 );
+
+-- ---------------------------------------------------------------------------
+-- Idempotent column upgrades for existing installs (safe to re-run).
+-- These let consumer projects adopt strict attribution without recreating
+-- their tables or losing data.
+-- ---------------------------------------------------------------------------
+alter table file_locks
+  add column if not exists agent_id text,
+  add column if not exists agent_label text,
+  add column if not exists origin text not null default 'human',
+  add column if not exists agent_kind text;
+
+alter table file_locks_history
+  add column if not exists agent_id text,
+  add column if not exists agent_label text,
+  add column if not exists origin text,
+  add column if not exists agent_kind text;
+
+-- Backfill attribution for rows created before strict attribution existed:
+-- a non-null agent_id implies the lock was created by an AI agent. Note that
+-- `origin` is added as NOT NULL DEFAULT 'human', so existing agent rows are
+-- initially filled with 'human' and MUST be corrected here (do not gate on
+-- `origin is null`). These updates are idempotent and safe to re-run.
+update file_locks
+  set origin = 'agent'
+  where agent_id is not null and origin is distinct from 'agent';
+update file_locks
+  set origin = 'human'
+  where agent_id is null and origin is distinct from 'human';
+update file_locks_history
+  set origin = case when agent_id is not null then 'agent' else 'human' end
+  where origin is null or origin not in ('human', 'agent');
 
 -- ---------------------------------------------------------------------------
 -- Indexes
@@ -113,19 +154,28 @@ create or replace function acquire_lock(
   p_lock_token text,
   p_is_ephemeral boolean default false,
   p_agent_id text default null,
-  p_agent_label text default null
+  p_agent_label text default null,
+  p_origin text default 'human',
+  p_agent_kind text default null
 ) returns table(status text, lock_token text, owner text, agent_id text) as $$
 declare
   rec record;
 begin
-  -- Try to insert; on conflict update only when the same human AND agent own the lock.
+  -- Try to insert; on conflict the lock may be taken over only when:
+  --   1. The same human AND the same agent already own it (normal renewal), OR
+  --   2. An AI agent explicitly claims a file currently held by a *human*
+  --      auto-lock of the SAME developer (attribution upgrade). This keeps
+  --      attribution correct regardless of the race between the background
+  --      watcher (human) and an agent's explicit claim. A human/watcher lock
+  --      can never take over an existing agent lock of the same developer.
   insert into file_locks(
     file_path, developer_id, branch_name, lock_token, reason,
-    acquired_at, is_ephemeral, agent_id, agent_label
+    acquired_at, is_ephemeral, agent_id, agent_label, origin, agent_kind
   )
   values (
     p_file_path, p_developer_id, p_branch_name, p_lock_token, p_reason,
-    now(), p_is_ephemeral, p_agent_id, p_agent_label
+    now(), p_is_ephemeral, p_agent_id, p_agent_label,
+    coalesce(p_origin, 'human'), p_agent_kind
   )
   on conflict (file_path) do update
     set developer_id = excluded.developer_id,
@@ -135,9 +185,14 @@ begin
         acquired_at = now(),
         is_ephemeral = excluded.is_ephemeral,
         agent_id = excluded.agent_id,
-        agent_label = excluded.agent_label
+        agent_label = excluded.agent_label,
+        origin = excluded.origin,
+        agent_kind = excluded.agent_kind
     where file_locks.developer_id = excluded.developer_id
-      and coalesce(file_locks.agent_id, '') = coalesce(excluded.agent_id, '')
+      and (
+        coalesce(file_locks.agent_id, '') = coalesce(excluded.agent_id, '')
+        or (excluded.origin = 'agent' and file_locks.origin = 'human')
+      )
   returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id into rec;
 
   if found then
@@ -158,10 +213,12 @@ returns trigger as $$
 begin
   insert into file_locks_history(
     file_path, developer_id, lock_token, branch_name, reason,
-    acquired_at, released_at, outcome, is_ephemeral, agent_id, agent_label
+    acquired_at, released_at, outcome, is_ephemeral, agent_id, agent_label,
+    origin, agent_kind
   ) values (
     OLD.file_path, OLD.developer_id, OLD.lock_token, OLD.branch_name, OLD.reason,
-    OLD.acquired_at, now(), 'released', OLD.is_ephemeral, OLD.agent_id, OLD.agent_label
+    OLD.acquired_at, now(), 'released', OLD.is_ephemeral, OLD.agent_id, OLD.agent_label,
+    OLD.origin, OLD.agent_kind
   );
 
   -- Automatic retention: keep history bounded without manual intervention.

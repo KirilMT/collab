@@ -14,13 +14,19 @@ For conceptual overview and environment variables, see [API.md](./API.md).
 collab [--agent-id ID] [--agent-label LABEL] [-h] <command> ...
 ```
 
-| Global option   | Env fallback         | Description                                   |
-| --------------- | -------------------- | --------------------------------------------- |
-| `--agent-id`    | `COLLAB_AGENT_ID`    | Stable agent identity (multi-agent workflows) |
-| `--agent-label` | `COLLAB_AGENT_LABEL` | Human-readable agent/task label for display   |
+| Global option   | Env fallback         | Description                                              |
+| --------------- | -------------------- | -------------------------------------------------------- |
+| `--agent-id`    | `COLLAB_AGENT_ID`    | Stable agent identity (multi-agent workflows)            |
+| `--agent-label` | `COLLAB_AGENT_LABEL` | Human task label for display ("why / what for")          |
+| `--agent-kind`  | `COLLAB_AGENT_KIND`  | AI runtime family for the dashboard icon (auto-detected) |
 
 Set `COLLAB_AGENT_MODE=1` to auto-generate and persist an agent id when none is provided
 (useful for AI agent sessions). Run `collab whoami` to see the resolved identity.
+
+For automatic, **runtime-agnostic** agent attribution, wire your IDE's edit hook to
+`collab claim` (see [`scripts/agent-hooks/`](../scripts/agent-hooks/README.md)). The background
+watcher always attributes bulk git changes to the human; set `COLLAB_WATCHER_AGENT_ID` only if you
+intentionally want a dedicated agent watcher.
 
 Exit codes: most commands use `0` on success, `1` on failure. `daemon-status` uses `0` if the watcher is running, `1` if not.
 
@@ -28,18 +34,19 @@ Exit codes: most commands use `0` on success, `1` on failure. `daemon-status` us
 
 ## Lock commands
 
-| Command             | Arguments       | Options    | Description                                    |
-| ------------------- | --------------- | ---------- | ---------------------------------------------- |
-| `acquire`           | `file_path`     | `--reason` | Acquire lock; prints lock id on success        |
-| `release`           | `file_path`     | —          | Release your lock                              |
-| `status`            | `file_path`     | —          | Show lock holder or unlocked                   |
-| `active`            | —               | `--mine`   | List all active locks (may auto-start watcher) |
-| `whoami`            | —               | —          | Show resolved developer and agent identity     |
-| `release-all`       | —               | —          | Release all locks held by you                  |
-| `acquire-batch`     | `file_paths...` | `--reason` | Acquire multiple files                         |
-| `release-batch`     | `file_paths...` | —          | Release multiple files                         |
-| `force-release`     | `file_path`     | —          | Admin/service-role force release               |
-| `force-release-all` | —               | —          | Admin: release every lock                      |
+| Command             | Arguments       | Options               | Description                                                                                                   |
+| ------------------- | --------------- | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `acquire`           | `file_path`     | `--reason`            | Acquire lock; prints lock id on success                                                                       |
+| `claim`             | `file_paths...` | `--reason`, `--label` | Claim file(s) as an AI agent edit (`origin=agent`); auto-generates a unique agent id. Used by IDE edit hooks. |
+| `release`           | `file_path`     | —                     | Release your lock                                                                                             |
+| `status`            | `file_path`     | —                     | Show lock holder or unlocked                                                                                  |
+| `active`            | —               | `--mine`              | List all active locks (may auto-start watcher)                                                                |
+| `whoami`            | —               | —                     | Show resolved developer and agent identity                                                                    |
+| `release-all`       | —               | —                     | Release all locks held by you                                                                                 |
+| `acquire-batch`     | `file_paths...` | `--reason`            | Acquire multiple files                                                                                        |
+| `release-batch`     | `file_paths...` | —                     | Release multiple files                                                                                        |
+| `force-release`     | `file_path`     | —                     | Admin/service-role force release                                                                              |
+| `force-release-all` | —               | —                     | Admin: release every lock                                                                                     |
 
 **Examples:**
 

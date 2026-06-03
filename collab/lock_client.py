@@ -661,6 +661,8 @@ class LockClient:
         local_only: bool = False,
         agent_id: Optional[str] = None,
         agent_label: Optional[str] = None,
+        agent_kind: Optional[str] = None,
+        agent_mode: Optional[bool] = None,
     ) -> None:
         from typing import cast
 
@@ -669,15 +671,21 @@ class LockClient:
             developer_id or os.getenv("COLLAB_DEVELOPER_ID") or self._get_git_username()
         )
         state_dir = _get_state_dir()
-        runtime_label = agent_identity.detect_agent_runtime_label()
         self.agent_id = agent_identity.resolve_agent_id(
             state_dir,
             explicit_agent_id=agent_id,
+            agent_mode=agent_mode,
         )
         self.agent_label = agent_identity.resolve_agent_label(
             explicit_label=agent_label,
-            runtime_label=runtime_label,
         )
+        # Runtime family (cursor/claude-code/...) for friendly display only, and
+        # the authoritative attribution origin (human vs agent).
+        self.agent_kind = agent_identity.resolve_agent_kind(
+            explicit_kind=agent_kind,
+            agent_id=self.agent_id,
+        )
+        self.origin = agent_identity.resolve_origin(self.agent_id)
         _refresh_pid_file(self.agent_id)
         self._client: Optional[Any] = None
         self._branch_name: Optional[str] = None
@@ -1032,6 +1040,9 @@ class LockClient:
             "p_is_ephemeral": bool(getattr(self, "_is_ephemeral", False)),
             "p_agent_id": self.agent_id,
             "p_agent_label": self.agent_label,
+            "p_origin": getattr(self, "origin", None)
+            or agent_identity.resolve_origin(self.agent_id),
+            "p_agent_kind": getattr(self, "agent_kind", None),
         }
 
         client = self._require_client()
@@ -1379,6 +1390,35 @@ class LockClient:
             if ok:
                 count += 1
         return True, count, "Success"
+
+    def _release_developer_scope(self, file_path: str) -> bool:
+        """Release a lock owned by this *developer*, ignoring agent identity.
+
+        Used by the background watcher to clean up this developer's locks for files that
+        are no longer in progress (e.g. after a push), regardless of whether the lock
+        was created by the human auto-watcher or by an AI agent of the same developer.
+        It never touches other developers' locks.
+        """
+        if getattr(self, "_is_ephemeral", False):
+            return True
+        try:
+            client = self._require_client()
+            norm = self._normalize_file_path(file_path)
+            delete_query = (
+                client.table("file_locks")
+                .delete()
+                .eq("file_path", norm)
+                .eq("developer_id", self.developer_id)
+            )
+            res = _retry_on_network_error(lambda: delete_query.execute())
+        except Exception as exc:
+            logger.debug("Developer-scoped release failed for %s: %s", file_path, exc)
+            return False
+        status, data, error = self._parse_response(res)
+        if error:
+            logger.debug("Developer-scoped release error for %s: %s", file_path, error)
+            return False
+        return status in (200, 204) or data is not None
 
     def history(self, file_path: Optional[str] = None, limit: int = 20) -> List[Dict]:
         """Fetch lock history records.
@@ -3140,11 +3180,18 @@ class LockClient:
             my_locks = {lk["file_path"] for lk in active if self._lock_owned_by_me(lk)}
             # Build lock_map for token checking
             lock_map: dict[str, dict] = {}
+            # Locks held by THIS developer under a *different* identity. For the
+            # background watcher (which runs as the human) these are the same
+            # developer's AI-agent locks. We must never downgrade or fight them.
+            dev_other_locked: set = set()
             for lk in active:
+                fp = lk.get("file_path", "")
+                if not fp:
+                    continue
                 if self._lock_owned_by_me(lk):
-                    fp = lk.get("file_path", "")
-                    if fp:
-                        lock_map[fp] = lk
+                    lock_map[fp] = lk
+                elif lk.get("developer_id") == self.developer_id:
+                    dev_other_locked.add(fp)
         except LockServiceUnavailableError as e:
             logger.error("Error getting Supabase locks (service unavailable): %s", e)
             return git_modified
@@ -3152,10 +3199,25 @@ class LockClient:
             logger.error("Error getting Supabase locks: %s", e)
             return git_modified
 
-        # Calculate lock categories
+        # Calculate lock categories. ``missing`` excludes files already held by
+        # this developer under another (agent) identity so the human watcher does
+        # not generate conflicts trying to re-lock an agent's file. Agent claims
+        # take over human auto-locks atomically in the acquire_lock RPC instead.
         stale = my_locks - git_modified
-        missing = git_modified - my_locks
+        missing = git_modified - my_locks - dev_other_locked
         still_valid = my_locks & git_modified
+
+        # Clean up this developer's agent locks for work that is no longer in
+        # progress (e.g. after a push). Keeps the dashboard tidy without an agent
+        # having to explicitly release every file it touched.
+        dev_other_stale = dev_other_locked - git_modified
+        if dev_other_stale:
+            for fp in sorted(dev_other_stale):
+                logger.info(
+                    "🔓 [STALE-RELEASED] %s — agent lock for clean file, releasing",
+                    fp,
+                )
+                self._release_developer_scope(fp)
 
         # Count categories for summary
         current_token = self._get_session_token()

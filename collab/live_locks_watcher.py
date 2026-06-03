@@ -239,6 +239,7 @@ PID_FILE = agent_identity.resolve_daemon_pid_path(_COLLAB_ROOT, None)
 DEVELOPER_ID = None
 AGENT_ID: Optional[str] = None
 AGENT_LABEL: Optional[str] = None
+AGENT_KIND: Optional[str] = None
 
 # Ephemeral developer prefixes enforced in code (not via env) to avoid
 # accidental disabling of lock persistence. These accounts (e.g. CI/test)
@@ -362,6 +363,8 @@ def _acquire_rpc_payload(
         "p_is_ephemeral": _is_ephemeral_dev(DEVELOPER_ID or ""),
         "p_agent_id": AGENT_ID,
         "p_agent_label": AGENT_LABEL,
+        "p_origin": agent_identity.resolve_origin(AGENT_ID),
+        "p_agent_kind": AGENT_KIND,
     }
 
 
@@ -749,6 +752,88 @@ def _process_releases(client, released: set[str]) -> None:
                 logger.exception("Failed to release lock for %s", fp)
 
 
+def _resolve_watcher_identity(
+    agent_id: Optional[str],
+    agent_label: Optional[str],
+    agent_kind: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Apply strict attribution to the watcher's resolved identity.
+
+    The background watcher attributes bulk auto-locks to the human developer
+    unless a dedicated agent watcher explicitly opts in via
+    ``COLLAB_WATCHER_AGENT_ID``. When opting out (the default) the agent identity
+    is dropped so every auto-lock is stamped ``origin=human``.
+    """
+    if os.getenv("COLLAB_WATCHER_AGENT_ID", "").strip():
+        return agent_id, agent_label, agent_kind
+    return None, None, None
+
+
+def _release_developer_scope(client, file_path: str) -> bool:
+    """Release a lock for *file_path* owned by this developer, ignoring agent id.
+
+    Used by the human watcher to clean up the developer's own AI-agent locks for files
+    that are no longer in progress. It never touches other developers' locks. Returns
+    True when a delete was issued.
+    """
+    if _is_ephemeral_dev(DEVELOPER_ID):
+        return False
+    try:
+        client.table("file_locks").delete().eq("file_path", file_path).eq(
+            "developer_id", DEVELOPER_ID
+        ).execute()
+    except Exception:
+        logger.exception("Developer-scoped release failed for %s", file_path)
+        return False
+    _local_owned_locks.discard(file_path)
+    return True
+
+
+def _fetch_dev_other_identity_locks(client) -> dict[str, dict]:
+    """Return ``{file_path: lock}`` for same-developer locks NOT owned by us.
+
+    When the watcher runs as the human (the default), these are the developer's
+    AI-agent locks. Strict attribution requires the watcher to never fight or
+    downgrade them: it skips acquiring such files and only cleans them up once the
+    file is no longer in progress (mirrors the ``collab watch`` reconcile).
+    """
+    try:
+        res = (
+            client.table("file_locks")
+            .select("*")
+            .eq("developer_id", DEVELOPER_ID)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+    except Exception as exc:
+        logger.debug("Failed to fetch developer locks for attribution: %s", exc)
+        return {}
+    out: dict[str, dict] = {}
+    for lock in rows:
+        fp = lock.get("file_path", "")
+        if fp and not _lock_owned_by_us(lock):
+            out[fp] = lock
+    return out
+
+
+def _filter_agent_held_new_files(client, new_files: set[str]) -> set[str]:
+    """Drop files already held by this developer's AI agent from the auto-lock set.
+
+    Prevents the human watcher from fighting (and logging false CONFLICTs for) the
+    developer's own agent locks. The ``acquire_lock`` RPC lets an agent take over a
+    human auto-lock, never the reverse, so the human watcher must simply step aside.
+    """
+    if not new_files:
+        return new_files
+    dev_agent_held = set(_fetch_dev_other_identity_locks(client))
+    skipped = new_files & dev_agent_held
+    if not skipped:
+        return new_files
+    for fp in sorted(skipped):
+        logger.debug("Skipping auto-lock for %s — held by this developer's agent", fp)
+    return new_files - dev_agent_held
+
+
 def _start_dashboard_server() -> str | None:
     """Start a local HTTP server serving the dashboard and return the URL.
 
@@ -970,8 +1055,24 @@ def _reconcile_on_startup(client) -> None:
             except Exception:
                 logger.exception("Failed to release stale lock for %s", fp)
 
-    # Step D: Acquire locks for dirty files that have no existing lock
+    # Step D: Acquire locks for dirty files that have no existing lock.
     unlocked_dirty = dirty_files - locked_paths
+
+    # Strict attribution: never fight this developer's AI-agent locks. Skip
+    # acquiring files already held by the same developer under another identity,
+    # and clean up such locks for files that are no longer in progress.
+    dev_other = _fetch_dev_other_identity_locks(client)
+    if dev_other:
+        unlocked_dirty -= set(dev_other)
+        for fp in sorted(set(dev_other) - dirty_files):
+            if _release_developer_scope(client, fp):
+                n_stale_released += 1
+                msg = (
+                    f"🔓 [STALE-RELEASED] {fp} — agent lock for clean file, "
+                    "releasing"
+                )
+                logger.info(_color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg)
+
     for fp in sorted(unlocked_dirty):
         if _should_ignore_path(fp):
             continue
@@ -1647,10 +1748,19 @@ def main() -> None:
         sys.exit(1)
 
     # Normalize developer ID aggressively to avoid token divergence between IDEs
-    global DEVELOPER_ID, AGENT_ID, AGENT_LABEL, SESSION_TOKEN, PID_FILE
+    global DEVELOPER_ID, AGENT_ID, AGENT_LABEL, AGENT_KIND, SESSION_TOKEN, PID_FILE
     DEVELOPER_ID = _get_developer_id().strip()
     AGENT_ID = agent_identity.resolve_agent_id(_COLLAB_ROOT)
     AGENT_LABEL = agent_identity.resolve_agent_label()
+    AGENT_KIND = agent_identity.resolve_agent_kind(agent_id=AGENT_ID)
+    # Strict attribution (parity with ``collab watch``): the background watcher —
+    # including this PyCharm entrypoint — attributes bulk git-status auto-locks to
+    # the HUMAN developer, never to an AI agent, even when launched from a terminal
+    # that exported COLLAB_AGENT_ID/COLLAB_AGENT_MODE. A dedicated agent watcher
+    # can opt in explicitly via COLLAB_WATCHER_AGENT_ID.
+    AGENT_ID, AGENT_LABEL, AGENT_KIND = _resolve_watcher_identity(
+        AGENT_ID, AGENT_LABEL, AGENT_KIND
+    )
     if not os.getenv("COLLAB_PID_FILE"):
         PID_FILE = agent_identity.resolve_daemon_pid_path(_COLLAB_ROOT, AGENT_ID)
 
@@ -1848,6 +1958,10 @@ def main() -> None:
 
                 # New files to lock
                 new_files = current_modified - last_modified
+                # Strict attribution: never auto-lock (as the human) a file that
+                # this developer's AI agent already holds — that would create
+                # false CONFLICT noise and fight the agent.
+                new_files = _filter_agent_held_new_files(client, new_files)
                 # Delegate acquire/release logic to helper functions to allow
                 # targeted unit tests to exercise error/fallback branches.
                 _process_new_files(client, branch, new_files)

@@ -35,6 +35,25 @@ collab acquire path/to/file.py --reason "Working on feature X"
 - **Options:**
   - `--reason`, `-r`: A short description of why the lock is being acquired (highly recommended).
 
+#### `claim`
+
+Claim one or more files as an **AI agent** edit (`origin=agent`). Auto-generates and persists a
+unique agent identity when one is not supplied, so multiple agents never collide. This is the
+runtime-agnostic entrypoint that IDE edit hooks call (see `scripts/agent-hooks/`).
+
+```bash
+collab claim path/to/file.py --label "fix-ci-dashboard" --reason "AI agent edit"
+```
+
+- **Options:**
+  - `--label`: Human task label shown on the dashboard ("what for").
+  - `--reason`: Reason recorded on the lock.
+  - Identity also reads `COLLAB_AGENT_ID` / `COLLAB_AGENT_LABEL` / `COLLAB_AGENT_KIND` from the env.
+
+> The background watcher always attributes bulk git changes to the **human**. AI-agent attribution
+> happens only through an explicit `claim` (or `COLLAB_AGENT_ID`/`COLLAB_AGENT_MODE`), so normal human
+> work is never mislabelled.
+
 #### `release`
 
 Release a lock you currently hold.

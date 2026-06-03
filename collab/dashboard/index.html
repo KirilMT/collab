@@ -324,6 +324,55 @@
             color: #4338ca;
         }
 
+        /* Human vs AI actor attribution badges */
+        .actor-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            margin-left: 0.4rem;
+            padding: 0.12rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+        .user-chip {
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid var(--border-color);
+        }
+
+        .agent-badge {
+            background: linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%);
+            color: #5b21b6;
+            border: 1px solid #ddd6fe;
+        }
+
+        .agent-badge-owner {
+            background: linear-gradient(135deg, #ddd6fe 0%, #c7d2fe 100%);
+            color: #4c1d95;
+            border-color: #c4b5fd;
+        }
+
+        .agent-badge .agent-badge-kind {
+            font-weight: 700;
+            text-transform: capitalize;
+        }
+
+        .agent-badge .agent-badge-task {
+            font-weight: 500;
+            opacity: 0.85;
+            max-width: 16rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .agent-badge .agent-badge-sep {
+            opacity: 0.5;
+        }
+
         code {
             color: #1d4ed8;
             background: #f8fafc;
@@ -759,20 +808,98 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             return !!(SUPABASE_USER && lock.developer_id === SUPABASE_USER);
         }
 
+        function escapeHtml(value) {
+            return String(value == null ? "" : value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g , "&lt;") .replace( />/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function isAgentLock(lock) {
+            if (lock.origin === "agent") {
+                return true;
+            }
+            // Backward compatibility for rows created before `origin` existed.
+            return !!lock.agent_id && lock.origin !== "human";
+        }
+
+        function agentKindIcon(kind) {
+            switch (String(kind || "").toLowerCase()) {
+                case "cursor":
+                    return '<i class="fas fa-i-cursor"></i>';
+                case "copilot":
+                    return '<i class="fab fa-github"></i>';
+                case "claude-code":
+                case "claude":
+                case "composer":
+                case "other":
+                default:
+                    return '<i class="fas fa-robot"></i>';
+            }
+        }
+
+        function prettifyKind(kind) {
+            const k = String(kind || "").trim();
+            if (!k || k === "other") {
+                return "";
+            }
+            return k
+                .split(/[-_]/)
+                .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+                .join(" ");
+        }
+
         function formatDeveloperCell(lock) {
             const dev = lock.developer_id || "?";
-            const agentText = lock.agent_label || lock.agent_id;
-            const chip = agentText
-                ? '<span class="agent-chip' + (lockOwnedByMe(lock) ? " agent-chip-owner" : "") + '">' +
-                  agentText +
-                  "</span>"
-                : '<span class="agent-chip">user</span>';
-            return (
+            const devTag =
                 '<span class="dev-tag ' + (lockOwnedByMe(lock) ? "dev-tag-owner" : "") + '">' +
-                dev +
-                "</span>" +
-                chip
-            );
+                escapeHtml(dev) +
+                "</span>";
+
+            if (!isAgentLock(lock)) {
+                const userChip =
+                    '<span class="actor-chip user-chip" title="Edited by a human developer">' +
+                    '<i class="fas fa-user"></i>User</span>';
+                return devTag + userChip;
+            }
+
+            // AI agent lock: show clearly that it was an AI agent and what for.
+            // The raw agent_id is intentionally never displayed in the cell — it
+            // appears only in the hover tooltip for debugging.
+            const kind = lock.agent_kind || "";
+            const kindName = prettifyKind(kind);
+            const task = String(lock.agent_label || "").trim();
+
+            const tip = ["Edited by an AI agent"];
+            if (kindName) tip.push("Runtime: " + kindName);
+            if (task) tip.push("Task: " + task);
+            if (lock.agent_id) tip.push("Agent id: " + lock.agent_id);
+            if (lock.reason) tip.push("Reason: " + lock.reason);
+
+            let inner =
+                agentKindIcon(kind) + '<span class="agent-badge-text">AI Agent</span>';
+            if (kindName) {
+                inner +=
+                    '<span class="agent-badge-sep">·</span>' +
+                    '<span class="agent-badge-kind">' +
+                    escapeHtml(kindName) +
+                    "</span>";
+            }
+            if (task) {
+                inner +=
+                    '<span class="agent-badge-sep">·</span>' +
+                    '<span class="agent-badge-task">' +
+                    escapeHtml(task) +
+                    "</span>";
+            }
+
+            const badge =
+                '<span class="actor-chip agent-badge' + (lockOwnedByMe(lock) ? " agent-badge-owner" : "") + '" title="' + escapeHtml(tip.join("\n")) + '">' +
+                inner +
+                "</span>";
+
+            return devTag + badge;
         }
 
         function updateTimestamp() {

@@ -4,12 +4,7 @@ import types
 from datetime import datetime as _real_datetime
 from pathlib import Path
 
-from ._helpers import (
-    FakeClient,
-    FakeResponse,
-    load_lock_client_module,
-    patch_subprocess,
-)
+from ._helpers import FakeClient, FakeResponse, load_lock_client_module
 
 mod = load_lock_client_module()
 
@@ -159,14 +154,16 @@ def test_is_same_machine_token_returns_false_with_duplicates(monkeypatch):
 
 
 def test_get_cmdline_for_pid_windows_powershell_failure_returns_none(monkeypatch):
-    """Cover Windows fallback branch where PowerShell cmdline query fails."""
+    """Return None when neither psutil nor platform_probe can resolve cmdline."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.setattr(mod.shutil, "which", lambda _exe: None)
 
-    def _check_output(*_a, **_k):
-        raise RuntimeError("powershell failure")
+    class _BrokenPsutil:
+        def Process(self, _pid):
+            raise OSError("access denied")
 
-    patch_subprocess(monkeypatch, check_output=_check_output)
+    monkeypatch.setitem(sys.modules, "psutil", _BrokenPsutil())
+    monkeypatch.setattr(mod.platform_probe, "get_cmdline", lambda _pid: None)
+
     assert mod.LockClient._get_cmdline_for_pid(12345) is None
 
 

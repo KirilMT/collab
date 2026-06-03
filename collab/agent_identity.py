@@ -58,12 +58,18 @@ def detect_agent_runtime_label() -> Optional[str]:
 
 
 def is_agent_mode_requested() -> bool:
-    """Return True when agent identity should be active for this process."""
+    """Return True when agent identity should be active for this process.
+
+    STRICT ATTRIBUTION: the mere *presence* of an AI runtime (e.g. a process
+    spawned from a Cursor/Claude terminal that exports ``CURSOR_TRACE_ID``) does
+    NOT by itself attribute locks to an agent. Doing so caused every background
+    auto-lock to be mislabelled as the runtime. Agent attribution now requires an
+    *explicit* signal: ``COLLAB_AGENT_ID`` or ``COLLAB_AGENT_MODE``. The detected
+    runtime is still used for friendly display only (see :func:`resolve_agent_kind`).
+    """
     if _read_clean_env("COLLAB_AGENT_ID"):
         return True
     if _is_truthy_env("COLLAB_AGENT_MODE"):
-        return True
-    if detect_agent_runtime_label():
         return True
     return False
 
@@ -152,18 +158,57 @@ def resolve_agent_label(
     explicit_label: Optional[str] = None,
     runtime_label: Optional[str] = None,
 ) -> Optional[str]:
-    """Resolve optional human-readable agent label."""
+    """Resolve the human-readable *task* label (the "why / what for").
+
+    This intentionally does NOT fall back to the runtime name (e.g. ``cursor``): the
+    label describes the task an agent is working on (``fix-ci-dashboard``), while the
+    runtime family is tracked separately as ``agent_kind`` for display. When no task
+    label is supplied the dashboard shows a generic "AI Agent".
+    """
     for candidate in (
         explicit_label,
         _read_clean_env("COLLAB_AGENT_LABEL"),
         runtime_label,
-        detect_agent_runtime_label(),
     ):
         if candidate:
             val = candidate.strip()
             if val:
                 return val[:256]
     return None
+
+
+def resolve_agent_kind(
+    *,
+    explicit_kind: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve the AI runtime family for friendly display (icon/name).
+
+    Precedence: explicit value → ``COLLAB_AGENT_KIND`` → detected runtime marker.
+    When an agent identity exists but the runtime is unknown, falls back to the
+    generic ``"other"`` so the dashboard can still render an AI badge. Returns
+    ``None`` for human (no agent) locks.
+    """
+    for candidate in (
+        explicit_kind,
+        _read_clean_env("COLLAB_AGENT_KIND"),
+        detect_agent_runtime_label(),
+    ):
+        if candidate:
+            val = candidate.strip().lower()
+            if val:
+                return val[:64]
+    if agent_id:
+        return "other"
+    return None
+
+
+def resolve_origin(agent_id: Optional[str]) -> str:
+    """Return the authoritative attribution origin for a lock.
+
+    ``'agent'`` when a unique agent identity is present, otherwise ``'human'``.
+    """
+    return "agent" if agent_id else "human"
 
 
 def agent_ids_match(
@@ -282,6 +327,7 @@ def identity_summary(
     developer_id: str,
     agent_id: Optional[str],
     agent_label: Optional[str],
+    agent_kind: Optional[str] = None,
 ) -> dict[str, Optional[str]]:
     """Return a dict suitable for ``collab whoami`` JSON output."""
     mode = "agent" if agent_id else "human"
@@ -289,5 +335,6 @@ def identity_summary(
         "developer_id": developer_id,
         "agent_id": agent_id,
         "agent_label": agent_label,
+        "agent_kind": agent_kind,
         "mode": mode,
     }

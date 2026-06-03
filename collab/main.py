@@ -93,7 +93,16 @@ def _run_cli() -> None:
         "--agent-label",
         dest="agent_label",
         default=None,
-        help="Human-readable agent label (or set COLLAB_AGENT_LABEL)",
+        help="Human-readable agent task label (or set COLLAB_AGENT_LABEL)",
+    )
+    common.add_argument(
+        "--agent-kind",
+        dest="agent_kind",
+        default=None,
+        help=(
+            "AI runtime family for display, e.g. cursor|claude-code|copilot "
+            "(or set COLLAB_AGENT_KIND; auto-detected when possible)"
+        ),
     )
 
     parser = ArgumentParser(
@@ -106,6 +115,22 @@ def _run_cli() -> None:
     acq = sub.add_parser("acquire", help="Acquire a lock on a file")
     acq.add_argument("file_path")
     acq.add_argument("--reason", help="Reason for the lock")
+
+    # claim — runtime-agnostic entrypoint for AI agents / IDE hooks. Acquires
+    # one or more files as the current AI agent (origin=agent), auto-generating a
+    # stable agent identity when none is supplied. Designed to be invoked from
+    # any IDE's edit hook (Cursor, Claude Code, Copilot, Gemini, ...).
+    clm = sub.add_parser(
+        "claim",
+        help="Claim file(s) as an AI agent edit (origin=agent)",
+    )
+    clm.add_argument("file_paths", nargs="+")
+    clm.add_argument("--reason", help="Reason for the claim")
+    clm.add_argument(
+        "--label",
+        dest="claim_label",
+        help="Task label describing what the agent is working on",
+    )
 
     # release
     rel = sub.add_parser("release", help="Release a lock on a file")
@@ -238,16 +263,44 @@ def _run_cli() -> None:
         sys.exit(1)
 
     local_only = args.command in ("daemon-status", "daemon-stop")
+
+    # ``claim`` always runs as an AI agent. Enable agent mode so a stable agent
+    # identity is generated/persisted even when the caller (IDE hook) did not set
+    # COLLAB_AGENT_ID, and prefer the claim-specific task label.
+    resolved_agent_label = getattr(args, "agent_label", None)
+    agent_mode: bool | None = None
+    if args.command == "claim":
+        agent_mode = True
+        resolved_agent_label = (
+            getattr(args, "claim_label", None) or resolved_agent_label
+        )
+
     client = LockClient(
         local_only=local_only,
         agent_id=getattr(args, "agent_id", None),
-        agent_label=getattr(args, "agent_label", None),
+        agent_label=resolved_agent_label,
+        agent_kind=getattr(args, "agent_kind", None),
+        agent_mode=agent_mode,
     )
+
+    # The background watcher must attribute bulk git-status auto-locks to the
+    # HUMAN developer, never to an AI agent — even when launched from a terminal
+    # that exported agent env vars. A dedicated agent watcher can opt in with
+    # COLLAB_WATCHER_AGENT_ID.
+    if args.command == "watch":
+        watcher_agent = os.getenv("COLLAB_WATCHER_AGENT_ID", "").strip()
+        if not watcher_agent:
+            client.agent_id = None
+            client.agent_label = None
+            client.agent_kind = None
+            client.origin = "human"
+            client._session_token = None
 
     # Keep CLI output clean by silencing noisy dependency logs (httpx, urllib3,
     # postgrest, supabase) for user-facing commands that can hit network APIs.
     quiet_commands = {
         "acquire",
+        "claim",
         "release",
         "active",
         "status",
@@ -274,6 +327,7 @@ def _run_cli() -> None:
                 client.developer_id,
                 client.agent_id,
                 client.agent_label,
+                getattr(client, "agent_kind", None),
             )
             print(f"Developer: {summary['developer_id']}")
             print(f"Mode:      {summary['mode']}")
@@ -281,6 +335,8 @@ def _run_cli() -> None:
                 print(f"Agent ID:    {summary['agent_id']}")
             if summary["agent_label"]:
                 print(f"Agent label: {summary['agent_label']}")
+            if summary["agent_kind"]:
+                print(f"Agent kind:  {summary['agent_kind']}")
             sys.exit(0)
 
         elif args.command == "acquire":
@@ -289,6 +345,16 @@ def _run_cli() -> None:
                 print(f"✓ Locked {args.file_path} (ID: {msg})")
             else:
                 print(f"✗ Failed to lock {args.file_path}: {msg}")
+            sys.exit(0 if ok else 1)
+
+        elif args.command == "claim":
+            reason = args.reason or "AI agent edit"
+            ok, failed, _msg = client.acquire_multiple(args.file_paths, reason=reason)
+            claimed = [fp for fp in args.file_paths if fp not in failed]
+            if claimed:
+                print(f"✓ Claimed {len(claimed)} file(s) as agent.")
+            if failed:
+                print(f"✗ Could not claim: {', '.join(failed)}")
             sys.exit(0 if ok else 1)
 
         elif args.command == "release":

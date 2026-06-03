@@ -182,6 +182,10 @@ def test_runtime_config_endpoint_serves_fresh_env(monkeypatch, tmp_path):
     assert payload["anonKey"] == "anon-fresh"
     assert payload["user"] == "tester"
     assert payload["projectName"] == tmp_path.name
+    # Strict-attribution display fields are always present (null for human).
+    assert "agentId" in payload
+    assert "agentLabel" in payload
+    assert "agentKind" in payload
 
     os.unlink(html)
 

@@ -67,3 +67,22 @@ For each file in your list:
 1. Report to the user exactly which files are locked and by whom.
 2. Ask the user whether to wait, contact the owner, or proceed with a reduced scope.
 3. **ABSOLUTE AI RULE:** force-releasing another developer's lock is forbidden.
+
+---
+
+## Step 4: Claim Your Edits as an AI Agent (strict attribution)
+
+So the dashboard correctly shows that an **AI agent** edited a file (and what for) — instead of
+attributing it to the human — claim the files you edit:
+
+```bash
+collab claim path/to/file.py --label "<short task>" --reason "AI agent edit"
+```
+
+- `collab claim` marks the lock as `origin=agent` with a unique agent identity (auto-generated and
+  persisted; override with `COLLAB_AGENT_ID`). Set `COLLAB_AGENT_LABEL` once per task for a friendly
+  "what for" label.
+- Prefer automating this via your IDE's edit hook (see `scripts/agent-hooks/`,
+  enable with `COLLAB_AGENT_HOOKS=1`) so every agent edit is claimed without manual steps.
+- The background watcher attributes everything else to the human, so only files an agent actually
+  edits are shown as AI-agent work.
