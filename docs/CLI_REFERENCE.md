@@ -59,6 +59,52 @@ collab release-all
 
 ---
 
+## Project setup
+
+| Command      | Options   | Description                                                                                                  |
+| ------------ | --------- | ------------------------------------------------------------------------------------------------------------ |
+| `init-hooks` | `--force` | Install collab git hooks (`pre-commit`, `post-commit`, `pre-push`, `commit-msg`) into the current repository |
+
+`init-hooks` is an **offline** filesystem operation — it does not contact Supabase. It copies the
+hooks bundled with the installed wheel into the repo's git hooks directory (honoring
+`core.hooksPath` and worktrees). Existing **non-collab** hooks are preserved unless `--force` is
+passed. The installed hooks resolve the project `.venv` first, so commits from VS Code / Cursor
+Source Control behave the same as a venv-activated terminal.
+
+```bash
+pip install collab-runtime
+collab init-hooks            # install into the current git repo
+collab init-hooks --force    # overwrite existing non-collab hooks
+```
+
+The hooks invoke `python -m collab.githooks <acquire-staged|release-all>` from the project venv; no
+collab-repo files need to be present in the consumer repository.
+
+The bundled `pre-commit` / `pre-push` templates also:
+
+- prepend the project `.venv` to `PATH` **before** lock checks and validations;
+- verify `collab-runtime` is importable and print canonical install guidance otherwise (an unrelated
+  PyPI `collab` package will not expose `collab.githooks`);
+- honor `LOCK_STRICT=1` to block on lock/runtime problems;
+- print `[collab] Locks OK - running project validations...` at the lock/validation handoff so an IDE
+  git UI does not mistake a later validation failure for a collab lock failure.
+
+### Consumer hook strategies (two-layer model)
+
+`collab` is a **library**; consumers own their git workflow. Pick the layer that matches the repo:
+
+| Repo type                             | Recommended approach                                                                                                                                                                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Greenfield / library, no custom hooks | `collab init-hooks` — use the bundled templates as-is.                                                                                                                                                                                                           |
+| App with its own validation/hooks     | Keep a repo-owned overlay (e.g. `scripts/hooks/`) installed by your setup script; mirror the template's venv-first `PATH`, runtime guard, and handoff message. Optionally call `python -m collab.githooks acquire-staged` for fast, watcher-aware batch locking. |
+| Repo with unrelated existing hooks    | `collab init-hooks` (without `--force`) installs only where no non-collab hook exists; merge manually otherwise.                                                                                                                                                 |
+
+`collab init-hooks` is **not** meant to overwrite a maintained consumer overlay. For overlay repos,
+treat `collab/hook_templates/` as the **reference implementation** and re-apply your app-specific
+additions (runtime fingerprinting, extra install guidance, etc.) on top.
+
+---
+
 ## Daemon and watcher
 
 | Command         | Options                                                                    | Description                                      |
@@ -141,8 +187,9 @@ Full list: [API.md](./API.md#environment-variables).
 
 ## Related tools
 
-| Tool                                | Purpose                            |
-| ----------------------------------- | ---------------------------------- |
-| `python run.py`                     | Legacy wrapper → `collab.__main__` |
-| `python scripts/collab_git_hook.py` | Git hook helper                    |
-| `python scripts/validate_code.py`   | Local CI simulation                |
+| Tool                                | Purpose                                    |
+| ----------------------------------- | ------------------------------------------ |
+| `python run.py`                     | Legacy wrapper → `collab.__main__`         |
+| `python -m collab.githooks`         | Packaged git hook runtime (consumer repos) |
+| `python scripts/collab_git_hook.py` | Git hook helper (collab repo internal)     |
+| `python scripts/validate_code.py`   | Local CI simulation                        |

@@ -129,6 +129,10 @@ def hook_repo(tmp_path: Path) -> Path:
                     )
                     print("  - conflicted.txt (locked by @otherdev)", file=sys.stderr)
                     raise SystemExit(1)
+                print(
+                    "[collab] Checking locks for 1 staged file(s)...",
+                    file=sys.stderr,
+                )
                 print("[collab] Locks acquired for 1 staged file(s).", file=sys.stderr)
                 raise SystemExit(0)
             if command == "release-all":
@@ -202,6 +206,7 @@ def test_pre_commit_hook_prints_watcher_message_then_runs_framework(
         "[collab] Watcher running (PID: 3500) — skipping pre-commit lock acquisition."
         in combined
     )
+    assert "[collab] Locks OK — running project validations..." in combined
     assert "[fake-pre-commit] pre-commit" in combined
 
 
@@ -223,6 +228,47 @@ def test_pre_commit_hook_blocks_on_conflict(hook_repo: Path, git_sh: str):
     assert "conflicted.txt" in combined
     assert "[collab] Commit aborted due to file lock conflicts." in combined
     assert "[fake-pre-commit] pre-commit" not in combined
+    assert "[collab] Locks OK — running project validations..." not in combined
+
+
+def _path_without_venv_entries(path_value: str, venv_marker: str) -> str:
+    parts = [
+        segment
+        for segment in path_value.split(os.pathsep)
+        if segment and venv_marker.lower() not in segment.lower()
+    ]
+    return os.pathsep.join(parts) if parts else path_value
+
+
+def test_pre_commit_hook_uses_project_venv_without_venv_on_path(
+    hook_repo: Path,
+    git_sh: str,
+):
+    """IDE git runs hooks without venv; project python path must still work."""
+    staged = hook_repo / "no-venv-path.txt"
+    staged.write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "no-venv-path.txt"], cwd=hook_repo, check=True)
+
+    stripped_path = _path_without_venv_entries(
+        os.environ.get("PATH", ""),
+        str(hook_repo / ".venv"),
+    )
+    result = _run_sh(
+        hook_repo / "scripts" / "git-hooks" / "pre-commit",
+        git_sh,
+        hook_repo,
+        env={
+            "PATH": stripped_path,
+            "VIRTUAL_ENV": "",
+            "FAKE_ACQUIRE_MODE": "acquire",
+        },
+    )
+
+    assert result.returncode == 0
+    combined = _normalized_output(result)
+    assert "[collab] Checking locks for 1 staged file(s)..." in combined
+    assert "[collab] Locks OK — running project validations..." in combined
+    assert "[fake-pre-commit] pre-commit" in combined
 
 
 def test_post_commit_hook_prints_message_and_chains_framework(

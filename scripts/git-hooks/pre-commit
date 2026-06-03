@@ -3,6 +3,18 @@
 # Acquires locks for staged files before running the pre-commit framework.
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+
+# Prefer project venv on PATH so IDE git (VS Code/Cursor Source Control) and
+# chained language: system hooks resolve the same tools as an activated terminal.
+VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
+VENV_BIN="$PROJECT_ROOT/.venv/bin"
+if [ -d "$VENV_SCRIPTS" ]; then
+    export PATH="$VENV_SCRIPTS:$PATH"
+fi
+if [ -d "$VENV_BIN" ]; then
+    export PATH="$VENV_BIN:$PATH"
+fi
+
 PYTHON="$PROJECT_ROOT/.venv/Scripts/python.exe"
 if [ ! -x "$PYTHON" ]; then
     PYTHON="$PROJECT_ROOT/.venv/bin/python"
@@ -26,9 +38,9 @@ if [ $LOCK_EXIT -ne 0 ]; then
     exit 1
 fi
 
+echo "[collab] Locks OK — running project validations..." >&2
+
 PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/Scripts/pre-commit.exe"
-VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
-VENV_BIN="$PROJECT_ROOT/.venv/bin"
 if [ ! -x "$PRE_COMMIT_BIN" ]; then
     PRE_COMMIT_BIN="$PROJECT_ROOT/.venv/bin/pre-commit"
 fi
@@ -37,12 +49,6 @@ if [ ! -x "$PRE_COMMIT_BIN" ]; then
 fi
 
 if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
-    if [ -d "$VENV_SCRIPTS" ]; then
-        export PATH="$VENV_SCRIPTS:$PATH"
-    fi
-    if [ -d "$VENV_BIN" ]; then
-        export PATH="$VENV_BIN:$PATH"
-    fi
     exec "$PRE_COMMIT_BIN" run --hook-stage pre-commit "$@"
 fi
 

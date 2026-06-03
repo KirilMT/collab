@@ -19,6 +19,16 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Collab",
+      "properties": {
+        "collab.cliPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the `collab` CLI (or `collab-watcher`). Use `${workspaceFolder}` for the repo root. When empty, the extension auto-detects `.venv/Scripts/collab.exe` (Windows) or `.venv/bin/collab` (macOS/Linux), then `PATH`."
+        }
+      }
+    },
     "commands": [
       {
         "command": "collabLocks.showAll",

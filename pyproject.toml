@@ -43,7 +43,9 @@ include = ["collab*"]
 # Ship every dashboard static asset (HTML/JS/CSS) recursively so a wheel can never
 # be missing a file referenced by index.html. A recursive glob means new assets are
 # packaged automatically without re-listing each filename.
-collab = ["dashboard/**"]
+# hook_templates/* ships the git hooks installed by `collab init-hooks` so
+# consumers get the IDE-safe hooks straight from the wheel.
+collab = ["dashboard/**", "hook_templates/*"]
 
 [tool.black]
 line-length = 88

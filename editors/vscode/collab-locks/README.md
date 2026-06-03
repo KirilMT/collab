@@ -32,7 +32,7 @@ Then install the extension in VS Code:
 
 ## Configuration
 
-The extension reads workspace .env:
+The extension reads workspace `.env`:
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
@@ -40,4 +40,18 @@ SUPABASE_ANON_KEY=your_anon_key
 DEVELOPER_ID=your_name
 ```
 
-DEVELOPER_ID is optional. If missing, git user.name is used.
+`DEVELOPER_ID` is optional. If missing, `git user.name` is used.
+
+### `collab.cliPath` (optional)
+
+Pin the collab CLI when auto-detection picks the wrong binary (multiple installs, no venv on `PATH`):
+
+```json
+{
+  "collab.cliPath": "${workspaceFolder}/.venv/Scripts/collab.exe"
+}
+```
+
+On macOS/Linux use `.venv/bin/collab`. When empty, the extension checks the workspace `.venv` first, then `collab` / `collab-watcher` on `PATH`.
+
+Git commits from **Source Control** use `.git/hooks`, not the extension process. If commits work in a venv-activated terminal but not in the IDE, see [docs/TROUBLESHOOTING.md](../../../docs/TROUBLESHOOTING.md) — _Commit works in terminal but fails in VS Code / Cursor Source Control_.

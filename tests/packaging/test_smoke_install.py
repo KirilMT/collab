@@ -73,9 +73,16 @@ def test_smoke_install_build_and_import(tmp_path: Path) -> None:
     )
     assert wheel_missing == (), f"wheel missing dashboard files: {wheel_missing}"
     with zipfile.ZipFile(wheel_path) as archive:
-        names = [n.replace("\\", "/") for n in archive.namelist() if "dashboard" in n]
+        all_names = [n.replace("\\", "/") for n in archive.namelist()]
+    names = [n for n in all_names if "dashboard" in n]
     assert "collab/dashboard/index.html" in names
     assert "collab/dashboard/dashboard-format.js" in names
+
+    # Git hook templates must ship so `collab init-hooks` works in consumers.
+    for hook in ("pre-commit", "post-commit", "pre-push", "commit-msg"):
+        assert (
+            f"collab/hook_templates/{hook}" in all_names
+        ), f"wheel missing hook template: {hook}"
 
     subprocess.check_call(
         [str(py), "-m", "pip", "install", "--upgrade", "pip"]
@@ -112,3 +119,20 @@ def test_smoke_install_build_and_import(tmp_path: Path) -> None:
         text=True,
     )
     assert "dashboard assets ok" in installed_check
+
+    # Installed package must expose the bundled hook templates for `collab init-hooks`.
+    hooks_check = subprocess.check_output(
+        [
+            str(py),
+            "-c",
+            (
+                "from collab import githooks; "
+                "names = githooks.HOOK_NAMES; "
+                "texts = [githooks._read_template(n) for n in names]; "
+                "assert all(t.startswith('#!/bin/sh') for t in texts); "
+                "print('hook templates ok')"
+            ),
+        ],
+        text=True,
+    )
+    assert "hook templates ok" in hooks_check
