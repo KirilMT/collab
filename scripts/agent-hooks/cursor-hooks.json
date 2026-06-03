@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "python scripts/agent-hooks/collab_claim_hook.py",
+        "matcher": "Write|TabWrite"
+      }
+    ]
+  }
+}

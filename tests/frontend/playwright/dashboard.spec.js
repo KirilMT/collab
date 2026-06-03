@@ -455,6 +455,80 @@ test.describe("Collaborative Lock Dashboard — populated (seeded data)", () => 
 });
 
 // ===========================================================================
+// STRICT ATTRIBUTION — human vs AI agent badges
+// ===========================================================================
+test.describe("Collaborative Lock Dashboard — actor attribution", () => {
+  const ATTRIB_PAYLOAD = {
+    config: {
+      url: SEED_CONFIG.url,
+      anonKey: SEED_CONFIG.anonKey,
+      user: "alice",
+    },
+    activeLocks: [
+      {
+        file_path: "collab/agent_file.py",
+        developer_id: "alice",
+        agent_id: "agent-7c3f9a21",
+        agent_label: "fix-ci-dashboard",
+        agent_kind: "cursor",
+        origin: "agent",
+        branch_name: "main",
+        reason: "AI agent edit",
+        acquired_at: "2026-01-01T10:00:00+00:00",
+        lock_token: "t-agent",
+      },
+      {
+        file_path: "collab/human_file.py",
+        developer_id: "alice",
+        origin: "human",
+        branch_name: "main",
+        reason: "Auto-Watch Sync",
+        acquired_at: "2026-01-01T10:00:00+00:00",
+        lock_token: "t-human",
+      },
+    ],
+    history: [],
+  };
+
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date(FIXED_NOW));
+    await page.addInitScript(injectSupabaseSeed, ATTRIB_PAYLOAD);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByTestId("active-locks-body").locator("tr"),
+    ).toHaveCount(2);
+  });
+
+  test("AI agent lock shows an AI Agent badge with runtime + task", async ({
+    page,
+  }) => {
+    const badge = page.getByTestId("active-locks-body").locator(".agent-badge");
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toContainText("AI Agent");
+    await expect(badge).toContainText("Cursor");
+    await expect(badge).toContainText("fix-ci-dashboard");
+    // The raw agent_id must never appear in the visible cell text.
+    await expect(badge).not.toContainText("agent-7c3f9a21");
+  });
+
+  test("AI agent badge keeps the raw agent id only in the tooltip", async ({
+    page,
+  }) => {
+    const badge = page.getByTestId("active-locks-body").locator(".agent-badge");
+    await expect(badge).toHaveAttribute("title", /agent-7c3f9a21/);
+    await expect(badge).toHaveAttribute("title", /AI agent/);
+  });
+
+  test("human lock shows a User chip, not an AI badge", async ({ page }) => {
+    const userChip = page
+      .getByTestId("active-locks-body")
+      .locator(".user-chip");
+    await expect(userChip).toHaveCount(1);
+    await expect(userChip).toContainText("User");
+  });
+});
+
+// ===========================================================================
 // ADMIN FORCE-RELEASE (seeded, service role)
 // ===========================================================================
 test.describe("Collaborative Lock Dashboard — admin force release (seeded)", () => {

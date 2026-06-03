@@ -161,6 +161,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     state_dir = state_override or os.path.join(project_root, ".collab")
     agent_id = agent_identity.resolve_agent_id(state_dir)
     agent_label = agent_identity.resolve_agent_label()
+    agent_kind = agent_identity.resolve_agent_kind(agent_id=agent_id)
     project_name = resolve_project_display_name(project_root, file_vals)
     return {
         "url": url,
@@ -169,6 +170,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
         "user": user,
         "agentId": agent_id,
         "agentLabel": agent_label,
+        "agentKind": agent_kind,
         "projectName": project_name,
     }
 
