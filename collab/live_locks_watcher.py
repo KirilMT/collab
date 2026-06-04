@@ -1313,11 +1313,21 @@ def _graceful_shutdown() -> None:
                 )
 
             if git_failed:
-                # Fallback: release all locks for this developer + agent only
-                _scope_agent(
-                    client.table("file_locks").delete().eq("developer_id", dev_id)
-                ).execute()
-                logger.info("✅ Released all locks during shutdown (fallback).")
+                # Fail closed: when Git state is unknown, preserve ALL locks
+                # rather than releasing them. This matches lock_client daemon
+                # semantics and avoids unexpected lock loss when Git is
+                # temporarily unavailable (permissions, corrupt repo, etc.).
+                n_kept = len(_local_owned_locks)
+                logger.warning(
+                    (
+                        "Git status failed during shutdown — "
+                        "preserving %d lock(s) rather than releasing. "
+                        "Locks will remain until next successful sync."
+                    ),
+                    n_kept,
+                )
+                for fp in sorted(_local_owned_locks):
+                    logger.debug("🔒 [KEPT] %s — git unavailable, lock preserved", fp)
             else:
                 # Smart release: only release locks for clean files
                 n_kept = 0

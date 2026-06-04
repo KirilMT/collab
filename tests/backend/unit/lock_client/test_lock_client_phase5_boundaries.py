@@ -46,7 +46,7 @@ def test_run_git_status_returns_empty_when_capture_not_ok(monkeypatch):
             stderr=b"",
         ),
     )
-    assert mod.LockClient._run_git_status() == ""
+    assert mod.LockClient._run_git_status() == ("", False)
 
 
 def test_daemon_status_unavailable_on_pid_parse_error(capsys, monkeypatch, tmp_path):
@@ -312,7 +312,7 @@ def test_run_git_status_timeout_and_failure(monkeypatch):
             timed_out=True,
         ),
     )
-    assert mod.LockClient._run_git_status() == ""
+    assert mod.LockClient._run_git_status() == ("", False)
 
     monkeypatch.setattr(
         mod.safe_subprocess,
@@ -324,7 +324,7 @@ def test_run_git_status_timeout_and_failure(monkeypatch):
             stderr=b"",
         ),
     )
-    assert mod.LockClient._run_git_status() == ""
+    assert mod.LockClient._run_git_status() == ("", False)
 
 
 def test_run_git_status_preserves_leading_status_space(monkeypatch):
@@ -348,7 +348,7 @@ def test_run_git_status_preserves_leading_status_space(monkeypatch):
         ),
     )
 
-    out = mod.LockClient._run_git_status()
+    out, _ok = mod.LockClient._run_git_status()
     first_line = out.splitlines()[0]
 
     # Leading status space must be intact so the fixed-width parse is correct.
@@ -383,7 +383,7 @@ def test_reconcile_lock_service_unavailable_fallbacks(monkeypatch, tmp_path):
     monkeypatch.setattr(
         client,
         "_get_modified_and_unpushed_files",
-        lambda: [str(f)],
+        lambda: ([str(f)], True),
     )
     monkeypatch.setattr(client, "active", _active_unavailable)
     assert client._reconcile() == {str(f)}

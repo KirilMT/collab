@@ -461,7 +461,7 @@ def test_state_dir_and_normalize(monkeypatch, tmp_path):
 
 def test_session_token_and_git_helpers(monkeypatch):
     monkeypatch.setattr(
-        mod.LockClient, "_get_git_username", staticmethod(lambda: "devx")
+        mod.LockClient, "_get_git_username", staticmethod(lambda: "alice")
     )
     c1 = mod.LockClient(local_only=True)
     c2 = mod.LockClient(local_only=True)

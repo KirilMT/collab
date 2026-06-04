@@ -105,7 +105,9 @@ def test_acquire_missing_file_allowed_when_in_progress(monkeypatch):
 
     lc = mod.LockClient(developer_id="tester")
     target = ".github/workflows/validate-on-pr.yml"
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [target])
+    monkeypatch.setattr(
+        lc, "_get_modified_and_unpushed_files", lambda: ([target], True)
+    )
 
     ok, token = lc.acquire(target)
     assert ok is True

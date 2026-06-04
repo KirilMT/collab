@@ -161,7 +161,9 @@ def test_reconcile_skips_and_cleans_agent_locks(monkeypatch, tmp_path):
     acquired: list = []
     released: list = []
 
-    monkeypatch.setattr(client, "_get_modified_and_unpushed_files", lambda: ["a.py"])
+    monkeypatch.setattr(
+        client, "_get_modified_and_unpushed_files", lambda: (["a.py"], True)
+    )
     monkeypatch.setattr(client, "active", lambda: active_rows)
     monkeypatch.setattr(client, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(client, "_get_session_token", lambda: "tok")
