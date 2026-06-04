@@ -42,7 +42,9 @@ This creates:
 The `collab` command-line tool is distributed as `collab-runtime` on PyPI.
 
 **Development Setup (from source):**
-One command handles everything — dependencies, `.env` configuration, and IDE integration:
+One command handles everything — dependencies, `.env` configuration, and IDE integration.
+The included `.env.example` is pre-configured with the shared team Supabase project, so
+collaborative file locking works immediately after setup — no manual key entry required.
 
 **Windows (PowerShell):**
 
@@ -66,18 +68,19 @@ The setup script automatically:
 
 - Creates a Python virtual environment (`.venv`)
 - Installs `collab-runtime` and its dependencies
-- Prompts for Supabase credentials if `.env` is missing
+- Copies `.env.example` → `.env` with pre-configured Supabase team credentials
 - Copies git pre-commit hooks
 - Installs IDE extensions (VS Code, etc.)
 
 ### 3. Environment Variables
 
-After setup, verify your `.env` at the project root has these values:
+After setup, your `.env` at the project root is ready to use. The team Supabase URL and
+anon key come pre-configured from `.env.example`:
 
 | Variable                    | Description                                                         |
 | --------------------------- | ------------------------------------------------------------------- |
-| `SUPABASE_URL`              | Your Supabase project URL (from Project Settings → API)             |
-| `SUPABASE_ANON_KEY`         | Anonymous/public key (from Project Settings → API)                  |
+| `SUPABASE_URL`              | Your Supabase project URL (pre-configured from `.env.example`)      |
+| `SUPABASE_ANON_KEY`         | Anonymous/public key (pre-configured; safe to commit — see below)   |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (**required** for dashboard force-release)         |
 | `LOCK_STRICT`               | If `1`, git hooks block on lock errors. Default `0` (warn only)     |
 | `COLLAB_AGENT_ID`           | Optional stable id for an AI agent session (multi-agent locking)    |
@@ -87,7 +90,12 @@ After setup, verify your `.env` at the project root has these values:
 | `COLLAB_AGENT_HOOKS`        | Set to `1` to enable the IDE edit hook that auto-claims agent edits |
 | `COLLAB_WATCHER_AGENT_ID`   | Opt in to a dedicated agent watcher (default: watcher = human)      |
 
-> **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button. Without it, only your own locks can be released.
+> **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button.
+> Without it, only your own locks can be released. Obtain it from a maintainer — **never commit it**.
+>
+> The `SUPABASE_ANON_KEY` is a public client key and safe to commit. Security relies on
+> Row Level Security (RLS) policies, not key secrecy. If the anon key rotates, `.env.example`
+> will be updated and collaborators notified.
 
 ### Multi-agent usage (same GitHub user, multiple AI agents)
 
@@ -271,11 +279,14 @@ If the extension is not available, watcher notifications and CLI/dashboard behav
 
 ### Extension Configuration
 
-Create or update `.env` in your workspace:
+The extension reads `.env` from your workspace root. The team Supabase URL and anon key are
+pre-configured via `.env.example`, so no manual setup is needed for basic locking. Add the
+service-role key (obtained from a maintainer) if you need force-release:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_URL=https://<team-project>.supabase.co
+SUPABASE_ANON_KEY=<team-anon-jwt>
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here  # optional: ask maintainer
 DEVELOPER_ID=your_name  # optional: defaults to git config user.name
 ```
 

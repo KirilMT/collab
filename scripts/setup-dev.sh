@@ -36,6 +36,26 @@ WHITE='\033[0;37m'
 GRAY='\033[0;90m'
 NC='\033[0m'
 
+# Test whether a value is a placeholder (not a real configured value).
+# Pre-filled team values (like a real Supabase URL) do NOT match these patterns.
+is_placeholder_value() {
+    local value="$1"
+    if [ -z "$value" ]; then
+        return 0
+    fi
+    case "$value" in
+        your[-_]*)        return 0 ;;
+        example*)         return 0 ;;
+        CHANGE_ME*)       return 0 ;;
+        change[-_]me*)    return 0 ;;
+        \<team-*)         return 0 ;;
+        replace[-_]me*)   return 0 ;;
+        TODO*)            return 0 ;;
+        "")               return 0 ;;
+        *)                return 1 ;;
+    esac
+}
+
 echo -e "${CYAN}========================================"
 echo -e "   Collab Development Setup"
 echo -e "========================================${NC}\n"
@@ -279,6 +299,14 @@ else
     ERROR_COUNT=$((ERROR_COUNT + 1))
 fi
 
+# Install Playwright Chromium (required for E2E tests / validate_code.py)
+echo -en "   Installing ${MAGENTA}Playwright Chromium${NC} (E2E test browser)... "
+if npx playwright install chromium >/dev/null 2>&1; then
+    echo -e "${GREEN}OK${NC}"
+else
+    echo -e "${YELLOW}FAILED (non-fatal — E2E tests will need manual browser install)${NC}"
+fi
+
 # Step 5: Git Template + Pre-commit Hooks
 echo -e "\n${YELLOW}[Dev Step 5/6] Setting up Conventional Commit template and hooks...${NC}"
 if [ -f ".gitmessage" ]; then
@@ -318,10 +346,23 @@ fi
 
 if [ -f ".env" ]; then
     echo -e "   Supabase configuration is required for live collaborative locks."
-    if grep -q "SUPABASE_URL=" .env && grep -q "SUPABASE_ANON_KEY=" .env; then
-        echo -e "   ${WHITE}Supabase key entries present in .env${NC} ${GREEN}OK${NC}"
+
+    SUPABASE_URL_DEV=$(grep -E '^SUPABASE_URL=' .env | head -n 1 | cut -d '=' -f 2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    SUPABASE_ANON_DEV=$(grep -E '^SUPABASE_ANON_KEY=' .env | head -n 1 | cut -d '=' -f 2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    url_dev_ok=1
+    anon_dev_ok=1
+    if [ -z "$SUPABASE_URL_DEV" ] || is_placeholder_value "$SUPABASE_URL_DEV"; then
+        url_dev_ok=0
+    fi
+    if [ -z "$SUPABASE_ANON_DEV" ] || is_placeholder_value "$SUPABASE_ANON_DEV"; then
+        anon_dev_ok=0
+    fi
+
+    if [ $url_dev_ok -eq 1 ] && [ $anon_dev_ok -eq 1 ]; then
+        echo -e "   ${WHITE}SUPABASE_URL: using pre-configured team value${NC} ${GREEN}OK${NC}"
     else
-        echo -e "   ${YELLOW}Missing required Supabase entries in .env${NC}"
+        echo -e "   ${YELLOW}Missing or placeholder Supabase entries in .env${NC}"
         ERROR_COUNT=$((ERROR_COUNT + 1))
     fi
 fi

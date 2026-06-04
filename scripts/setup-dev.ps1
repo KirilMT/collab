@@ -23,7 +23,8 @@ $setupHelperNames = @(
     'Write-SetupStepHeader',
     'Write-SetupDevStepHeader',
     'Write-SetupBannerLine',
-    'Write-SetupRedirectHint'
+    'Write-SetupRedirectHint',
+    'Test-IsPlaceholderValue'
 )
 $parseErrors = $null
 $setupAst = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -377,6 +378,23 @@ else {
     $script:ErrorCount++
 }
 
+# Install Playwright Chromium (required for E2E tests / validate_code.py)
+Write-Host "   Installing Playwright Chromium (E2E test browser)..." -ForegroundColor Gray
+$env:npm_config_loglevel = "error"
+npx playwright install chromium 2>&1 |
+    Where-Object { $_ -notmatch "^npm warn" -and $_ -notmatch "^npm notice" } |
+    Out-Null
+$env:npm_config_loglevel = $null
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "   Playwright Chromium installed " -NoNewline -ForegroundColor White
+    Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+}
+else {
+    Write-Host "   Playwright Chromium install " -NoNewline -ForegroundColor White
+    Write-Host "FAILED (non-fatal — E2E tests will need manual browser install)" -ForegroundColor Yellow
+}
+
 # Step 5: Git Template + Pre-commit Hooks
 Write-SetupDevStepHeader -Step 5 -Message 'Setting up Conventional Commit template and hooks...'
 
@@ -450,18 +468,24 @@ if (Test-Path $envFile) {
     Write-Host "   Ensure these keys are set in .env:" -ForegroundColor Gray
     Write-Host "     - SUPABASE_URL" -ForegroundColor Gray
     Write-Host "     - SUPABASE_ANON_KEY" -ForegroundColor Gray
-    Write-Host "     - SUPABASE_SERVICE_ROLE_KEY (optional)" -ForegroundColor Gray
+    Write-Host "     - SUPABASE_SERVICE_ROLE_KEY (optional, for dashboard force-release)" -ForegroundColor Gray
 
     $envText = Get-Content $envFile -Raw
-    $hasUrl = $envText -match "(?m)^SUPABASE_URL="
-    $hasAnon = $envText -match "(?m)^SUPABASE_ANON_KEY="
+    $urlMatch = [regex]::Match($envText, '(?m)^SUPABASE_URL=(.+)$')
+    $anonMatch = [regex]::Match($envText, '(?m)^SUPABASE_ANON_KEY=(.+)$')
 
-    if ($hasUrl -and $hasAnon) {
-        Write-Host "   Supabase key entries present in .env " -NoNewline -ForegroundColor White
+    $urlValue = if ($urlMatch.Success) { $urlMatch.Groups[1].Value.Trim() } else { '' }
+    $anonValue = if ($anonMatch.Success) { $anonMatch.Groups[1].Value.Trim() } else { '' }
+
+    $urlOk = $urlValue -and (-not (Test-IsPlaceholderValue $urlValue))
+    $anonOk = $anonValue -and (-not (Test-IsPlaceholderValue $anonValue))
+
+    if ($urlOk -and $anonOk) {
+        Write-Host "   SUPABASE_URL: using pre-configured team value " -NoNewline -ForegroundColor White
         Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
     else {
-        Write-Host "   Missing required Supabase entries in .env " -NoNewline -ForegroundColor White
+        Write-Host "   Missing or placeholder Supabase entries in .env " -NoNewline -ForegroundColor White
         Write-Host "WARN" -ForegroundColor Yellow
         $script:ErrorCount++
     }
