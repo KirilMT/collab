@@ -658,7 +658,9 @@ def test_cli_reconcile(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "reconcile"])
 
     mod._run_cli()
@@ -839,7 +841,9 @@ def test_cli_watch(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
     monkeypatch.setattr(
         mod.time, "sleep", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt())

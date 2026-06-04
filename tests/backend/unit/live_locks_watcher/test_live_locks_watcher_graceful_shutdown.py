@@ -338,12 +338,13 @@ def test_graceful_shutdown_local_empty_query_exception(monkeypatch, tmp_path):
     mod._graceful_shutdown()  # should not raise
 
 
-def test_graceful_shutdown_git_failure_releases_all(monkeypatch, tmp_path):
+def test_graceful_shutdown_git_failure_preserves_all(monkeypatch, tmp_path):
     mod = load_watcher_module()
-    """§8b: Git failure during shutdown falls back to blanket release-all.
+    """§8b: Git failure during shutdown preserves locks (fail-closed).
 
-    When _run_git_status_porcelain raises an exception, _graceful_shutdown should fall
-    back to the legacy blanket delete behavior.
+    When _run_git_status_porcelain raises an exception, _graceful_shutdown should
+    preserve all locks rather than releasing them. This matches lock_client daemon
+    semantics and avoids unexpected lock loss when Git is temporarily unavailable.
     """
     monkeypatch.setattr(mod, "DEVELOPER_ID", "test_dev")
     monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
@@ -386,10 +387,13 @@ def test_graceful_shutdown_git_failure_releases_all(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mod, "create_client", lambda url, key: FakeSupaClient())
 
+    # Pre-populate _local_owned_locks so we can verify locks are preserved
+    monkeypatch.setattr(mod, "_local_owned_locks", {"collab/a.py", "collab/b.py"})
+
     mod._graceful_shutdown()
 
-    # Blanket release should have been called for test_dev
-    assert "test_dev" in blanket_deleted
+    # Blanket release should NOT have been called (fail-closed)
+    assert "test_dev" not in blanket_deleted
     assert not pid_file.exists()
 
 

@@ -1358,7 +1358,9 @@ def test_get_modified_supabase_exception_returns_git_modified(monkeypatch, tmp_p
 
     # Make git status return something
     monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(lambda: "M  src/foo.py\n")
+        mod.LockClient,
+        "_run_git_status",
+        staticmethod(lambda: ("M  src/foo.py\n", True)),
     )
 
     # Make client raise to hit the outer exception branch (2699-2701)
@@ -1368,7 +1370,7 @@ def test_get_modified_supabase_exception_returns_git_modified(monkeypatch, tmp_p
 
     c._client = _FailClient()
 
-    result = c._get_modified_and_unpushed_files()
+    result, _git_ok = c._get_modified_and_unpushed_files()
     assert isinstance(result, list)
 
 
@@ -1376,7 +1378,7 @@ def test_watch_parent_method_vscode_and_pycharm_branches(monkeypatch, tmp_path):
     """Watch startup covers VSCODE_PID and PYCHARM_HOSTED parent_method branches."""
     lc = _make_minimal_watch_client(monkeypatch, tmp_path)
     monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(mod.time, "sleep", lambda _: None)
 
     shutdown = [False]
@@ -1398,7 +1400,7 @@ def test_watch_parent_method_vscode_and_pycharm_branches(monkeypatch, tmp_path):
     monkeypatch.setenv("PYCHARM_HOSTED", "1")
     lc2 = _make_minimal_watch_client(monkeypatch, tmp_path)
     monkeypatch.setattr(lc2, "_graceful_shutdown", lambda *a, **k: None)
-    monkeypatch.setattr(lc2, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc2, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
     )
@@ -1419,7 +1421,9 @@ def _make_minimal_watch_client(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
     lc = mod.LockClient(developer_id="test_user")
     monkeypatch.setattr(lc, "_register_signal_handlers", lambda: None)
@@ -1442,7 +1446,7 @@ def test_watch_session_token_exception_branch(monkeypatch, tmp_path):
         return "abc123"
 
     monkeypatch.setattr(lc, "_get_session_token", _token_sometimes_fail)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
     )
@@ -1460,7 +1464,7 @@ def test_watch_start_parent_monitor_exception(monkeypatch, tmp_path):
         "_start_parent_monitor_thread",
         lambda: (_ for _ in ()).throw(RuntimeError("monitor fail")),
     )
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
     )
@@ -1733,7 +1737,9 @@ def test_reconcile_active_supabase_exception(monkeypatch):
     """
     c = mod.LockClient(developer_id="dev1")
 
-    monkeypatch.setattr(c, "_get_modified_and_unpushed_files", lambda: ["file.py"])
+    monkeypatch.setattr(
+        c, "_get_modified_and_unpushed_files", lambda: (["file.py"], True)
+    )
     monkeypatch.setattr(
         c, "active", lambda: (_ for _ in ()).throw(RuntimeError("supa down"))
     )

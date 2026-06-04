@@ -986,7 +986,8 @@ class LockClient:
             # released (for example on push).
             norm = self._normalize_file_path(file_path)
             try:
-                in_progress = norm in set(self._get_modified_and_unpushed_files())
+                modified_list, _ = self._get_modified_and_unpushed_files()
+                in_progress = norm in set(modified_list)
             except Exception:
                 in_progress = False
 
@@ -2772,7 +2773,7 @@ class LockClient:
                                     self._graceful_shutdown()
                                     return
 
-                    out = self._get_modified_and_unpushed_files()
+                    out, git_ok = self._get_modified_and_unpushed_files()
                     current_modified = set(out)
 
                     if current_modified != last_modified:
@@ -2790,10 +2791,17 @@ class LockClient:
                                 logger.warning("⚠️ CONFLICT ALERT: %s", msg)
 
                         released = last_modified - current_modified
-                        if released:
+                        if released and git_ok:
                             ok, count, _ = self.release_multiple(list(released))
                             if ok and count > 0:
                                 logger.info("🔓 [RELEASED] %d file(s) released", count)
+                        elif released:
+                            logger.warning(
+                                "Skipping release of %d lock(s) — "
+                                "git status snapshot failed; "
+                                "locks preserved until next successful sync",
+                                len(released),
+                            )
 
                         last_modified = current_modified
                     else:
@@ -3160,7 +3168,7 @@ class LockClient:
     def _reconcile(self) -> set:
         """Sync Supabase locks with local git status and upstream state."""
         try:
-            modified_files = self._get_modified_and_unpushed_files()
+            modified_files, _git_ok = self._get_modified_and_unpushed_files()
             git_modified = set(modified_files)
         except Exception as e:
             logger.error("Error identifying modified files (skipping reconcile): %s", e)
@@ -3398,8 +3406,15 @@ class LockClient:
         return git_modified
 
     @staticmethod
-    def _run_git_status() -> str:
-        """Run git status --porcelain and return output."""
+    def _run_git_status() -> Tuple[str, bool]:
+        """Run git status --porcelain and return (output, ok).
+
+        Returns:
+            Tuple of (output, ok) where ``ok`` is False when git failed
+            (timeout, non-zero exit, or subprocess error), signalling
+            callers that the snapshot is unreliable and should not be
+            used to release locks.
+        """
         captured = safe_subprocess.capture(
             ["git", "status", "--porcelain"],
             policy="git",
@@ -3411,16 +3426,19 @@ class LockClient:
                 "git status --porcelain timed out after %ss; skipping status snapshot",
                 _GIT_STATUS_TIMEOUT_S,
             )
-            return ""
+            return "", False
         if not captured.ok:
-            return ""
+            logger.warning(
+                "git status --porcelain failed (exit code or subprocess error)"
+            )
+            return "", False
         # NOTE: Only trim surrounding newlines, never a full ``.strip()``.
         # ``git status --porcelain`` lines begin with a 2-column status field
         # (XY) whose first column is a space for worktree-only changes (e.g.
         # " M path"). A full strip would remove the leading space of the FIRST
         # line, shifting the fixed-width parse in ``_parse_git_status_path`` and
         # silently dropping the first character of that path.
-        return safe_subprocess.decode_output(captured.stdout).strip("\r\n")
+        return safe_subprocess.decode_output(captured.stdout).strip("\r\n"), True
 
     @staticmethod
     def _git_ref_exists(ref: str) -> bool:
@@ -3504,14 +3522,19 @@ class LockClient:
                 paths.append(payload)
         return paths
 
-    def _get_modified_and_unpushed_files(self) -> List[str]:
-        """Return files that are either dirty (status) or have unpushed commits
-        (diff)."""
+    def _get_modified_and_unpushed_files(self) -> Tuple[List[str], bool]:
+        """Return (files, git_ok) for dirty/unpushed-commit files.
+
+        ``git_ok`` is False when the git status snapshot failed, signalling callers that
+        the result is **not** a reliable picture of local state and should not be used
+        to release locks.
+        """
         modified = set()
+        git_status_ok = True
 
         # 1. Get Dirty/Staged files
         try:
-            out = self._run_git_status()
+            out, git_status_ok = self._run_git_status()
             if out:
                 for line in out.splitlines():
                     if len(line) > 3:
@@ -3522,6 +3545,7 @@ class LockClient:
                             modified.add(p)
         except Exception as e:
             logger.debug("Git status failed: %s", e)
+            git_status_ok = False
 
         # 2. Committed-but-not-on-remote (upstream, origin/main, or base-ref override)
         try:
@@ -3542,7 +3566,7 @@ class LockClient:
         except Exception as exc:
             logger.debug("Git diff for in-progress files failed: %s", exc)
 
-        return list(modified)
+        return list(modified), git_status_ok
 
     @staticmethod
     def _parse_git_status_path(line: str) -> str:

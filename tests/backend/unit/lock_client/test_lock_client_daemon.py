@@ -1114,7 +1114,7 @@ def test_graceful_shutdown_writes_marker(monkeypatch, tmp_path):
     client._shutdown_done = False
 
     monkeypatch.setattr(client, "active", mock.Mock(return_value=[]))
-    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=""))
+    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=("", True)))
 
     client._graceful_shutdown(reason="test")
     marker = mod._state_path(".shutdown_complete")
@@ -1130,7 +1130,7 @@ def test_graceful_shutdown_full_path(monkeypatch, tmp_path):
     client = mod.LockClient(local_only=True)
     client._shutdown_done = False
     monkeypatch.setattr(client, "active", mock.Mock(return_value=[]))
-    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=""))
+    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=("", True)))
     client._graceful_shutdown(reason="test_shutdown")
     marker = mod._state_path(".shutdown_complete")
     assert os.path.exists(marker)
@@ -1150,7 +1150,7 @@ def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
             return_value=[{"file_path": "collab/app.py", "developer_id": "test_user"}]
         ),
     )
-    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=""))
+    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=("", True)))
     client._graceful_shutdown(reason="test")
     assert os.path.exists(mod._state_path(".shutdown_complete"))
 

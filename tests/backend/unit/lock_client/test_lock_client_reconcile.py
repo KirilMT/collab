@@ -24,7 +24,7 @@ def test_reconcile_stale_locks(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod.LockClient,
         "_run_git_status",
-        staticmethod(lambda: " M src/new.py"),
+        staticmethod(lambda: (" M src/new.py", True)),
     )
 
     locks_data = [
@@ -65,7 +65,7 @@ def test_reconcile_supabase_error(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
     monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(lambda: " M src/app.py")
+        mod.LockClient, "_run_git_status", staticmethod(lambda: (" M src/app.py", True))
     )
 
     class ErrorClient(FakeClient):
@@ -88,7 +88,7 @@ def test_run_git_status(monkeypatch):
         return b" M src/app.py\n M src/routes.py\n"
 
     patch_subprocess(monkeypatch, check_output=mock_check_output)
-    result = mod.LockClient._run_git_status()
+    result, _ok = mod.LockClient._run_git_status()
     assert "src/app.py" in result
 
 
@@ -126,7 +126,7 @@ def test_run_git_status_unix(monkeypatch):
         return b" M src/foo.py\n"
 
     patch_subprocess(monkeypatch, check_output=fake_check_output)
-    out = mod_local.LockClient._run_git_status()
+    out, _ok = mod_local.LockClient._run_git_status()
     assert "src/foo.py" in out
 
 
@@ -138,7 +138,7 @@ def test_reconcile_supabase_lock_query_error(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod.LockClient,
         "_run_git_status",
-        staticmethod(lambda: " M src/app.py"),
+        staticmethod(lambda: (" M src/app.py", True)),
     )
 
     call_count = [0]
@@ -178,7 +178,7 @@ def test_reconcile_supabase_lock_query_error(monkeypatch, tmp_path):
 
     # Make modified-files detection deterministic for tests
     def _fixed_modified(self):
-        return ["src/app.py"]
+        return ["src/app.py"], True
 
     monkeypatch.setattr(
         mod.LockClient, "_get_modified_and_unpushed_files", _fixed_modified
@@ -252,12 +252,14 @@ def test_reconcile_returns_my_locks(monkeypatch):
         lambda: make_create_client(FakeResponse(status=200, data=data)),
     )
     monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(lambda: " M src/app.py\n")
+        mod.LockClient,
+        "_run_git_status",
+        staticmethod(lambda: (" M src/app.py\n", True)),
     )
     monkeypatch.setattr(
         mod.LockClient,
         "_get_modified_and_unpushed_files",
-        lambda self: ["src/app.py"],
+        lambda self: (["src/app.py"], True),
     )
 
     client = mod.LockClient(developer_id="test_user")
@@ -268,10 +270,12 @@ def test_reconcile_returns_my_locks(monkeypatch):
 
 def test_git_status_parsing_and_modified(monkeypatch):
     sample = " M src/a.py\nR  src/old.py -> src/new.py\n?? src/new_file.py\n"
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: sample))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: (sample, True))
+    )
 
     c = mod.LockClient(local_only=True)
-    out = c._get_modified_and_unpushed_files()
+    out, _git_ok = c._get_modified_and_unpushed_files()
     assert "src/a.py" in out
     assert "src/new.py" in out
 
@@ -303,7 +307,7 @@ def test_reconcile_handles_resume_multi_refresh_and_summary_cleanup_paths(monkey
     monkeypatch.setattr(
         c,
         "_get_modified_and_unpushed_files",
-        lambda: ["a.py", "b.py", "c.py", "d.py"],
+        lambda: (["a.py", "b.py", "c.py", "d.py"], True),
     )
 
     active_rows = [
@@ -407,12 +411,14 @@ def test_get_modified_and_unpushed_files_non_windows_paths(monkeypatch):
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p)
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
-    first = set(c._get_modified_and_unpushed_files())
+    first_list, _ = c._get_modified_and_unpushed_files()
+    first = set(first_list)
     assert any(p.endswith("dirty.py") for p in first)
     assert "src/unpushed.py" in first
 
     # Second call exercises rev-parse failure -> except fallback to status-only
-    second = set(c._get_modified_and_unpushed_files())
+    second_list, _ = c._get_modified_and_unpushed_files()
+    second = set(second_list)
     assert any(p.endswith("dirty.py") for p in second)
 
 
@@ -441,7 +447,8 @@ def test_get_modified_and_unpushed_files_keeps_deleted_upstream_paths(monkeypatc
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
-    out = set(c._get_modified_and_unpushed_files())
+    out_list, _ = c._get_modified_and_unpushed_files()
+    out = set(out_list)
     assert ".collab/core/watcher.py" in out
     assert ".collab/dashboard/server.py" in out
     assert "src/live.py" in out
@@ -576,7 +583,8 @@ def test_get_modified_and_unpushed_files_falls_back_to_origin_main(monkeypatch):
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda _p: False)
 
-    out = set(c._get_modified_and_unpushed_files())
+    out_list, _ = c._get_modified_and_unpushed_files()
+    out = set(out_list)
     assert "collab/lock_client.py" in out
 
 
@@ -598,6 +606,7 @@ def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     monkeypatch.setattr(c, "_normalize_file_path", lambda p: p.replace("\\", "/"))
     monkeypatch.setattr(c, "_should_ignore_path", lambda p: False)
 
-    out = set(c._get_modified_and_unpushed_files())
+    out_list, _ = c._get_modified_and_unpushed_files()
+    out = set(out_list)
     assert "apps/reporting/instance/" not in out
     assert "src/real.py" in out

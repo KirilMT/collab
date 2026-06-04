@@ -1058,7 +1058,9 @@ def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_pa
     """still_valid lock with different token but same machine enters resumed list
     path."""
     lc = _make_client(monkeypatch, tmp_path)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ["collab/a.py"])
+    monkeypatch.setattr(
+        lc, "_get_modified_and_unpushed_files", lambda: (["collab/a.py"], True)
+    )
     monkeypatch.setattr(
         lc,
         "active",
@@ -1097,7 +1099,7 @@ def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_pa
 def test_reconcile_summary_outer_guards_swallow_exceptions(monkeypatch, tmp_path):
     """Summary writing/cleanup outer exception guards are exercised."""
     lc = _make_client(monkeypatch, tmp_path)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(lc, "active", lambda: [])
     monkeypatch.setattr(lc, "_get_session_token", lambda: "tok")
     monkeypatch.setattr(mod, "_state_path", lambda name: str(tmp_path / name))

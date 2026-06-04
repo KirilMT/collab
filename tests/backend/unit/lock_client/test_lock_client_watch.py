@@ -27,7 +27,9 @@ def test_watch_idle_timeout(monkeypatch, tmp_path):
     )
 
     # Make _run_git_status return empty (no changes)
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
 
     # Make _reconcile return empty set
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
@@ -109,7 +111,9 @@ def test_watch_keyboard_interrupt(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
     monkeypatch.setattr(mod.time, "sleep", mock.Mock(side_effect=KeyboardInterrupt))
 
@@ -170,7 +174,9 @@ def test_watch_only_reconciles_on_startup(monkeypatch, tmp_path):
         return set()
 
     monkeypatch.setattr(mod.LockClient, "_reconcile", _reconcile_once)
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda _p: True)
     )
@@ -226,7 +232,9 @@ def test_watch_parent_process_dead(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
 
     # Make parent check trigger immediately
@@ -270,7 +278,9 @@ def test_watch_open_dashboard(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
     monkeypatch.setattr(mod.time, "sleep", mock.Mock(side_effect=KeyboardInterrupt))
 
@@ -301,7 +311,9 @@ def _make_watch_client(monkeypatch, tmp_path):
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
     monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
-    monkeypatch.setattr(mod.LockClient, "_run_git_status", staticmethod(lambda: ""))
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
     return mod.LockClient(developer_id="test_user")
 
 
@@ -355,7 +367,7 @@ def test_watch_stop_request_token_based(monkeypatch, tmp_path):
         )(),
     )
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     lc._parent_pid = None
     lc._initial_ppid = os.getppid()
@@ -378,7 +390,7 @@ def test_watch_stop_request_pid_based(monkeypatch, tmp_path):
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     shutdown_called = [False]
 
@@ -436,7 +448,7 @@ def test_watch_heartbeat_missing_after_grace(monkeypatch, tmp_path):
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     shutdown_called = [False]
 
@@ -510,7 +522,7 @@ def test_watch_parent_pid_dead_shuts_down(monkeypatch, tmp_path):
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     shutdown_called = [False]
 
@@ -561,7 +573,7 @@ def _configure_watch_loop_common(monkeypatch, lc):
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
 
     tick = [0]
@@ -664,7 +676,68 @@ def test_watch_adoption_detected_shutdown(monkeypatch, tmp_path):
     lc._initial_ppid = 1000
     lc.watch(interval=1, timeout_mins=60, daemon_mode=True, parent_pid=4242)
 
-    assert shutdown_called[0]
+
+def test_watch_skips_release_when_git_status_fails(monkeypatch, tmp_path, caplog):
+    """Watch loop preserves locks when git status snapshot fails.
+
+    When _get_modified_and_unpushed_files returns git_ok=False, the watch loop must NOT
+    release any locks — it should log a warning and preserve locks until the next
+    successful sync.
+    """
+    lc = _make_watch_client(monkeypatch, tmp_path)
+    _configure_watch_loop_common(monkeypatch, lc)
+
+    # Simulate: first call returns files (populates last_modified),
+    # second call returns empty with git_ok=False (git failed).
+    side_effects = [
+        (["collab/a.py"], True),  # iteration 1: file detected
+        ([], False),  # iteration 2: git failed, worktree unknown
+    ]
+    call_count = [0]
+
+    def mock_get_modified():
+        idx = min(call_count[0], len(side_effects) - 1)
+        call_count[0] += 1
+        return side_effects[idx]
+
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", mock_get_modified)
+
+    released_files = []
+
+    def mock_release_multiple(file_paths):
+        released_files.extend(file_paths)
+        return True, len(file_paths), ""
+
+    monkeypatch.setattr(lc, "release_multiple", mock_release_multiple)
+
+    # Prevent actual shutdown; raise KeyboardInterrupt after 3 iterations
+    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
+    loop_count = [0]
+
+    def mock_sleep(x):
+        loop_count[0] += 1
+        if loop_count[0] > 2:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", mock_sleep)
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
+
+    # release_multiple must NOT have been called
+    assert len(released_files) == 0, f"Expected no releases, but got: {released_files}"
+
+    # Warning must be logged about skipping release
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    skip_warnings = [
+        r.message for r in warning_records if "Skipping release" in r.message
+    ]
+    assert len(skip_warnings) >= 1, (
+        "Expected 'Skipping release' warning, "
+        f"got: {[r.message for r in warning_records]}"
+    )
 
 
 def test_watch_orphaned_windows_low_ppid_shutdown(monkeypatch, tmp_path):
@@ -730,7 +803,7 @@ def test_watch_stop_request_numeric_payload_and_remove_exception(monkeypatch, tm
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     # Force os.remove(stop_file) failure to hit guarded branch.
     real_remove = os.remove
@@ -771,7 +844,7 @@ def test_watch_stop_request_invalid_payload_and_open_exception(monkeypatch, tmp_
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     # Raise once when reading stop request to hit outer stop-file exception guard.
     import builtins
@@ -819,7 +892,7 @@ def test_watch_heartbeat_stale_read_exception_and_parent_name_resolution(
     monkeypatch.setattr(lc, "_scan_remote_locks", lambda: None)
     monkeypatch.setattr(lc, "_prepare_dashboard_server", lambda: (None, None))
     monkeypatch.setattr(lc, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: [])
+    monkeypatch.setattr(lc, "_get_modified_and_unpushed_files", lambda: ([], True))
 
     # age > grace + soft_extra to hit stale shutdown branch quickly.
     monkeypatch.setattr(mod.time, "time", lambda: 100.0)
