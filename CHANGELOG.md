@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/KirilMT/collab/compare/v0.5.1...v0.6.0) (2026-06-04)
+
+
+### Features
+
+* **setup:** zero-touch Supabase config via pre-filled .env.example ([#80](https://github.com/KirilMT/collab/issues/80)) ([1101097](https://github.com/KirilMT/collab/commit/1101097428e208eba9c489e0ef61ab874079d593)), closes [#79](https://github.com/KirilMT/collab/issues/79)
+
 ## [0.5.1](https://github.com/KirilMT/collab/compare/v0.5.0...v0.5.1) (2026-06-03)
 
 ### Bug Fixes
