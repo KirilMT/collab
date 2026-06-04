@@ -215,6 +215,35 @@ function Write-SetupRedirectHint {
     Write-Host ""
 }
 
+function Test-IsPlaceholderValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $true
+    }
+
+    # Standard placeholder patterns that indicate an unconfigured value.
+    # Pre-filled team values (like a real Supabase URL) do NOT match these.
+    $placeholderPatterns = @(
+        '^your[_-]',
+        '^your[_-]?project',
+        '^example',
+        '^CHANGE_ME',
+        '^change[_-]?me',
+        '^<team-',          # angle-bracket template placeholders
+        '^replace[_-]?me',
+        '^TODO'
+    )
+
+    foreach ($pattern in $placeholderPatterns) {
+        if ($Value -match $pattern) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 Initialize-SetupConsole
 Write-SetupRedirectHint
 
@@ -745,19 +774,38 @@ else {
 $envPath = Join-Path $projectRoot ".env"
 if (Test-Path $envPath) {
     $envContent = Get-Content $envPath -Raw
-    $hasUrl = $envContent -match "(?m)^SUPABASE_URL=(?!\s*$)(?!your)"
-    $hasAnon = $envContent -match "(?m)^SUPABASE_ANON_KEY=(?!\s*$)(?!your)"
 
-    if ($hasUrl -and $hasAnon) {
-        Write-Host "   Supabase credentials in .env " -NoNewline -ForegroundColor White
+    $urlMatch = [regex]::Match($envContent, '(?m)^SUPABASE_URL=(.+)$')
+    $anonMatch = [regex]::Match($envContent, '(?m)^SUPABASE_ANON_KEY=(.+)$')
+
+    $urlValue = if ($urlMatch.Success) { $urlMatch.Groups[1].Value.Trim() } else { '' }
+    $anonValue = if ($anonMatch.Success) { $anonMatch.Groups[1].Value.Trim() } else { '' }
+
+    $urlIsPlaceholder = Test-IsPlaceholderValue $urlValue
+    $anonIsPlaceholder = Test-IsPlaceholderValue $anonValue
+
+    if ((-not $urlIsPlaceholder) -and (-not $anonIsPlaceholder)) {
+        Write-Host "   SUPABASE_URL: using pre-configured team value " -NoNewline -ForegroundColor White
         Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
-    else {
+    elseif ($urlIsPlaceholder -and $anonIsPlaceholder) {
         Write-Host "   Supabase credentials in .env " -NoNewline -ForegroundColor White
         Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
         Write-Host "   Set SUPABASE_URL and SUPABASE_ANON_KEY to real values." -ForegroundColor Gray
-        # setup-dev.ps1 calls production setup with -CalledFromDev: a fresh .env from
-        # .env.example still carries placeholders here — warn only so dev setup can finish.
+        if (-not $CalledFromDev) {
+            $script:ErrorCount++
+        }
+    }
+    else {
+        # Partial config — one is set, one is placeholder
+        if ($urlIsPlaceholder) {
+            Write-Host "   SUPABASE_URL is still a placeholder " -NoNewline -ForegroundColor White
+            Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
+        }
+        if ($anonIsPlaceholder) {
+            Write-Host "   SUPABASE_ANON_KEY is still a placeholder " -NoNewline -ForegroundColor White
+            Write-SetupEmit (Get-SetupStatusToken 'WARN') -Color Yellow
+        }
         if (-not $CalledFromDev) {
             $script:ErrorCount++
         }
@@ -913,7 +961,15 @@ else {
 Write-Host "   Validating Supabase configuration..." -ForegroundColor Gray
 if (Test-Path ".env") {
     $envContent = Get-Content ".env" -Raw
-    if ($envContent -match "SUPABASE_URL.*=" -and $envContent -match "SUPABASE_ANON_KEY.*=") {
+    $urlSmokeMatch = [regex]::Match($envContent, '(?m)^SUPABASE_URL=(.+)$')
+    $anonSmokeMatch = [regex]::Match($envContent, '(?m)^SUPABASE_ANON_KEY=(.+)$')
+
+    $urlSmokeVal = if ($urlSmokeMatch.Success) { $urlSmokeMatch.Groups[1].Value.Trim() } else { '' }
+    $anonSmokeVal = if ($anonSmokeMatch.Success) { $anonSmokeMatch.Groups[1].Value.Trim() } else { '' }
+
+    if ($urlSmokeVal -and $anonSmokeVal -and
+        (-not (Test-IsPlaceholderValue $urlSmokeVal)) -and
+        (-not (Test-IsPlaceholderValue $anonSmokeVal))) {
         Write-Host "   Supabase configuration present " -NoNewline -ForegroundColor White
         Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
     }
@@ -981,8 +1037,9 @@ if (-not $CalledFromDev) {
     Write-Host "  3. (Optional) Setup development environment:" -ForegroundColor White
     Write-Host "     .\scripts\setup-dev.ps1" -ForegroundColor Magenta
     Write-Host ""
-    Write-Host "  4. Ensure .env includes real Supabase values:" -ForegroundColor White
-    Write-Host "     SUPABASE_URL and SUPABASE_ANON_KEY" -ForegroundColor Magenta
+    Write-Host "  Locking works out of the box — no manual Supabase setup needed." -ForegroundColor Gray
+    Write-Host "  Force-release via dashboard requires SUPABASE_SERVICE_ROLE_KEY" -ForegroundColor Gray
+    Write-Host "  in your .env (obtain from a maintainer; never commit it)." -ForegroundColor Gray
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""

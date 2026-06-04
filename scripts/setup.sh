@@ -40,6 +40,27 @@ print_success() {
     echo -e "${GREEN}✓ $1${NC}"
 }
 
+# Test whether a value is a placeholder (not a real configured value).
+# Pre-filled team values (like a real Supabase URL) do NOT match these patterns.
+is_placeholder_value() {
+    local value="$1"
+    if [ -z "$value" ]; then
+        return 0
+    fi
+    # Standard placeholder patterns that indicate an unconfigured value.
+    case "$value" in
+        your[-_]*)        return 0 ;;
+        example*)         return 0 ;;
+        CHANGE_ME*)       return 0 ;;
+        change[-_]me*)    return 0 ;;
+        \<team-*)         return 0 ;;  # angle-bracket template placeholders
+        replace[-_]me*)   return 0 ;;
+        TODO*)            return 0 ;;
+        "")               return 0 ;;
+        *)                return 1 ;;
+    esac
+}
+
 # Parse command line arguments
 NON_INTERACTIVE=false
 CALLED_FROM_DEV=false
@@ -360,19 +381,33 @@ if [ -f "$ENV_FILE" ]; then
     SUPABASE_URL_VALUE=$(grep -E '^SUPABASE_URL=' "$ENV_FILE" | head -n 1 | cut -d '=' -f 2-)
     SUPABASE_ANON_VALUE=$(grep -E '^SUPABASE_ANON_KEY=' "$ENV_FILE" | head -n 1 | cut -d '=' -f 2-)
 
-    if [ -n "$SUPABASE_URL_VALUE" ] && [ "$SUPABASE_URL_VALUE" != "your_url_here" ]; then
+    # Trim leading/trailing whitespace
+    SUPABASE_URL_VALUE="$(echo "$SUPABASE_URL_VALUE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    SUPABASE_ANON_VALUE="$(echo "$SUPABASE_ANON_VALUE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+    if [ -n "$SUPABASE_URL_VALUE" ] && ! is_placeholder_value "$SUPABASE_URL_VALUE"; then
         HAS_URL=1
     fi
-    if [ -n "$SUPABASE_ANON_VALUE" ] && [ "$SUPABASE_ANON_VALUE" != "your_anon_key_here" ]; then
+    if [ -n "$SUPABASE_ANON_VALUE" ] && ! is_placeholder_value "$SUPABASE_ANON_VALUE"; then
         HAS_ANON=1
     fi
 
     if [ $HAS_URL -eq 1 ] && [ $HAS_ANON -eq 1 ]; then
-        print_success "Supabase credentials in .env"
+        echo -e "   SUPABASE_URL: using pre-configured team value ${GREEN}OK${NC}" >&2
+    elif [ $HAS_URL -eq 1 ] || [ $HAS_ANON -eq 1 ]; then
+        # Partial config
+        if [ $HAS_URL -eq 0 ]; then
+            echo -e "   ${YELLOW}Warning: SUPABASE_URL is still a placeholder or missing.${NC}" >&2
+        fi
+        if [ $HAS_ANON -eq 0 ]; then
+            echo -e "   ${YELLOW}Warning: SUPABASE_ANON_KEY is still a placeholder or missing.${NC}" >&2
+        fi
+        if [ "$CALLED_FROM_DEV" = false ]; then
+            ((ERROR_COUNT++))
+        fi
     else
-        echo "   ${YELLOW}Warning: .env exists but Supabase values look missing or placeholders.${NC}" >&2
+        echo -e "   ${YELLOW}Warning: .env exists but Supabase values look missing or placeholders.${NC}" >&2
         echo "   Set SUPABASE_URL and SUPABASE_ANON_KEY to real values." >&2
-        # setup-dev.sh uses --called-from-dev; allow finishing with .env.example placeholders.
         if [ "$CALLED_FROM_DEV" = false ]; then
             ((ERROR_COUNT++))
         fi
@@ -482,7 +517,12 @@ fi
 
 echo "   Validating Supabase configuration..." >&2
 if [ -f ".env" ]; then
-    if grep -q "SUPABASE_URL.*=" ".env" && grep -q "SUPABASE_ANON_KEY.*=" ".env"; then
+    SUPABASE_URL_SMOKE=$(grep -E '^SUPABASE_URL=' .env | head -n 1 | cut -d '=' -f 2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    SUPABASE_ANON_SMOKE=$(grep -E '^SUPABASE_ANON_KEY=' .env | head -n 1 | cut -d '=' -f 2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    if [ -n "$SUPABASE_URL_SMOKE" ] && [ -n "$SUPABASE_ANON_SMOKE" ] && \
+       ! is_placeholder_value "$SUPABASE_URL_SMOKE" && \
+       ! is_placeholder_value "$SUPABASE_ANON_SMOKE"; then
         print_success "Supabase configuration present"
     else
         echo "   ${YELLOW}Warning: Supabase credentials not set${NC}" >&2
@@ -541,8 +581,9 @@ if [ "$CALLED_FROM_DEV" = false ]; then
     echo -e "${WHITE}  3. (Optional) Setup development environment:${NC}"
     echo -e "     ./scripts/setup-dev.sh"
     echo ""
-    echo -e "${WHITE}  4. Ensure .env includes real Supabase values:${NC}"
-    echo -e "     SUPABASE_URL and SUPABASE_ANON_KEY"
+    echo -e "  ${GRAY}Locking works out of the box — no manual Supabase setup needed.${NC}"
+    echo -e "  ${GRAY}Force-release via dashboard requires SUPABASE_SERVICE_ROLE_KEY${NC}"
+    echo -e "  ${GRAY}in your .env (obtain from a maintainer; never commit it).${NC}"
     echo ""
     echo -e "${CYAN}================================================================${NC}"
     echo ""
