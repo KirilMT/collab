@@ -377,14 +377,27 @@ Update candidates include:
 - `README.md`
 - `docs/API.md`
 - `docs/ARCHITECTURE.md`
-- `docs/collab_roadmap.md`
-- `docs/bug_tracking.md` (ask first before adding new bug entries)
+- Update the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues) with progress or resolution
+- Update the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project item Stage if applicable
 
-For bug tracking updates:
+For bug tracking:
 
 - Confirm reproducibility.
-- Keep statuses current.
-- Avoid duplicate entries.
+- Keep issue statuses current with labels (`status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`).
+- Search for duplicates before opening a new issue.
+- Apply all three required label categories: `type:*`, `priority:*`, `scope:*`.
+
+## GitHub Workflow for Contributors
+
+### Issue-Driven Development
+
+1. **Pick or create an issue** — All work must have a corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
+2. **Label it correctly** — Every issue needs `type:*`, `priority:*`, and `scope:*` labels.
+3. **Assign yourself** — Set the issue to `status: in-progress` when you start.
+4. **Branch naming** — Use `feat/issue-<N>-desc` for features, `fix/issue-<N>-desc` for bugs.
+5. **Commit with references** — Include `Fixes #<N>` or `Closes #<N>` in the commit body.
+6. **Open a PR** — Set issue label to `status: needs-review`.
+7. **After merge** — The issue auto-closes. If on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2), move to `✅ Shipped`.
 
 ## Security and Secrets Policy
 

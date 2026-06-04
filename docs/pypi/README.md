@@ -232,7 +232,7 @@ Lock release follows the same path in reverse and writes an entry to `file_locks
 - 🐙 **GitHub:** [github.com/KirilMT/collab](https://github.com/KirilMT/collab)
 - 🐛 **Issues:** [github.com/KirilMT/collab/issues](https://github.com/KirilMT/collab/issues)
 - 📖 **Full docs:** [github.com/KirilMT/collab/tree/main/docs](https://github.com/KirilMT/collab/tree/main/docs)
-- 🗺️ **Roadmap:** [docs/collab_roadmap.md](https://github.com/KirilMT/collab/blob/main/docs/collab_roadmap.md)
+- 🗺️ **Roadmap:** [GitHub Projects](https://github.com/KirilMT/collab/projects)
 
 ---
 

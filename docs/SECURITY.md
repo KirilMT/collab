@@ -74,4 +74,4 @@ Never bypass hooks with `--no-verify` unless you understand the risk.
 
 ## Reporting issues
 
-Track security bugs in `docs/bug_tracking.md` with severity. Do not paste live keys or customer data in issues or PRs.
+Report security bugs via [GitHub Issues](https://github.com/KirilMT/collab/issues) with the `type: security` label. Do not paste live keys or customer data in issues or PRs.

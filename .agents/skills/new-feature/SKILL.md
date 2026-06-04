@@ -9,7 +9,7 @@ description: Use when scaffolding a new feature or implementing a significant ne
 
 - Adding a new feature in `collab/`
 - Implementing a significant capability across multiple files
-- Executing a roadmap item from `docs/collab_roadmap.md`
+- Executing a roadmap item from [GitHub Projects](https://github.com/KirilMT/collab/projects) or [Milestones](https://github.com/KirilMT/collab/milestones)
 
 ## Do not use this skill when
 
@@ -21,9 +21,11 @@ description: Use when scaffolding a new feature or implementing a significant ne
 ## Step 1: Plan Before Coding
 
 1. Analyze and restate the requirement.
-2. Outline the implementation plan with exact files.
-3. Check AGENTS.md boundaries before changes.
-4. Create a feature branch: `git checkout -b feat/feature-name`.
+2. Find or create the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
+3. If the feature is on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2), set its Stage to `🚧 In Progress` and label `status: in-progress`.
+4. Outline the implementation plan with exact files.
+5. Check AGENTS.md boundaries before changes.
+6. Create a feature branch: `git checkout -b feat/issue-<N>-description`.
 
 ---
 
@@ -89,15 +91,18 @@ Missing any of these can create false coverage failures.
 
 ## Step 5: Document
 
-1. Update `docs/collab_roadmap.md` when milestone scope changes.
-2. Add or update public API docstrings.
-3. Update README or docs if user-facing behavior changes.
+1. Update the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues) with progress notes.
+2. If scope changes, update the issue description and re-evaluate the [Milestone](https://github.com/KirilMT/collab/milestones) target.
+3. Add or update public API docstrings.
+4. Update README or docs if user-facing behavior changes.
 
 ---
 
 ## Step 6: Commit
 
-Follow `commit-workflow`.
+Follow `commit-workflow`. Include `Closes #<N>` or `Fixes #<N>` in the commit body to link the PR and auto-close the issue on merge.
+
+After merge, update the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project item Stage to `✅ Shipped`.
 
 ## Safety
 

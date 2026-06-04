@@ -27,6 +27,25 @@ The following commit types are supported for release automation and changelog ge
 
 Use only these types in your commit messages for releases.
 
+### Linking Commits to Issues
+
+Always reference the relevant GitHub Issue in your commit body:
+
+- `Fixes #<N>` — Auto-closes the issue when merged (use for bug fixes)
+- `Closes #<N>` — Auto-closes the issue when merged (use for feature completion)
+- `Refs #<N>` — References without closing (use for related work)
+
+Example:
+
+```
+fix(lock-client): preserve owned locks during watcher shutdown
+
+Previously, the watcher would release locks owned by the same developer
+when it encountered a stale PID file. Now it skips owned locks.
+
+Fixes #42
+```
+
 ### 1. Initial Setup (First Time on a New Machine)
 
 If you are starting on a new computer or don't have the project locally, you
