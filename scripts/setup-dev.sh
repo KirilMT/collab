@@ -291,8 +291,8 @@ else
     echo -e "   package.json already exists ${GREEN}OK${NC}"
 fi
 
-echo -en "   Installing ${MAGENTA}prettier + prettier-plugin-yaml${NC}... "
-if npm install --save-dev prettier prettier-plugin-yaml >/dev/null 2>&1; then
+echo -en "   Installing ${MAGENTA}npm dependencies${NC} (jest, eslint, prettier, playwright...)... "
+if npm install >/dev/null 2>&1; then
     echo -e "${GREEN}OK${NC}"
 else
     echo -e "${RED}FAILED${NC}"

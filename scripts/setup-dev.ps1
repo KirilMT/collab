@@ -359,21 +359,21 @@ else {
 }
 
 Write-Host "   Installing " -NoNewline -ForegroundColor White
-Write-Host "prettier + prettier-plugin-yaml" -NoNewline -ForegroundColor Magenta
+Write-Host "npm dependencies (jest, eslint, prettier, playwright...)" -NoNewline -ForegroundColor Magenta
 Write-Host "..." -ForegroundColor White
 
 $env:npm_config_loglevel = "error"
-npm install --save-dev prettier prettier-plugin-yaml 2>&1 |
-Where-Object { $_ -notmatch "^npm warn" -and $_ -notmatch "^npm notice" } |
-Out-Null
+npm install 2>&1 |
+    Where-Object { $_ -notmatch "^npm warn" -and $_ -notmatch "^npm notice" } |
+    Out-Null
 $env:npm_config_loglevel = $null
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "   Node formatter packages installed " -NoNewline -ForegroundColor White
+    Write-Host "   npm dependencies installed " -NoNewline -ForegroundColor White
     Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 else {
-    Write-Host "   Node package installation " -NoNewline -ForegroundColor White
+    Write-Host "   npm install " -NoNewline -ForegroundColor White
     Write-Host "FAILED" -ForegroundColor Red
     $script:ErrorCount++
 }
