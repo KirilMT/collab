@@ -50,19 +50,29 @@ Always pair `type: bug` with a `priority:*` and `scope:*` label.
 
 ## Bug Fix Workflow
 
+### Pre-Flight: Conflict Prevention (MANDATORY)
+
+Before touching any code, verify you are the ONLY person working on this issue:
+
+1. **Check the GitHub Issue** — is it already assigned to someone else? If yes, **STOP** and report.
+2. **Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2)** — is the board Status already `In Progress`? If yes, **STOP** and verify with the assignee.
+3. **Claim the issue** — assign it to yourself, set `status: in-progress` label, AND set the board Status to `In Progress`.
+4. If using `collab` file-locking, also run `collab active`.
+
+### Fix Steps
+
 1. Verify the bug exists and reproduce it.
-2. Assign the GitHub Issue to yourself and set label `status: in-progress`.
-3. If the issue is on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2), set its Stage to `🚧 In Progress`.
-4. Create a branch: `git checkout -b fix/issue-<N>-description`.
-5. Apply the fix with tests.
-6. Run `python scripts/format_code.py` then `python scripts/validate_code.py`.
-7. Commit with `Fixes #<N>` in the commit message body to auto-close on merge.
-8. Open a PR; set issue label `status: needs-review`.
-9. Once merged and user confirms, update the Project item Stage to `✅ Shipped`.
+2. **Claim the issue** (see Pre-Flight above).
+3. Create a branch: `git checkout -b fix/issue-<N>-description`.
+4. Apply the fix with tests.
+5. Run `python scripts/format_code.py` then `python scripts/validate_code.py`.
+6. Commit with `Fixes #<N>` in the commit message body to auto-close on merge.
+7. Open a PR; set issue label `status: needs-review`.
+8. **After merge**: The issue auto-closes AND the board Status auto-updates to `Done` (via GitHub's built-in project workflow). No manual board update needed.
 
 ---
 
-## Status Label Transitions
+## Lifecycle Label Transitions
 
 | From                   | To                     | Trigger                                    |
 | ---------------------- | ---------------------- | ------------------------------------------ |
@@ -72,16 +82,17 @@ Always pair `type: bug` with a `priority:*` and `scope:*` label.
 | `status: in-progress`  | `status: blocked`      | Waiting on dependency or external decision |
 | `status: blocked`      | `status: in-progress`  | Blocker resolved                           |
 
-### Project Stage Transitions (parallel track)
+### Board Status Transitions (Auto-Managed)
 
-> **Note:** The built-in GitHub Project **Status** field (Todo/In Progress/Done) is disabled on the Collab Roadmap project to avoid confusion. Use only the **Stage** field for Kanban positioning and the **`status:*` labels** for issue lifecycle tracking.
+The [Collab Roadmap](https://github.com/users/KirilMT/projects/2) uses GitHub's **built-in Status field** with auto-workflows:
 
-| Stage            | When                              |
-| ---------------- | --------------------------------- |
-| `📋 Backlog`     | Issue created, not yet scheduled  |
-| `🔜 Next`        | Scheduled for current/next sprint |
-| `🚧 In Progress` | Active development                |
-| `✅ Shipped`     | Merged and deployed               |
+| Board Status  | When                                          | Trigger                        |
+| ------------- | --------------------------------------------- | ------------------------------ |
+| `Todo`        | Issue added to project                        | Automatic (built-in workflow)  |
+| `In Progress` | You start work (manual update via GitHub API) | Manual — AI agent or developer |
+| `Done`        | Issue closed via `Fixes #<N>` in merged PR    | Automatic (built-in workflow)  |
+
+> **⚠️ CRITICAL:** AI agents MUST manually set the board Status to `In Progress` when starting work. The `Done` transition is fully automatic. Never move a card to `Done` manually — let the built-in workflow handle it.
 
 NEVER close an issue without explicit user confirmation that the fix works.
 
@@ -100,7 +111,7 @@ NEVER close an issue without explicit user confirmation that the fix works.
 - Search [existing issues](https://github.com/KirilMT/collab/issues) before opening a new one.
 - NEVER create duplicate issues.
 - NEVER add bugs without user confirmation.
-- Apply all three label categories (`type:`, `priority:`, `scope:`) to each new bug issue.
+- Apply all four label categories (`type:`, `priority:`, `scope:`, and `status:*` lifecycle) to each new bug issue.
 - If the issue belongs on the roadmap, add it to the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project.
 
 ---

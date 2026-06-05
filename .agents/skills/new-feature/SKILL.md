@@ -20,9 +20,20 @@ description: Use when scaffolding a new feature or implementing a significant ne
 
 ## Step 1: Plan Before Coding
 
+### Pre-Flight: Conflict Prevention (MANDATORY)
+
+Before touching any code, verify you are the ONLY person working on this issue:
+
+1. **Check the GitHub Issue** — is it already assigned to someone else? If yes, **STOP** and report.
+2. **Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2)** — is the board Status already `In Progress`? If yes, **STOP** and verify with the assignee.
+3. **Claim the issue** — assign it to yourself, set `status: in-progress` label, AND set the board Status to `In Progress`.
+4. If using `collab` file-locking, also run `collab active`.
+
+### Planning Steps
+
 1. Analyze and restate the requirement.
 2. Find or create the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
-3. If the feature is on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2), set its Stage to `🚧 In Progress` and label `status: in-progress`.
+3. **Claim the issue** (see Pre-Flight above) — assign self, set `status: in-progress` label, update board Status to `In Progress`.
 4. Outline the implementation plan with exact files.
 5. Check AGENTS.md boundaries before changes.
 6. Create a feature branch: `git checkout -b feat/issue-<N>-description`.
@@ -102,7 +113,7 @@ Missing any of these can create false coverage failures.
 
 Follow `commit-workflow`. Include `Closes #<N>` or `Fixes #<N>` in the commit body to link the PR and auto-close the issue on merge.
 
-After merge, update the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project item Stage to `✅ Shipped`.
+After merge, the issue auto-closes AND the board Status auto-updates to `Done` via GitHub's built-in project workflow. No manual board update needed.
 
 ## Safety
 

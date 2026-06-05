@@ -7,6 +7,17 @@
 
 ---
 
+## Conflict Prevention (MANDATORY — before ANY work)
+
+No two developers or AI agents may work on the same task at the same time. Before touching code:
+
+1. Check the [GitHub Issue](https://github.com/KirilMT/collab/issues) — already assigned? **STOP**.
+2. Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) — Status already `In Progress`? **STOP**.
+3. Claim: assign to self, set `status: in-progress` label, set board Status to `In Progress`.
+4. Run `collab active` for file-level conflicts.
+
+See `AGENTS.md` → "Conflict Prevention Protocol" for the full policy.
+
 ## File Locking
 
 Before editing any file, check active locks:

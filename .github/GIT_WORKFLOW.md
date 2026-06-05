@@ -46,6 +46,21 @@ when it encountered a stale PID file. Now it skips owned locks.
 Fixes #42
 ```
 
+### 0. Before ANY Work — Claim Your Task (Conflict Prevention)
+
+**No two developers or AI agents may work on the same task simultaneously.**
+
+Before creating a branch or touching any code:
+
+1. Check the [GitHub Issue](https://github.com/KirilMT/collab/issues) — already assigned? If yes, **STOP**.
+2. Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) — Status already `In Progress`? If yes, **STOP**.
+3. Assign the issue to yourself, set `status: in-progress` label, and set the board Status to `In Progress`.
+4. Run `collab active` to check file-level conflicts.
+
+See `AGENTS.md` → "Conflict Prevention Protocol" for the full policy.
+
+---
+
 ### 1. Initial Setup (First Time on a New Machine)
 
 If you are starting on a new computer or don't have the project locally, you
