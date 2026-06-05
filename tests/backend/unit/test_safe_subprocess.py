@@ -408,3 +408,22 @@ def test_spawn_background_windows(monkeypatch):
     assert proc.pid == 1001
     assert seen.get("creationflags") == 0x00000200
     assert "start_new_session" not in seen
+
+
+def test_spawn_background_passes_env(monkeypatch):
+    """An explicit ``env`` mapping is forwarded to Popen."""
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    monkeypatch.setattr(safe_subprocess.os, "name", "posix")
+    seen: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        seen.update(kwargs)
+        return types.SimpleNamespace(pid=7)
+
+    patch_subprocess(monkeypatch, popen=fake_popen)
+    safe_subprocess.spawn_background(
+        [sys.executable, "-m", "collab", "claim", "a.py"],
+        policy="agent_claim",
+        env={"COLLAB_AGENT_MODE": "1"},
+    )
+    assert seen.get("env") == {"COLLAB_AGENT_MODE": "1"}

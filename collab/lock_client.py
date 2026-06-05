@@ -801,9 +801,10 @@ class LockClient:
         developer_id: str,
         lock_agent_id: Optional[str] = None,
         lock_agent_label: Optional[str] = None,
+        lock_agent_kind: Optional[str] = None,
     ) -> str:
         return agent_identity.format_lock_owner(
-            developer_id, lock_agent_id, lock_agent_label
+            developer_id, lock_agent_id, lock_agent_label, lock_agent_kind
         )
 
     def _is_same_machine_token(self, stored_token: str) -> bool:
@@ -1079,10 +1080,12 @@ class LockClient:
             if row.get("status") == "conflict":
                 owner = row.get("owner", "another developer")
                 conflict_agent = row.get("agent_id")
+                conflict_kind = row.get("agent_kind")
                 owner_display = self._format_owner(
                     str(owner),
                     conflict_agent,
-                    None,
+                    row.get("agent_label"),
+                    conflict_kind,
                 )
                 logger.warning(
                     (
@@ -1096,7 +1099,8 @@ class LockClient:
                     file_path,
                     str(owner),
                     conflict_agent,
-                    None,
+                    row.get("agent_label"),
+                    conflict_kind,
                 )
 
         if status in (200, 201):
@@ -1217,6 +1221,7 @@ class LockClient:
             "locked_by": lock.get("developer_id"),
             "locked_by_agent_id": lock.get("agent_id"),
             "locked_by_agent_label": lock.get("agent_label"),
+            "locked_by_agent_kind": lock.get("agent_kind"),
             "acquired_at": lock.get("acquired_at"),
             "reason": lock.get("reason"),
             "can_edit": self._lock_owned_by_me(lock),
