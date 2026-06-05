@@ -82,7 +82,10 @@ collab claim path/to/file.py --label "<short task>" --reason "AI agent edit"
 - `collab claim` marks the lock as `origin=agent` with a unique agent identity (auto-generated and
   persisted; override with `COLLAB_AGENT_ID`). Set `COLLAB_AGENT_LABEL` once per task for a friendly
   "what for" label.
-- Prefer automating this via your IDE's edit hook (see `scripts/agent-hooks/`,
-  enable with `COLLAB_AGENT_HOOKS=1`) so every agent edit is claimed without manual steps.
+- This is **automated by setup**: `setup-dev` runs `collab install-agent-hooks`, which wires
+  Cursor (`.cursor/hooks.json`), Claude Code (`.claude/settings.json`) and JetBrains/Junie
+  (`.junie/guidelines.md`) to claim agent edits automatically (see `scripts/agent-hooks/`). In
+  Cursor and Claude Code this happens with no manual steps. In IDEs without a native edit hook
+  (plain VS Code + Copilot, JetBrains), run `collab claim` for the files you edit.
 - The background watcher attributes everything else to the human, so only files an agent actually
   edits are shown as AI-agent work.

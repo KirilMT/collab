@@ -97,3 +97,11 @@ output/
 .shutdown_complete
 .stop_request
 .vscode_heartbeat
+
+# Agent-attribution IDE hooks — generated per machine by `collab install-agent-hooks`
+# (run automatically by setup-dev). These bake in an absolute, machine-specific
+# .venv interpreter path, so they must NOT be committed; each machine regenerates
+# them. The portable Junie guidance (.junie/guidelines.md) is committed instead.
+.cursor/hooks.json
+.claude/settings.json
+.claude/settings.local.json

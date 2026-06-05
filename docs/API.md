@@ -39,7 +39,8 @@ collab acquire path/to/file.py --reason "Working on feature X"
 
 Claim one or more files as an **AI agent** edit (`origin=agent`). Auto-generates and persists a
 unique agent identity when one is not supplied, so multiple agents never collide. This is the
-runtime-agnostic entrypoint that IDE edit hooks call (see `scripts/agent-hooks/`).
+runtime-agnostic entrypoint that IDE edit hooks call. The hooks are wired automatically by
+`collab install-agent-hooks` (run during `setup-dev`); see `scripts/agent-hooks/`.
 
 ```bash
 collab claim path/to/file.py --label "fix-ci-dashboard" --reason "AI agent edit"
