@@ -71,6 +71,40 @@ def test_format_lock_owner_with_agent():
     assert "refactor-auth" in text
 
 
+def test_format_lock_owner_prefers_kind_and_task():
+    # kind + task -> "kind · task"; the raw agent_id is never shown.
+    text = agent_identity.format_lock_owner(
+        "alice", "agent-3538afba", "fix-bug", "cursor"
+    )
+    assert text == "@alice (agent: cursor · fix-bug)"
+    assert "agent-3538afba" not in text
+
+
+def test_format_lock_owner_kind_only_when_no_task():
+    text = agent_identity.format_lock_owner("alice", "agent-xyz", None, "cursor")
+    assert text == "@alice (agent: cursor)"
+    assert "agent-xyz" not in text
+
+
+def test_format_lock_owner_other_kind_falls_back_to_id():
+    # Unknown runtime ("other") with no task -> last-resort agent_id.
+    text = agent_identity.format_lock_owner("alice", "agent-xyz", None, "other")
+    assert text == "@alice (agent: agent-xyz)"
+
+
+def test_format_lock_owner_no_kind_no_task_falls_back_to_id():
+    text = agent_identity.format_lock_owner("alice", "agent-xyz")
+    assert text == "@alice (agent: agent-xyz)"
+
+
+def test_format_conflict_message_includes_kind_and_task():
+    msg = agent_identity.format_conflict_message(
+        "a.py", "alice", "agent-b", "task-x", "cursor"
+    )
+    assert "cursor · task-x" in msg
+    assert "agent-b" not in msg
+
+
 def test_lock_owned_by_client_requires_both_human_and_agent():
     lock = {"developer_id": "alice", "agent_id": "agent-a"}
     assert agent_identity.lock_owned_by_client(lock, "alice", "agent-a")

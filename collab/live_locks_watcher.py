@@ -689,7 +689,10 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                 owner = data[0].get("owner", "someone")
                 conflict_agent = data[0].get("agent_id")
                 owner_display = agent_identity.format_lock_owner(
-                    str(owner), conflict_agent, None
+                    str(owner),
+                    conflict_agent,
+                    data[0].get("agent_label"),
+                    data[0].get("agent_kind"),
                 )
                 _active_conflicts.add(fp)
                 msg = (

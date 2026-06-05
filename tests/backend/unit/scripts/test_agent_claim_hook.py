@@ -22,10 +22,11 @@ def test_shim_disabled_is_noop(monkeypatch):
     from collab import agent_hooks
 
     monkeypatch.delenv("COLLAB_AGENT_HOOKS", raising=False)
+    monkeypatch.setenv("COLLAB_AGENT_HOOKS_DEBUG", "0")
     called = {"run": False}
     monkeypatch.setattr(
         agent_hooks.safe_subprocess,
-        "capture",
+        "spawn_background",
         lambda *a, **k: called.__setitem__("run", True),
     )
     monkeypatch.setattr(mod.sys, "argv", ["collab_claim_hook.py"])
@@ -39,10 +40,11 @@ def test_shim_delegates_to_package(monkeypatch):
     mod = _load()
     from collab import agent_hooks
 
+    monkeypatch.setenv("COLLAB_AGENT_HOOKS_DEBUG", "0")
     captured = {}
     monkeypatch.setattr(
         agent_hooks.safe_subprocess,
-        "capture",
+        "spawn_background",
         lambda cmd, **k: captured.update(cmd=cmd),
     )
     monkeypatch.setattr(mod.sys, "argv", ["collab_claim_hook.py", "--from-ide-hook"])

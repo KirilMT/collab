@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+import pytest as _pytest
 
 from collab import agent_hooks
+
+
+@_pytest.fixture(autouse=True)
+def _silence_diag_log(monkeypatch):
+    """Keep unit tests from writing to ``logs/agent_hooks.log``."""
+    monkeypatch.setenv("COLLAB_AGENT_HOOKS_DEBUG", "0")
+
 
 # --------------------------------------------------------------------------- #
 # Event parsing
@@ -38,10 +47,16 @@ def test_extract_paths_handles_list_of_strings():
 
 def test_normalize_path_variants():
     assert agent_hooks._normalize_path("file:///C:/repo/x.py").endswith("x.py")
-    assert agent_hooks._normalize_path("plainword") is None
+    assert agent_hooks._normalize_path("test") == "test"
+    assert agent_hooks._normalize_path("Makefile") == "Makefile"
+    assert agent_hooks._normalize_path("has space.py") is None
     assert agent_hooks._normalize_path("dir/sub/file.py") == "dir/sub/file.py"
     assert agent_hooks._normalize_path("") is None
     assert agent_hooks._normalize_path("line\nbreak.py") is None
+
+
+def test_extract_paths_accepts_extensionless_basename():
+    assert agent_hooks._extract_paths({"file_path": "test"}) == ["test"]
 
 
 def test_read_event_edge_cases():
@@ -49,6 +64,40 @@ def test_read_event_edge_cases():
     assert agent_hooks._read_event("not-json{") == {}
     assert agent_hooks._read_event("[1, 2]") == {}
     assert agent_hooks._read_event('{"file_path": "a.py"}') == {"file_path": "a.py"}
+
+
+def test_read_event_strips_utf8_bom():
+    # Cursor on Windows prefixes the payload with a UTF-8 BOM; it must parse.
+    payload = '\ufeff{"file_path": "a.py"}'
+    assert agent_hooks._read_event(payload) == {"file_path": "a.py"}
+
+
+def test_read_event_tolerates_leading_garbage_before_brace():
+    payload = 'XX{"file_path": "a.py"}'
+    assert agent_hooks._read_event(payload) == {"file_path": "a.py"}
+
+
+def test_read_stdin_text_decodes_bom_from_buffer(monkeypatch):
+    import io
+
+    raw = '\ufeff{"file_path": "a.py"}'.encode("utf-8-sig")
+
+    class _Stdin:
+        buffer = io.BytesIO(raw)
+
+    monkeypatch.setattr(agent_hooks.sys, "stdin", _Stdin())
+    text = agent_hooks._read_stdin_text()
+    assert text.startswith("{") or text.lstrip("\ufeff").startswith("{")
+    assert agent_hooks._read_event(text) == {"file_path": "a.py"}
+
+
+def test_read_stdin_text_handles_read_failure(monkeypatch):
+    class _Boom:
+        def read(self):
+            raise OSError("no stdin")
+
+    monkeypatch.setattr(agent_hooks.sys, "stdin", _Boom())
+    assert agent_hooks._read_stdin_text() == ""
 
 
 def test_read_event_reads_stdin(monkeypatch):
@@ -92,6 +141,55 @@ def test_detect_kind(monkeypatch):
     assert agent_hooks._detect_kind() == "claude-code"
 
 
+def test_detect_kind_from_event_cursor(monkeypatch):
+    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
+    for env_name in ("CURSOR_TRACE_ID", "CLAUDE_CODE", "GITHUB_COPILOT_AGENT_ID"):
+        monkeypatch.delenv(env_name, raising=False)
+    event = {"cursor_version": "1.2.3", "file_path": "a.py"}
+    assert agent_hooks._detect_kind_from_event(event) == "cursor"
+    assert agent_hooks._detect_kind(event) == "cursor"
+
+
+def test_detect_kind_from_event_claude(monkeypatch):
+    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
+    event = {"hook_event_name": "PostToolUse", "tool_name": "Write"}
+    assert agent_hooks._detect_kind_from_event(event) == "claude-code"
+
+
+def test_detect_kind_from_event_unknown_returns_none():
+    assert agent_hooks._detect_kind_from_event({"file_path": "a.py"}) is None
+    assert agent_hooks._detect_kind_from_event(None) is None
+
+
+def test_detect_kind_event_overrides_other(monkeypatch):
+    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
+    for env_name in ("CURSOR_TRACE_ID", "CLAUDE_CODE", "GITHUB_COPILOT_AGENT_ID"):
+        monkeypatch.delenv(env_name, raising=False)
+    # No env markers -> would be "other", but the event marks it cursor.
+    assert agent_hooks._detect_kind({"cursor_version": "1.0"}) == "cursor"
+
+
+def test_detect_kind_explicit_env_wins_over_event(monkeypatch):
+    monkeypatch.setenv("COLLAB_AGENT_KIND", "composer")
+    assert agent_hooks._detect_kind({"cursor_version": "1.0"}) == "composer"
+
+
+def test_run_ide_hook_sets_cursor_kind_from_event(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
+    for env_name in ("CURSOR_TRACE_ID", "CLAUDE_CODE", "GITHUB_COPILOT_AGENT_ID"):
+        monkeypatch.delenv(env_name, raising=False)
+    captured: dict = {}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda cmd, **k: captured.update(env=k.get("env", {})),
+    )
+    payload = json.dumps({"cursor_version": "1.2.3", "file_path": "src/a.py"})
+    agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text=payload)
+    assert captured["env"]["COLLAB_AGENT_KIND"] == "cursor"
+
+
 def test_detect_kind_handles_import_failure(monkeypatch):
     monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
 
@@ -121,6 +219,22 @@ def test_resolve_label(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
+def test_diag_log_writes_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("COLLAB_AGENT_HOOKS_DEBUG", "1")
+    monkeypatch.chdir(tmp_path)
+    agent_hooks._diag_log("hello-diag")
+    log = tmp_path / "logs" / "agent_hooks.log"
+    assert log.exists()
+    assert "hello-diag" in log.read_text(encoding="utf-8")
+
+
+def test_diag_log_disabled_is_silent(monkeypatch, tmp_path):
+    monkeypatch.setenv("COLLAB_AGENT_HOOKS_DEBUG", "0")
+    monkeypatch.chdir(tmp_path)
+    agent_hooks._diag_log("should-not-write")
+    assert not (tmp_path / "logs").exists()
+
+
 def test_hook_enabled(monkeypatch):
     monkeypatch.delenv("COLLAB_AGENT_HOOKS", raising=False)
     assert agent_hooks._hook_enabled(["--from-ide-hook"]) is True
@@ -134,7 +248,7 @@ def test_run_ide_hook_disabled_is_noop(monkeypatch):
     called = {"run": False}
     monkeypatch.setattr(
         agent_hooks.safe_subprocess,
-        "capture",
+        "spawn_background",
         lambda *a, **k: called.__setitem__("run", True),
     )
     assert agent_hooks.run_ide_hook([], stdin_text='{"file_path": "a.py"}') == 0
@@ -145,7 +259,7 @@ def test_run_ide_hook_no_paths_is_noop(monkeypatch):
     called = {"run": False}
     monkeypatch.setattr(
         agent_hooks.safe_subprocess,
-        "capture",
+        "spawn_background",
         lambda *a, **k: called.__setitem__("run", True),
     )
     assert agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text="{}") == 0
@@ -161,7 +275,7 @@ def test_run_ide_hook_invokes_claim(monkeypatch):
         captured["cmd"] = cmd
         captured["env"] = kwargs.get("env", {})
 
-    monkeypatch.setattr(agent_hooks.safe_subprocess, "capture", fake_run)
+    monkeypatch.setattr(agent_hooks.safe_subprocess, "spawn_background", fake_run)
     rc = agent_hooks.run_ide_hook(
         ["--from-ide-hook"],
         stdin_text='{"file_path": "collab/app.py", "title": "fix-ci"}',
@@ -182,18 +296,48 @@ def test_run_ide_hook_without_label(monkeypatch):
     captured = {}
     monkeypatch.setattr(
         agent_hooks.safe_subprocess,
-        "capture",
+        "spawn_background",
         lambda cmd, **k: captured.update(cmd=cmd),
     )
     agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
     assert "--label" not in captured["cmd"]
 
 
+def test_run_ide_hook_windows_uses_detached_flags(monkeypatch):
+    # Isolate the spawn-branch assertion from path resolution: forcing os.name
+    # changes pathlib's flavour, so stub the repo filter to always accept.
+    monkeypatch.setattr(agent_hooks, "_is_repo_path", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_hooks.os, "name", "nt")
+    captured: dict = {}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda cmd, **k: captured.update(k),
+    )
+    agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
+    assert captured.get("creationflags") == agent_hooks._WIN_DETACHED_FLAGS
+    assert "start_new_session" not in captured
+
+
+def test_run_ide_hook_posix_uses_new_session(monkeypatch):
+    monkeypatch.setattr(agent_hooks, "_is_repo_path", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_hooks.os, "name", "posix")
+    captured: dict = {}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda cmd, **k: captured.update(k),
+    )
+    agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
+    assert captured.get("start_new_session") is True
+    assert "creationflags" not in captured
+
+
 def test_run_ide_hook_subprocess_error_fails_open(monkeypatch):
     def boom(*_a, **_k):
         raise OSError("nope")
 
-    monkeypatch.setattr(agent_hooks.safe_subprocess, "capture", boom)
+    monkeypatch.setattr(agent_hooks.safe_subprocess, "spawn_background", boom)
     assert (
         agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
         == 0
@@ -205,6 +349,93 @@ def test_run_ide_hook_defaults_argv_to_sys(monkeypatch):
     monkeypatch.setattr(agent_hooks.sys, "argv", ["prog"])
     # No enable signal -> noop without touching stdin.
     assert agent_hooks.run_ide_hook(stdin_text='{"path": "a.py"}') == 0
+
+
+# --------------------------------------------------------------------------- #
+# Repo-path filtering and windowless spawn
+# --------------------------------------------------------------------------- #
+
+
+def test_workspace_roots_includes_cwd_and_event_roots():
+    roots = agent_hooks._workspace_roots({"workspace_roots": ["/repo/a", "/repo/b"]})
+    assert "/repo/a" in roots and "/repo/b" in roots
+    assert os.getcwd() in roots
+
+
+def test_workspace_roots_ignores_non_string_entries():
+    roots = agent_hooks._workspace_roots({"workspace_roots": [1, "", "/repo"]})
+    assert roots == ["/repo", os.getcwd()] or roots == ["/repo"]
+
+
+def test_is_repo_path_accepts_in_repo_relative(tmp_path):
+    assert agent_hooks._is_repo_path("collab/app.py", [str(tmp_path)]) is True
+
+
+def test_is_repo_path_rejects_dot_git(tmp_path):
+    assert agent_hooks._is_repo_path(".git/COMMIT_EDITMSG", [str(tmp_path)]) is False
+    nested = str(tmp_path / ".git" / "COMMIT_MSG.txt")
+    assert agent_hooks._is_repo_path(nested, [str(tmp_path)]) is False
+
+
+def test_is_repo_path_rejects_outside_repo(tmp_path):
+    outside = str(tmp_path.parent / "elsewhere" / "image.png")
+    assert agent_hooks._is_repo_path(outside, [str(tmp_path)]) is False
+
+
+def test_run_ide_hook_filters_non_repo_paths(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda cmd, **k: captured.update(cmd=cmd),
+    )
+    outside = str(tmp_path.parent / "chat" / "image.png").replace("\\", "/")
+    payload = json.dumps({"file_path": [".git/COMMIT_MSG.txt", outside, "src/app.py"]})
+    agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text=payload)
+    assert "src/app.py" in captured["cmd"]
+    assert ".git/COMMIT_MSG.txt" not in captured["cmd"]
+    assert outside not in captured["cmd"]
+
+
+def test_run_ide_hook_all_paths_filtered_is_noop(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    called = {"run": False}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda *a, **k: called.__setitem__("run", True),
+    )
+    rc = agent_hooks.run_ide_hook(
+        ["--from-ide-hook"], stdin_text='{"file_path": ".git/COMMIT_MSG.txt"}'
+    )
+    assert rc == 0
+    assert called["run"] is False
+
+
+def test_windowless_python_posix_uses_sys_executable(monkeypatch):
+    monkeypatch.setattr(agent_hooks.os, "name", "posix")
+    assert agent_hooks._windowless_python() == agent_hooks.sys.executable
+
+
+def test_windowless_python_windows_prefers_pythonw(monkeypatch):
+    monkeypatch.setattr(agent_hooks.os, "name", "nt")
+    monkeypatch.setattr(agent_hooks.os.path, "exists", lambda _p: True)
+    result = agent_hooks._windowless_python()
+    assert result.endswith("pythonw.exe")
+
+
+def test_run_ide_hook_uses_windowless_python(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(agent_hooks, "_windowless_python", lambda: "/usr/bin/pythonw")
+    captured: dict = {}
+    monkeypatch.setattr(
+        agent_hooks.safe_subprocess,
+        "spawn_background",
+        lambda cmd, **k: captured.update(cmd=cmd),
+    )
+    agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
+    assert captured["cmd"][0] == "/usr/bin/pythonw"
 
 
 # --------------------------------------------------------------------------- #

@@ -335,6 +335,7 @@ def spawn_background(
     cwd: Optional[str] = None,
     creationflags: int = 0,
     start_new_session: bool = False,
+    env: Optional[Mapping[str, str]] = None,
 ) -> Any:
     """Spawn a background process (daemon watcher) after argv validation."""
     sp = get_subprocess()
@@ -345,6 +346,8 @@ def spawn_background(
         "cwd": cwd,
         "close_fds": True,
     }
+    if env is not None:
+        popen_kwargs["env"] = dict(env)
     if _host_supports_creationflags():
         popen_kwargs["creationflags"] = creationflags
     else:

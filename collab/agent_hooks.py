@@ -33,15 +33,21 @@ Design invariants:
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from . import safe_subprocess
+
+# DETACHED_PROCESS | CREATE_NO_WINDOW — fully detach the claim on Windows so it
+# survives the short-lived IDE hook process and never opens a console window.
+_WIN_DETACHED_FLAGS = 0x00000008 | 0x08000000
 
 # --------------------------------------------------------------------------- #
 # Event parsing (shared by every IDE/agent payload shape)
@@ -89,6 +95,31 @@ def _truthy(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _diag_log(message: str) -> None:
+    """Append a diagnostic line to ``logs/agent_hooks.log`` (best-effort).
+
+    This is the source of truth for answering "did the IDE actually invoke the hook?".
+    It must never raise — observability cannot break editing. Disabled by default; opt
+    in for troubleshooting by setting ``COLLAB_AGENT_HOOKS_DEBUG=1``.
+    """
+    if not _truthy("COLLAB_AGENT_HOOKS_DEBUG"):
+        return
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{stamp}] pid={os.getpid()} {message}\n"
+    # Prefer the workspace ``logs/`` dir (works in any repo); fall back to a
+    # single temp file so installed-package use never tries to write into
+    # site-packages.
+    candidates = (Path(os.getcwd()) / "logs", Path(tempfile.gettempdir()))
+    for log_dir in candidates:
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with (log_dir / "agent_hooks.log").open("a", encoding="utf-8") as handle:
+                handle.write(line)
+            return
+        except Exception:
+            continue
+
+
 def _walk(obj: Any) -> Iterable[Any]:
     """Yield every nested dict/list node (depth-first)."""
     yield obj
@@ -111,9 +142,22 @@ def _first_str(event: dict[str, Any], keys: Iterable[str]) -> Optional[str]:
 
 
 def _looks_like_path(value: str) -> bool:
-    if not value or "\n" in value:
+    """Return True when *value* plausibly names a file path or basename.
+
+    Cursor often sends relative names like ``README.md`` or extension-less basenames
+    like ``test`` / ``Makefile`` with no directory separator. The old rule required a
+    slash or a dotted extension, so those edits were silently skipped and only the human
+    auto-watcher lock remained.
+    """
+    val = value.strip()
+    if not val or "\n" in val or " " in val:
         return False
-    return ("/" in value) or ("\\" in value) or bool(re.search(r"\.\w{1,8}$", value))
+    if "/" in val or "\\" in val:
+        return True
+    if re.search(r"\.\w{1,8}$", val):
+        return True
+    # Extension-less single-segment names (test, Makefile, LICENSE, …).
+    return bool(re.match(r"^[\w][\w.\-]{0,255}$", val))
 
 
 def _normalize_path(value: str) -> Optional[str]:
@@ -151,18 +195,98 @@ def _extract_paths(event: dict[str, Any]) -> list[str]:
     return found
 
 
+def _workspace_roots(event: dict[str, Any]) -> list[str]:
+    """Return candidate repository roots: the IDE ``workspace_roots`` plus cwd."""
+    roots: list[str] = []
+    raw = event.get("workspace_roots")
+    if isinstance(raw, list):
+        roots = [r for r in raw if isinstance(r, str) and r.strip()]
+    cwd = os.getcwd()
+    if cwd not in roots:
+        roots.append(cwd)
+    return roots
+
+
+def _is_repo_path(path: str, roots: list[str]) -> bool:
+    """True only for files inside a workspace root and outside any ``.git`` dir.
+
+    Prevents claiming things that are not project working files: IDE chat
+    attachments stored outside the repo, and VCS internals like
+    ``.git/COMMIT_EDITMSG``.
+    """
+    try:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = Path(roots[0]) / candidate if roots else candidate
+        resolved = candidate.resolve()
+    except Exception:
+        return False
+    if ".git" in resolved.parts:
+        return False
+    for root in roots:
+        try:
+            resolved.relative_to(Path(root).resolve())
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _windowless_python() -> str:
+    """Return ``pythonw.exe`` on Windows so the detached claim shows no console.
+
+    Falls back to the current interpreter elsewhere (or if ``pythonw`` is missing). This
+    is what eliminates the flashing terminal windows.
+    """
+    if os.name == "nt":
+        candidate = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if os.path.exists(candidate):
+            return candidate
+    return sys.executable
+
+
+def _read_stdin_text() -> str:
+    """Read the hook payload from stdin, tolerant of Windows BOM/encoding.
+
+    Cursor on Windows writes the event JSON to stdin prefixed with a UTF-8 BOM (and the
+    console code page may not be UTF-8). Reading the raw bytes and decoding with
+    ``utf-8-sig`` strips the BOM and forces UTF-8 regardless of the locale, which is
+    what broke attribution: a BOM makes ``json.loads`` raise, so the event parsed as
+    empty and nothing was ever claimed.
+    """
+    try:
+        buffer = getattr(sys.stdin, "buffer", None)
+        if buffer is not None:
+            data = buffer.read()
+            if isinstance(data, (bytes, bytearray)):
+                return bytes(data).decode("utf-8-sig", errors="replace")
+        text = sys.stdin.read()
+        return text if isinstance(text, str) else ""
+    except Exception:
+        return ""
+
+
 def _read_event(stdin_text: Optional[str] = None) -> dict[str, Any]:
     if stdin_text is None:
-        try:
-            stdin_text = sys.stdin.read()
-        except Exception:
-            return {}
-    if not stdin_text or not stdin_text.strip():
+        stdin_text = _read_stdin_text()
+    if not stdin_text:
+        return {}
+    # Strip any leading BOM(s) and surrounding whitespace before parsing.
+    text = stdin_text.lstrip("\ufeff").strip()
+    if not text:
         return {}
     try:
-        data = json.loads(stdin_text)
+        data = json.loads(text)
     except Exception:
-        return {}
+        # Last-resort tolerance for a leading BOM/garbage that survived decoding:
+        # retry from the first JSON object brace.
+        brace = text.find("{")
+        if brace <= 0:
+            return {}
+        try:
+            data = json.loads(text[brace:])
+        except Exception:
+            return {}
     return data if isinstance(data, dict) else {}
 
 
@@ -183,10 +307,32 @@ def _stable_agent_id(event: dict[str, Any]) -> str:
     return f"agent-{digest}"
 
 
-def _detect_kind() -> str:
+def _detect_kind_from_event(event: Optional[dict[str, Any]]) -> Optional[str]:
+    """Infer the AI runtime family from the hook payload itself.
+
+    Cursor stamps every hook event with ``cursor_version`` (present in both the
+    ``afterFileEdit`` and tool-use events), which is a reliable, env-independent marker.
+    Real Claude Code hooks instead carry ``PreToolUse``/``PostToolUse`` event names.
+    This keeps the dashboard badge informative (icon + "Cursor") even when the IDE does
+    not export runtime env markers to the hook process.
+    """
+    if not isinstance(event, dict):
+        return None
+    if "cursor_version" in event:
+        return "cursor"
+    hook_name = str(event.get("hook_event_name") or "")
+    if hook_name in {"PreToolUse", "PostToolUse"}:
+        return "claude-code"
+    return None
+
+
+def _detect_kind(event: Optional[dict[str, Any]] = None) -> str:
     explicit = os.getenv("COLLAB_AGENT_KIND", "").strip().lower()
     if explicit:
         return explicit
+    from_event = _detect_kind_from_event(event)
+    if from_event:
+        return from_event
     try:
         from . import agent_identity
 
@@ -225,31 +371,62 @@ def run_ide_hook(
     Always returns 0 (fail open).
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    _diag_log(f"invoked argv={argv} cwd={os.getcwd()!r}")
     if not _hook_enabled(argv):
+        _diag_log("disabled: no --from-ide-hook flag and COLLAB_AGENT_HOOKS unset")
         return 0
 
-    event = _read_event(stdin_text)
-    paths = _extract_paths(event)
+    raw = stdin_text if stdin_text is not None else _read_stdin_text()
+    _diag_log(f"raw stdin len={len(raw or '')} sample={(raw or '')[:300]!r}")
+
+    event = _read_event(raw)
+    if event:
+        _diag_log(f"event keys={sorted(event)[:12]}")
+    else:
+        _diag_log("empty/invalid event payload on stdin")
+    all_paths = _extract_paths(event)
+    roots = _workspace_roots(event)
+    paths = [p for p in all_paths if _is_repo_path(p, roots)]
+    skipped = [p for p in all_paths if p not in paths]
+    if skipped:
+        _diag_log(f"skipped non-repo/.git paths: {skipped}")
     if not paths:
+        _diag_log("no claimable repo file paths in event -> nothing to claim")
         return 0
 
     env = dict(os.environ)
     env["COLLAB_AGENT_MODE"] = "1"
     env["COLLAB_AGENT_ID"] = _stable_agent_id(event)
-    env["COLLAB_AGENT_KIND"] = _detect_kind()
+    env["COLLAB_AGENT_KIND"] = _detect_kind(event)
     label = _resolve_label(event)
     if label:
         env["COLLAB_AGENT_LABEL"] = label
 
-    cmd = [sys.executable, "-m", "collab", "claim", *paths]
+    cmd = [_windowless_python(), "-m", "collab", "claim", *paths]
     if label:
         cmd += ["--label", label]
     cmd += ["--reason", "AI agent edit"]
 
+    # Fire-and-forget: spawn the claim fully detached and return immediately.
+    # The network claim must NOT run inside the hook process, or Cursor's
+    # afterFileEdit execution timeout could kill it mid-flight (leaving only the
+    # human auto-watcher lock). Detaching also guarantees edits are never delayed.
     try:
-        safe_subprocess.capture(cmd, policy="agent_claim", env=env, timeout=20)
-    except Exception:
-        # Never block edits on claim failures.
+        kwargs: dict[str, Any] = {
+            "policy": "agent_claim",
+            "cwd": os.getcwd(),
+            "env": env,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = _WIN_DETACHED_FLAGS
+        else:
+            kwargs["start_new_session"] = True
+        safe_subprocess.spawn_background(cmd, **kwargs)
+        _diag_log(
+            f"spawned detached claim for {len(paths)} path(s): {paths} label={label!r}"
+        )
+    except Exception as exc:  # pragma: no cover - defensive, must fail open
+        _diag_log(f"spawn failed (fail-open): {exc!r}")
         return 0
     return 0
 

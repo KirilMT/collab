@@ -445,6 +445,7 @@ def _run_cli() -> None:
                         str(lk.get("developer_id", "?")),
                         lk.get("agent_id"),
                         lk.get("agent_label"),
+                        lk.get("agent_kind"),
                     )
                     print(
                         f"  {lk.get('file_path')} — {owner} "
@@ -462,6 +463,7 @@ def _run_cli() -> None:
                     str(info.get("locked_by", "?")),
                     info.get("locked_by_agent_id"),
                     info.get("locked_by_agent_label"),
+                    info.get("locked_by_agent_kind"),
                 )
                 acquired_at = info.get("acquired_at")
                 can_edit = info.get("can_edit", False)

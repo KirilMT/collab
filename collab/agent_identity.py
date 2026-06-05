@@ -234,13 +234,29 @@ def format_lock_owner(
     developer_id: str,
     agent_id: Optional[str] = None,
     agent_label: Optional[str] = None,
+    agent_kind: Optional[str] = None,
 ) -> str:
-    """Format lock owner for CLI/log messages."""
+    """Format lock owner for CLI/log messages.
+
+    For agent locks the descriptor mirrors the dashboard badge: it prefers
+    human-meaningful identity — the runtime ``kind`` (e.g. ``cursor``) and the
+    task ``label`` (joined as ``kind · task``) — over the opaque ``agent_id``.
+    The raw ``agent_id`` is only used as a last-resort fallback when neither a
+    known runtime nor a task label is available (it is never the primary
+    display, matching the dashboard which surfaces it only in a tooltip).
+    """
     base = f"@{developer_id}"
-    if agent_id:
-        label = agent_label or agent_id
-        return f"{base} (agent: {label})"
-    return base
+    if not agent_id:
+        return base
+    parts: list[str] = []
+    kind = (agent_kind or "").strip()
+    if kind and kind.lower() != "other":
+        parts.append(kind)
+    task = (agent_label or "").strip()
+    if task:
+        parts.append(task)
+    descriptor = " · ".join(parts) if parts else agent_id
+    return f"{base} (agent: {descriptor})"
 
 
 def format_conflict_message(
@@ -248,9 +264,10 @@ def format_conflict_message(
     developer_id: str,
     agent_id: Optional[str] = None,
     agent_label: Optional[str] = None,
+    agent_kind: Optional[str] = None,
 ) -> str:
     """Build a user-facing conflict message."""
-    owner = format_lock_owner(developer_id, agent_id, agent_label)
+    owner = format_lock_owner(developer_id, agent_id, agent_label, agent_kind)
     return f"⚠ {file_path} is locked by {owner}. Editing is not recommended."
 
 
