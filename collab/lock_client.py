@@ -1460,8 +1460,10 @@ class LockClient:
                 _, data2, error2 = self._parse_response(res2)
                 if not error2 and data2:
                     rows = data2
-            except Exception:
-                pass  # Fallback is best-effort
+            except Exception as exc:
+                logger.debug(
+                    "History basename fallback failed for %s: %s", file_path, exc
+                )
 
         return rows
 
@@ -3058,6 +3060,7 @@ class LockClient:
 
         # Log kept locks (matching pycharm_watcher format)
         n_kept = 0
+        enumeration_ok = True
         try:
             active_locks = self.active()
             logger.debug(
@@ -3075,21 +3078,37 @@ class LockClient:
                         "🔒 [PRESERVED] %s — still has local edits, lock preserved", fp
                     )
         except Exception as e:
+            enumeration_ok = False
             logger.error(
                 "Exception while enumerating active locks during shutdown: %s", e
             )
 
-        logger.info(
-            "Shutdown complete. Preserved %d lock(s); released 0 lock(s).", n_kept
-        )
-        # Emit a concise stdout marker for the extension to detect.
-        try:
-            print(
-                f"Shutdown complete. Preserved {n_kept} lock(s); released 0 lock(s).",
-                flush=True,
+        if enumeration_ok:
+            logger.info(
+                "Shutdown complete. Preserved %d lock(s); released 0 lock(s).", n_kept
             )
-        except Exception:
-            pass
+            # Emit a concise stdout marker for the extension to detect.
+            try:
+                print(
+                    f"Shutdown complete. Preserved {n_kept} lock(s); "
+                    "released 0 lock(s).",
+                    flush=True,
+                )
+            except Exception:
+                pass
+        else:
+            logger.warning(
+                "Shutdown complete. Could not verify lock count; "
+                "locks unchanged in database."
+            )
+            try:
+                print(
+                    "Shutdown complete. Could not verify lock count; "
+                    "locks unchanged in database.",
+                    flush=True,
+                )
+            except Exception:
+                pass
 
         # Write shutdown marker early into the per-workspace state dir so
         # external tools can detect shutdown without placing transient files

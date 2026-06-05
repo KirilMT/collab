@@ -299,3 +299,63 @@ def test_prune_history_fallback_exception_path(monkeypatch):
     assert ok is False
     assert deleted == 0
     assert "delete boom" in msg
+
+
+# ============================================================================
+# history() basename fallback logging (issue #72)
+# ============================================================================
+
+
+def test_history_fallback_exception_logs_warning(monkeypatch, caplog):
+    """history() basename fallback logs debug message on failure, not silent pass."""
+    import logging
+
+    monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "admin_key")
+    monkeypatch.setattr(mod, "_supabase_create_client", lambda url, key: None)
+
+    class FakeQuery:
+        def select(self, *args):
+            return self
+
+        def eq(self, *args):
+            return self
+
+        def is_(self, *args):
+            return self
+
+        def ilike(self, *args):
+            return self
+
+        def order(self, *args, **kwargs):
+            return self
+
+        def limit(self, *args):
+            return self
+
+        def execute(self):
+            return None
+
+    class FakeClient:
+        def table(self, *args):
+            return FakeQuery()
+
+    client = getattr(mod, "LockClient")()
+    client._client = FakeClient()
+    monkeypatch.setattr(client, "_parse_response", lambda res: (False, [], None))
+
+    class Exploder:
+        def replace(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    caplog.set_level(logging.DEBUG, logger="collab.lock_client")
+    res = client.history(limit=5, file_path=Exploder())
+
+    assert res == []
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    fallback_logs = [
+        r.message for r in debug_records if "History basename fallback" in r.message
+    ]
+    assert len(fallback_logs) >= 1, (
+        f"Expected 'History basename fallback' debug log, "
+        f"got: {[r.message for r in debug_records]}"
+    )

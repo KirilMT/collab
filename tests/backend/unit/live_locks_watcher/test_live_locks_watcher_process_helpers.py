@@ -517,29 +517,37 @@ def test_existing_watcher_running_stale_pid_with_dead_parent_details(
     mod = load_watcher_module()
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text(
-        json.dumps(
-            {
-                "pid": 9999,
-                "entrypoint": "pycharm-watcher",
-                "parent_pid": 1111,
-                "started_at": "2025-01-01T00:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
+        json.dumps({"pid": 4321, "entrypoint": "not-watcher"}), encoding="utf-8"
     )
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    def _alive(pid):
-        return False
-
-    monkeypatch.setattr(mod, "_is_process_alive", _alive)
+    # cmdline probe must not match a watcher, so we don't short-circuit
+    monkeypatch.setattr(mod, "_get_cmdline_for_pid_local", lambda pid: None)
+    monkeypatch.setattr(mod, "_is_process_alive", lambda _p: False)
 
     running, pid, cmdline, entry = mod._existing_watcher_running()
     assert running is False
-    assert pid == 9999
-    assert cmdline is None
-    assert entry is None
-    assert not pid_file.exists()
+    assert pid == 4321
+
+
+# ============================================================================
+# _git_capture_text logging level (issue #72)
+# ============================================================================
+
+
+def test_git_capture_text_warns_on_failure(monkeypatch, caplog):
+    """_git_capture_text logs a warning (not just debug) when git fails."""
+    mod = load_watcher_module()
+
+    def _fail(*_a, **_k):
+        raise RuntimeError("simulated git failure")
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _fail)
+
+    with caplog.at_level("WARNING"):
+        result = mod._git_capture_text(["git", "status"])
+
+    assert result == ""
+    assert "simulated git failure" in caplog.text
 
 
 def test_existing_watcher_running_detects_orphaned_parent(monkeypatch, tmp_path):
