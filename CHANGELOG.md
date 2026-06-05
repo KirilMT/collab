@@ -9,6 +9,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/KirilMT/collab/compare/v0.5.1...v0.6.0) (2026-06-05)
+
+### Features
+
+- **attribution:** automate AI-agent edit attribution across IDEs ([#102](https://github.com/KirilMT/collab/issues/102)) ([c66f98f](https://github.com/KirilMT/collab/commit/c66f98fe13ef382d2e1323b58d2d95ec90160c4a))
+- **setup:** zero-touch Supabase config via pre-filled .env.example ([#80](https://github.com/KirilMT/collab/issues/80)) ([1101097](https://github.com/KirilMT/collab/commit/1101097428e208eba9c489e0ef61ab874079d593)), closes [#79](https://github.com/KirilMT/collab/issues/79)
+
+### Bug Fixes
+
+- **attribution:** make AI-agent attribution fire on Windows + refine display ([#104](https://github.com/KirilMT/collab/issues/104)) ([2e0f8d0](https://github.com/KirilMT/collab/commit/2e0f8d0595c6fba990bfd7ba4eada4b337b224a3))
+- **core:** preserve locks when git status fails during watch/shutdown ([#84](https://github.com/KirilMT/collab/issues/84)) ([c23dff5](https://github.com/KirilMT/collab/commit/c23dff5d477a1e845005ab8dc99fc5c0373ee597))
+- **lock_client:** terminate orphan launcher when daemon_start verification fails ([#96](https://github.com/KirilMT/collab/issues/96)) ([4c41173](https://github.com/KirilMT/collab/commit/4c41173d4a454065236251b45252370d0750838c)), closes [#73](https://github.com/KirilMT/collab/issues/73)
+- **logging:** surface silent git/API failures as warning/debug logs ([#100](https://github.com/KirilMT/collab/issues/100)) ([4ec4ed3](https://github.com/KirilMT/collab/commit/4ec4ed3ccc6a10b32d51e25240c5df2c00e0da5a))
+- **setup-dev:** run full npm install instead of only prettier ([#82](https://github.com/KirilMT/collab/issues/82)) ([f058e0d](https://github.com/KirilMT/collab/commit/f058e0dea6a525965b37902918ba41e81eb6dd00))
+
+### Documentation
+
+- **project:** consolidate workflow on built-in Status field with auto-transitions ([#98](https://github.com/KirilMT/collab/issues/98)) ([bc3572f](https://github.com/KirilMT/collab/commit/bc3572f9ce18390a94b6eb8ac567cb85386661ef))
+
 ## [0.5.1](https://github.com/KirilMT/collab/compare/v0.5.0...v0.5.1) (2026-06-03)
 
 ### Bug Fixes
