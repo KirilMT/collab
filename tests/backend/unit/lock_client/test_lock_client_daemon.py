@@ -3013,6 +3013,43 @@ def test_daemon_status_cmdline_match_prints_verified_path(
     assert "lock_client.py watch" in out
 
 
+# ============================================================================
+# graceful shutdown enumeration failure message (issue #72)
+# ============================================================================
+
+
+def test_graceful_shutdown_enumeration_failure_message(monkeypatch, capsys):
+    """_graceful_shutdown emits distinct message when active() fails."""
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", "/tmp/nonexistent")
+    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
+
+    pid_file = __import__("tempfile").mkdtemp() + "/daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", pid_file)
+
+    client = mod.LockClient(local_only=True, developer_id="test_dev")
+    client._shutdown_done = False
+
+    # active() raises — simulates API/network failure during enumeration
+    monkeypatch.setattr(
+        client,
+        "active",
+        __import__("unittest").mock.Mock(side_effect=RuntimeError("API down")),
+    )
+
+    # NOP the marker write so we don't touch real fs
+    monkeypatch.setattr(
+        mod, "_state_path", lambda name: "/tmp/nonexistent_shutdown_marker"
+    )
+
+    client._graceful_shutdown(reason="test")
+
+    out = capsys.readouterr().out
+    assert "Could not verify lock count" in out
+    assert "locks unchanged in database" in out
+    # Must NOT contain the misleading "Preserved 0" message
+    assert "Preserved 0 lock(s)" not in out
+
+
 # ---------------------------------------------------------------------------
 # Signal handler registration (lines 2578-2683)
 # ---------------------------------------------------------------------------

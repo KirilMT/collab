@@ -279,7 +279,7 @@ def _git_capture_text(argv: list[str], *, cwd: str | None = None) -> str:
         if captured.ok:
             return safe_subprocess.decode_output(captured.stdout).strip()
     except Exception as exc:
-        logger.debug("git command failed %s: %s", argv, exc)
+        logger.warning("git command failed %s: %s", argv, exc)
     return ""
 
 
