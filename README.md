@@ -527,15 +527,15 @@ MIT License — see LICENSE file for details.
 
 ## Documentation
 
-| Document                                      | Description                              |
-| --------------------------------------------- | ---------------------------------------- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)       | System design and data flow              |
-| [API.md](docs/API.md)                         | CLI overview and environment variables   |
-| [CLI_REFERENCE.md](docs/CLI_REFERENCE.md)     | Full command reference                   |
-| [SECURITY.md](docs/SECURITY.md)               | Subprocess hardening and secret handling |
-| [PERFORMANCE.md](docs/PERFORMANCE.md)         | Validation and watcher tuning            |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and fixes                  |
-| [collab_roadmap.md](docs/collab_roadmap.md)   | Future enhancements                      |
+| Document                                                      | Description                              |
+| ------------------------------------------------------------- | ---------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | System design and data flow              |
+| [API.md](docs/API.md)                                         | CLI overview and environment variables   |
+| [CLI_REFERENCE.md](docs/CLI_REFERENCE.md)                     | Full command reference                   |
+| [SECURITY.md](docs/SECURITY.md)                               | Subprocess hardening and secret handling |
+| [PERFORMANCE.md](docs/PERFORMANCE.md)                         | Validation and watcher tuning            |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | Common issues and fixes                  |
+| [GitHub Projects](https://github.com/KirilMT/collab/projects) | Roadmap and sprint planning              |
 
 ---
 
@@ -545,4 +545,4 @@ For issues, questions, or feature requests:
 
 1. Check [issues](../../issues)
 2. Open a [new issue](../../issues/new) with reproduction steps
-3. See [docs/collab_roadmap.md](docs/collab_roadmap.md) for planned features
+3. See [GitHub Projects](https://github.com/KirilMT/collab/projects) for planned features

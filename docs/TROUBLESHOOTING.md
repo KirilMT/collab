@@ -184,4 +184,4 @@ If that fails too, fix hook/`PATH` resolution before blaming the IDE.
 
 1. `collab --help` and `collab daemon-status`
 2. `docs/API.md` / `docs/CLI_REFERENCE.md` for command details
-3. `docs/bug_tracking.md` for known issues
+3. [GitHub Issues](https://github.com/KirilMT/collab/issues?q=is%3Aissue+label%3A%22type%3A+bug%22) for known issues

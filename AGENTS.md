@@ -213,16 +213,59 @@ Or run `python scripts/format_code.py`.
 | ----------------------------------------- | ------------------------------------------------------- |
 | `pyproject.toml`, `pytest.ini`, `.flake8` | Immutable for bypasses. Fix code, not config.           |
 | `.github/workflows/`                      | Immutable for quality gates. Never skip failing checks. |
-| `docs/bug_tracking.md`                    | Ask user before adding new bugs.                        |
+| GitHub Issues                             | Ask user before adding new bug reports.                 |
 | Coverage thresholds                       | Immutable. Add tests, do not lower thresholds.          |
 
 ---
 
 ## Documentation Structure
 
-- Core docs: `docs/collab_roadmap.md`, `docs/bug_tracking.md`, `docs/API.md`, `docs/ARCHITECTURE.md`
+- Core docs: `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/PERFORMANCE.md`, `docs/TROUBLESHOOTING.md`, `docs/CLI_REFERENCE.md`
 - Docs must stay current and concise.
-- Keep roadmap and bug-tracker statuses synchronized.
+- Roadmap is tracked via the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) GitHub Project and [Milestones](https://github.com/KirilMT/collab/milestones).
+- Bugs are tracked via [GitHub Issues](https://github.com/KirilMT/collab/issues) with appropriate labels.
+
+---
+
+## GitHub Workflow: Issues, Projects, and Milestones
+
+### The Triad
+
+| Component                                                         | Purpose                                                        | URL                |
+| ----------------------------------------------------------------- | -------------------------------------------------------------- | ------------------ |
+| **[GitHub Issues](https://github.com/KirilMT/collab/issues)**     | Individual work items (bugs, features, chores)                 | `../../issues`     |
+| **[Collab Roadmap](https://github.com/users/KirilMT/projects/2)** | Kanban board tracking Stage and Priority                       | Project #2         |
+| **[Milestones](https://github.com/KirilMT/collab/milestones)**    | Version-targeted groupings (currently: `Upcoming` placeholder) | `../../milestones` |
+
+### Label System
+
+Every issue must have labels from all three categories:
+
+| Category     | Labels                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ |
+| **Type**     | `type: bug`, `type: feature`, `type: enhancement`, `type: docs`, `type: chore`, `type: refactor`, `type: security` |
+| **Priority** | `priority: critical`, `priority: high`, `priority: medium`, `priority: low`                                        |
+| **Status**   | `status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`                                 |
+| **Scope**    | `scope: cli`, `scope: daemon`, `scope: dashboard`, `scope: extension`, `scope: ci`, `scope: docs`                  |
+
+### Project Stages (Collab Roadmap Kanban)
+
+The **Stage** field drives the Kanban board. The built-in **Status** field is disabled (all values cleared) to avoid confusion.
+
+```
+📋 Backlog  →  🔜 Next  →  🚧 In Progress  →  ✅ Shipped
+```
+
+> **Separation of concerns:** The Project **Stage** tracks roadmap position. GitHub Issue **`status:*` labels** (`status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`) track the issue/PR lifecycle independently. These are two distinct dimensions — an issue can be `status: blocked` while its Project Stage remains `📋 Backlog`.
+
+### AI Agent Workflow Summary
+
+1. **New bug discovered** → Ask user → Open issue with `type: bug` + `priority:*` + `scope:*` labels → `status: triage`
+2. **Start work** → Assign self → `status: in-progress` → Move Project item to `🚧 In Progress`
+3. **Fix/implement** → Branch `feat/issue-<N>-desc` or `fix/issue-<N>-desc` → Code + tests → Format → Validate
+4. **Commit** → Include `Fixes #<N>` or `Closes #<N>` in body → Open PR → `status: needs-review`
+5. **Merged** → Issue auto-closes → Move Project item to `✅ Shipped`
+6. **New feature idea** → Open issue → Add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project → `📋 Backlog` → `priority: low`
 
 ---
 
@@ -269,13 +312,14 @@ See skill `file-locking` for full procedure.
 
 ## Key References
 
-| Document                  | Purpose                                     |
-| ------------------------- | ------------------------------------------- |
-| `.github/CONTRIBUTING.md` | Contribution process and commit conventions |
-| `.github/GIT_WORKFLOW.md` | Branching strategy and push rules           |
-| `docs/collab_roadmap.md`  | Active roadmap                              |
-| `docs/bug_tracking.md`    | Bug lifecycle                               |
-| `MIGRATION_PLAN.md`       | Migration status and phases                 |
+| Document                           | Purpose                                     |
+| ---------------------------------- | ------------------------------------------- |
+| `.github/CONTRIBUTING.md`          | Contribution process and commit conventions |
+| `.github/GIT_WORKFLOW.md`          | Branching strategy and push rules           |
+| [GitHub Issues](../../issues)      | Bug reports and feature requests            |
+| [Collab Roadmap](../../projects/2) | Kanban board (Stage + Priority)             |
+| [Milestones](../../milestones)     | Version-targeted groupings                  |
+| `MIGRATION_PLAN.md`                | Migration status and phases                 |
 
 ---
 
@@ -289,7 +333,7 @@ Workflow procedures are in `.agents/skills/`:
 | `file-locking`        | Mandatory lock verification before edits                          |
 | `testing-workflow`    | Test planning, coverage, validation                               |
 | `commit-workflow`     | Staging, reviewing, committing, pushing                           |
-| `bug-tracking`        | Discovery, triage, fix, and closure                               |
+| `bug-tracking`        | Discovery, triage, fix, and closure via GitHub Issues             |
 | `new-feature`         | Feature planning and implementation                               |
 
 ---

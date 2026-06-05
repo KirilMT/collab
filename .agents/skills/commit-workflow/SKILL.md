@@ -105,10 +105,20 @@ Testing:
 
 Supported types: `feat`, `fix`, `chore`, `refactor`, `perf`, `remove`, `revert`, `docs`, `test`, `style`, `build`, `ci`
 
+### Linking to GitHub Issues
+
+Include issue references in the commit body to auto-close on merge:
+
+- `Fixes #<N>` — for bug fixes
+- `Closes #<N>` — for feature completion
+- `Refs #<N>` — for related but non-closing changes
+
 ```bash
 git commit -m "type(scope): description
 
-Body text here..."
+Body text here...
+
+Fixes #42"
 ```
 
 **NOTE:** `git commit` requires user approval.

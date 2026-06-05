@@ -212,7 +212,7 @@ and this project adheres to
 - **gitignore:** Extend ignore rules to cover `.env.*` variants while preserving
   `.env.example`
 - **roadmap:** Add Optional Enhancements Backlog section to
-  `docs/collab_roadmap.md`
+  `docs/collab_roadmap.md` (since migrated to [GitHub Projects](https://github.com/KirilMT/collab/projects))
 - **migration:** Update `MIGRATION_PLAN.md` Phase 0.5 status, fix tree block
   formatting, promote `eslint.config.js` and `playwright.config.js` from
   "could add" to completed, remove deferred lower-priority block
