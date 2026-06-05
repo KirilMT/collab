@@ -307,7 +307,7 @@ def test_prune_history_fallback_exception_path(monkeypatch):
 
 
 def test_history_fallback_exception_logs_warning(monkeypatch, caplog):
-    """history() basename fallback logs debug message on failure, not silent pass."""
+    """History() basename fallback logs debug message on failure, not silent pass."""
     import logging
 
     monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "admin_key")
