@@ -3087,28 +3087,24 @@ class LockClient:
             logger.info(
                 "Shutdown complete. Preserved %d lock(s); released 0 lock(s).", n_kept
             )
-            # Emit a concise stdout marker for the extension to detect.
-            try:
-                print(
-                    f"Shutdown complete. Preserved {n_kept} lock(s); "
-                    "released 0 lock(s).",
-                    flush=True,
-                )
-            except Exception:
-                pass
+            shutdown_msg = (
+                f"Shutdown complete. Preserved {n_kept} lock(s); " "released 0 lock(s)."
+            )
         else:
             logger.warning(
                 "Shutdown complete. Could not verify lock count; "
                 "locks unchanged in database."
             )
-            try:
-                print(
-                    "Shutdown complete. Could not verify lock count; "
-                    "locks unchanged in database.",
-                    flush=True,
-                )
-            except Exception:
-                pass
+            shutdown_msg = (
+                "Shutdown complete. Could not verify lock count; "
+                "locks unchanged in database."
+            )
+
+        # Emit a concise stdout marker for the extension to detect.
+        try:
+            print(shutdown_msg, flush=True)
+        except Exception:
+            pass
 
         # Write shutdown marker early into the per-workspace state dir so
         # external tools can detect shutdown without placing transient files
