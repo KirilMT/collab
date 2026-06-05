@@ -9,6 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/KirilMT/collab/compare/v0.5.1...v0.6.0) (2026-06-05)
+
+
+### Features
+
+* **setup:** zero-touch Supabase config via pre-filled .env.example ([#80](https://github.com/KirilMT/collab/issues/80)) ([1101097](https://github.com/KirilMT/collab/commit/1101097428e208eba9c489e0ef61ab874079d593)), closes [#79](https://github.com/KirilMT/collab/issues/79)
+
+
+### Bug Fixes
+
+* **core:** preserve locks when git status fails during watch/shutdown ([#84](https://github.com/KirilMT/collab/issues/84)) ([c23dff5](https://github.com/KirilMT/collab/commit/c23dff5d477a1e845005ab8dc99fc5c0373ee597))
+* **setup-dev:** run full npm install instead of only prettier ([#82](https://github.com/KirilMT/collab/issues/82)) ([f058e0d](https://github.com/KirilMT/collab/commit/f058e0dea6a525965b37902918ba41e81eb6dd00))
+
 ## [0.5.1](https://github.com/KirilMT/collab/compare/v0.5.0...v0.5.1) (2026-06-03)
 
 ### Bug Fixes
