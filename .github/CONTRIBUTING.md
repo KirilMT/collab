@@ -86,6 +86,17 @@ python scripts/validate_code.py
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
 
+## Conflict Prevention (Mandatory — Read Before ANY Work)
+
+No two developers or AI agents may work on the same task at the same time. Before touching code:
+
+1. **Check the GitHub Issue** — is it already assigned? If yes, **STOP**.
+2. **Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2)** — is the Status already `In Progress`? If yes, **STOP**.
+3. **Claim the issue** — assign to yourself, set `status: in-progress` label, set board Status to `In Progress`.
+4. **File locking** — run `collab active` before editing files.
+
+See `AGENTS.md` → "Conflict Prevention Protocol" for full details.
+
 ## File Locking Protocol (Mandatory)
 
 Before editing files:
@@ -378,26 +389,26 @@ Update candidates include:
 - `docs/API.md`
 - `docs/ARCHITECTURE.md`
 - Update the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues) with progress or resolution
-- Update the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project item Stage if applicable
+- Update the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project item board Status if applicable (the built-in workflow auto-updates on issue close)
 
 For bug tracking:
 
 - Confirm reproducibility.
 - Keep issue statuses current with labels (`status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`).
 - Search for duplicates before opening a new issue.
-- Apply all three required label categories: `type:*`, `priority:*`, `scope:*`.
+- Apply all four required label categories: `type:*`, `priority:*`, `scope:*`, and `status:*` lifecycle labels.
 
 ## GitHub Workflow for Contributors
 
 ### Issue-Driven Development
 
 1. **Pick or create an issue** — All work must have a corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
-2. **Label it correctly** — Every issue needs `type:*`, `priority:*`, and `scope:*` labels.
-3. **Assign yourself** — Set the issue to `status: in-progress` when you start.
+2. **Label it correctly** — Every issue needs `type:*`, `priority:*`, `scope:*`, and `status:*` lifecycle labels.
+3. **Claim the issue** — Assign yourself, set `status: in-progress` label, AND update the board Status to `In Progress` on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2).
 4. **Branch naming** — Use `feat/issue-<N>-desc` for features, `fix/issue-<N>-desc` for bugs.
 5. **Commit with references** — Include `Fixes #<N>` or `Closes #<N>` in the commit body.
 6. **Open a PR** — Set issue label to `status: needs-review`.
-7. **After merge** — The issue auto-closes. If on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2), move to `✅ Shipped`.
+7. **After merge** — The issue auto-closes AND the board Status auto-updates to `Done` (via GitHub's built-in project workflow). No manual board update needed.
 
 ## Security and Secrets Policy
 

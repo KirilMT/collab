@@ -231,41 +231,123 @@ Or run `python scripts/format_code.py`.
 
 ### The Triad
 
-| Component                                                         | Purpose                                                        | URL                |
-| ----------------------------------------------------------------- | -------------------------------------------------------------- | ------------------ |
-| **[GitHub Issues](https://github.com/KirilMT/collab/issues)**     | Individual work items (bugs, features, chores)                 | `../../issues`     |
-| **[Collab Roadmap](https://github.com/users/KirilMT/projects/2)** | Kanban board tracking Stage and Priority                       | Project #2         |
-| **[Milestones](https://github.com/KirilMT/collab/milestones)**    | Version-targeted groupings (currently: `Upcoming` placeholder) | `../../milestones` |
+| Component                                                         | Purpose                                                     | URL                |
+| ----------------------------------------------------------------- | ----------------------------------------------------------- | ------------------ |
+| **[GitHub Issues](https://github.com/KirilMT/collab/issues)**     | Individual work items (bugs, features, chores)              | `../../issues`     |
+| **[Collab Roadmap](https://github.com/users/KirilMT/projects/2)** | Kanban board using built-in **Status** field (auto-updated) | Project #2         |
+| **[Milestones](https://github.com/KirilMT/collab/milestones)**    | Version-targeted groupings                                  | `../../milestones` |
 
 ### Label System
 
-Every issue must have labels from all three categories:
+Every issue must have labels from ALL four categories:
 
-| Category     | Labels                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| **Type**     | `type: bug`, `type: feature`, `type: enhancement`, `type: docs`, `type: chore`, `type: refactor`, `type: security` |
-| **Priority** | `priority: critical`, `priority: high`, `priority: medium`, `priority: low`                                        |
-| **Status**   | `status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`                                 |
-| **Scope**    | `scope: cli`, `scope: daemon`, `scope: dashboard`, `scope: extension`, `scope: ci`, `scope: docs`                  |
+| Category      | Labels                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Type**      | `type: bug`, `type: feature`, `type: enhancement`, `type: docs`, `type: chore`, `type: refactor`, `type: security` |
+| **Priority**  | `priority: critical`, `priority: high`, `priority: medium`, `priority: low`                                        |
+| **Lifecycle** | `status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`                                 |
+| **Scope**     | `scope: cli`, `scope: daemon`, `scope: dashboard`, `scope: extension`, `scope: ci`, `scope: docs`                  |
 
-### Project Stages (Collab Roadmap Kanban)
+### Project Board: Built-in Status Field (Auto-Updated)
 
-The **Stage** field drives the Kanban board. The built-in **Status** field is disabled (all values cleared) to avoid confusion.
+The [Collab Roadmap](https://github.com/users/KirilMT/projects/2) uses GitHub's **built-in Status field** (NOT a custom field). This is critical because:
+
+- **Built-in workflows auto-update Status** — when an issue is closed via `Fixes #N`, the project item automatically moves to `Done`. No manual step needed.
+- **AI agents can update it** — the built-in Status field is accessible via the standard GitHub API (`status: "In Progress"`, `status: "Done"`). Custom fields require GraphQL node IDs that AI agents cannot discover.
+- **GitHub's automation engine** keeps the board in sync with reality — there is zero drift between what the board shows and what's actually happening.
+
+The Status values are GitHub's defaults:
 
 ```
-📋 Backlog  →  🔜 Next  →  🚧 In Progress  →  ✅ Shipped
+Todo  →  In Progress  →  Done
 ```
 
-> **Separation of concerns:** The Project **Stage** tracks roadmap position. GitHub Issue **`status:*` labels** (`status: triage`, `status: in-progress`, `status: blocked`, `status: needs-review`) track the issue/PR lifecycle independently. These are two distinct dimensions — an issue can be `status: blocked` while its Project Stage remains `📋 Backlog`.
+### Built-in Workflows (Configured in Project Settings)
+
+The following auto-transitions are enabled on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project:
+
+| #   | Workflow                         | Trigger                         | Action                       | Status      |
+| --- | -------------------------------- | ------------------------------- | ---------------------------- | ----------- |
+| 1   | **Item added to project**        | Issue/PR added to project       | Status → `Todo`              | ✅ ENABLED  |
+| 2   | **Item closed**                  | Issue closed (via `Fixes #N`)   | Status → `Done`              | ✅ ENABLED  |
+| 3   | **Item reopened**                | Closed issue reopened           | Status → `Todo`              | ✅ ENABLED  |
+| 4   | **Pull request merged**          | PR merged                       | Status → `Done` (safety net) | ✅ ENABLED  |
+| 5   | **Auto-add to project**          | New/updated item matches filter | Add item to project          | ✅ ENABLED  |
+| 6   | **Auto-archive items**           | Item in `Done` for 7 days       | Archive item                 | ✅ ENABLED  |
+| 7   | **Pull request linked to issue** | PR links to issue               | Status → `In Progress`       | ⚠️ DISABLED |
+| —   | **Auto-close issue**             | —                               | —                            | ❌ DISABLED |
+| —   | **Auto-add sub-issues**          | —                               | —                            | ❌ DISABLED |
+| —   | **Code changes requested**       | —                               | —                            | ❌ DISABLED |
+| —   | **Code review approved**         | —                               | —                            | ❌ DISABLED |
+
+#### Workflow #5: Auto-Add Filter
+
+The auto-add filter is:
+
+```
+is:open -label:priority:low
+```
+
+**What this means:** Any open issue or PR in the `collab` repo is automatically added to the project board **unless** it has the `priority: low` label.
+
+**Why this filter:**
+
+| Included                     | Excluded        | Rationale                                                  |
+| ---------------------------- | --------------- | ---------------------------------------------------------- |
+| `priority: critical`         | `priority: low` | Low = "someday/maybe" — stays as GitHub Issue only         |
+| `priority: high`             |                 | The board shows **actionable** work, not the icebox        |
+| `priority: medium`           |                 |                                                            |
+| Items with NO priority label |                 | Forces triage: unlabeled items appear, demanding attention |
+| Items with NO status label   |                 | Same forcing function — someone must categorize them       |
+
+**Why DISABLED workflows stay disabled:**
+
+| Workflow                     | Reason                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Auto-close issue             | Issues must ONLY close via `Fixes #N` in merged PR. Auto-close is dangerous.                                  |
+| Auto-add sub-issues          | No sub-issue pattern in use. Could bypass conflict-prevention protocol.                                       |
+| Code changes requested       | Manual `status: blocked` label is safer than auto-moving board status.                                        |
+| Code review approved         | Review approval ≠ ready to merge. Manual merge decision is safer.                                             |
+| Pull request linked to issue | Could auto-set Status to `In Progress` on an issue someone else already claimed — breaks conflict prevention. |
+
+> **Human admin action required (one-time):** These workflows must be enabled/disabled in the GitHub Project UI under **Settings → Workflows**. They are NOT configurable via code — they must be toggled on manually in the GitHub web interface.
+
+### `status:*` Labels (Lifecycle Tracking)
+
+The `status:*` labels track the **review/blocker lifecycle** independently of the board position:
+
+| Label                  | Meaning                                 |
+| ---------------------- | --------------------------------------- |
+| `status: triage`       | Needs triage before work can start      |
+| `status: in-progress`  | Actively being worked on                |
+| `status: blocked`      | Waiting on dependency/external decision |
+| `status: needs-review` | PR open, awaiting code review           |
+
+> The lifecycle label and the board Status are **independent dimensions**. An issue can be `status: blocked` (label) while its board Status is `In Progress`, or `status: needs-review` while its board Status is `In Progress` (PR is open but not yet merged).
+
+---
+
+## Conflict Prevention Protocol (CRITICAL)
+
+**No two developers or AI agents may work on the same issue at the same time.** This is enforced by a strict "claim before work" protocol:
+
+### Before Starting ANY Work on an Issue:
+
+1. **Check the GitHub Issue** — is it already assigned to someone else? If yes, **STOP**.
+2. **Check the Project Board** — is the Status already `In Progress`? If yes, **STOP** and verify the assignee.
+3. **Claim the issue** — assign it to yourself AND set `status: in-progress` label AND update the board Status to `In Progress` before writing any code.
+4. **If using file-locking** (`collab`), also run `collab active` to verify no file-level conflicts.
 
 ### AI Agent Workflow Summary
 
-1. **New bug discovered** → Ask user → Open issue with `type: bug` + `priority:*` + `scope:*` labels → `status: triage`
-2. **Start work** → Assign self → `status: in-progress` → Move Project item to `🚧 In Progress`
+1. **New bug discovered** → Ask user → Open issue with `type: bug` + `priority:*` + `scope:*` labels + `status: triage` → Add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project
+2. **Before starting work** → Verify issue is unassigned and board Status is `Todo` → Assign self → Set `status: in-progress` label → Set board Status to `In Progress`
 3. **Fix/implement** → Branch `feat/issue-<N>-desc` or `fix/issue-<N>-desc` → Code + tests → Format → Validate
-4. **Commit** → Include `Fixes #<N>` or `Closes #<N>` in body → Open PR → `status: needs-review`
-5. **Merged** → Issue auto-closes → Move Project item to `✅ Shipped`
-6. **New feature idea** → Open issue → Add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project → `📋 Backlog` → `priority: low`
+4. **Commit** → Include `Fixes #<N>` or `Closes #<N>` in body → Open PR → Set `status: needs-review` label
+5. **Merged** → Issue auto-closes → Board Status auto-updates to `Done` (via built-in workflow)
+6. **New feature idea** → Open issue → Add to project → `priority: low`
+
+> **⚠️ AI agents CANNOT update custom project fields** (like the old "Stage" field). They CAN update the built-in Status field via the GitHub API. This is why we use the built-in Status field exclusively.
 
 ---
 
@@ -317,7 +399,7 @@ See skill `file-locking` for full procedure.
 | `.github/CONTRIBUTING.md`          | Contribution process and commit conventions |
 | `.github/GIT_WORKFLOW.md`          | Branching strategy and push rules           |
 | [GitHub Issues](../../issues)      | Bug reports and feature requests            |
-| [Collab Roadmap](../../projects/2) | Kanban board (Stage + Priority)             |
+| [Collab Roadmap](../../projects/2) | Kanban board (built-in Status + Priority)   |
 | [Milestones](../../milestones)     | Version-targeted groupings                  |
 | `MIGRATION_PLAN.md`                | Migration status and phases                 |
 
