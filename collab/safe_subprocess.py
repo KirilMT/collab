@@ -59,6 +59,9 @@ _ALLOWED_WATCHER_FLAGS = frozenset(
 
 _TASKKILL_FLAGS = frozenset({"/F", "/PID", "/T"})
 
+# Agent claim argv shape: python -m collab claim <path...> [--label V] [--reason V]
+_ALLOWED_CLAIM_FLAGS = frozenset({"--label", "--reason"})
+
 
 @dataclass(frozen=True)
 class CaptureResult:
@@ -153,6 +156,31 @@ def _validate_watcher_argv(argv: Sequence[str]) -> None:
         idx += 1
 
 
+def _validate_agent_claim_argv(argv: Sequence[str]) -> None:
+    if len(argv) < 5:
+        raise SubprocessSecurityError("agent claim argv too short")
+    if not _is_python_executable(argv[0]):
+        raise SubprocessSecurityError("claim must be launched with python")
+    if tuple(argv[1:4]) != ("-m", "collab", "claim"):
+        raise SubprocessSecurityError("claim module entry must be collab claim")
+    rest = list(argv[4:])
+    has_path = False
+    idx = 0
+    while idx < len(rest):
+        token = rest[idx]
+        if token in _ALLOWED_CLAIM_FLAGS:
+            if idx + 1 >= len(rest):
+                raise SubprocessSecurityError(f"{token} requires a value")
+            idx += 2
+            continue
+        if token.startswith("--"):
+            raise SubprocessSecurityError(f"claim flag not allowed: {token!r}")
+        has_path = True
+        idx += 1
+    if not has_path:
+        raise SubprocessSecurityError("claim requires at least one file path")
+
+
 def validate_argv(argv: Sequence[str], *, policy: str = "auto") -> tuple[str, ...]:
     """Validate and normalize argv; resolve argv[0] to an absolute path."""
     if not argv:
@@ -201,6 +229,13 @@ def validate_argv(argv: Sequence[str], *, policy: str = "auto") -> tuple[str, ..
                 normalized[0] = sys.executable
         normalized[0] = os.path.abspath(normalized[0])
         _validate_watcher_argv(normalized)
+    elif policy == "agent_claim":
+        if not _is_python_executable(normalized[0]):
+            raise SubprocessSecurityError("claim must be launched with python")
+        if not os.path.isabs(normalized[0]):
+            normalized[0] = sys.executable
+        normalized[0] = os.path.abspath(normalized[0])
+        _validate_agent_claim_argv(normalized)
     elif policy == "platform":
         resolved = resolve_executable(normalized[0])
         if resolved:

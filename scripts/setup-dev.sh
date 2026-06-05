@@ -406,6 +406,21 @@ else
     fi
 fi
 
+# Agent attribution hooks (Cursor / Claude Code / Junie) — installed for ALL
+# IDEs so AI-agent edits are auto-claimed (origin=agent) with zero manual steps.
+echo -e "\n${YELLOW}   Installing AI-agent attribution hooks (Cursor / Claude Code / Junie)...${NC}"
+if [ -d ".venv/bin" ]; then
+    PYTHON_CMD=".venv/bin/python"
+else
+    PYTHON_CMD=".venv/Scripts/python"
+fi
+"$PYTHON_CMD" -m collab install-agent-hooks 2>&1 | sed 's/^/     /'
+if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+    echo -e "     ${WHITE}Agent attribution hooks${NC} ${GREEN}OK${NC}"
+else
+    echo -e "     ${YELLOW}Agent attribution hooks install failed (non-fatal)${NC}"
+fi
+
 echo -e "\n${CYAN}========================================"
 if [ $ERROR_COUNT -eq 0 ]; then
     echo -e "   Development Setup Complete!"

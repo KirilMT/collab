@@ -13,47 +13,76 @@ collab claim <file...> --label "<task>"
 ```
 
 `collab claim` always attributes to an AI agent and auto-generates/persists a
-unique agent id when one is not supplied. Any IDE that can run a command after an
-edit can wire it up; `collab_claim_hook.py` adapts arbitrary hook JSON to that
-command.
+unique agent id when one is not supplied. The packaged runner
+`python -m collab.agent_hooks run-hook` adapts arbitrary IDE hook JSON (read from
+stdin) into that command.
 
-## Enable
+## Zero-config: it is installed automatically
 
-The hook is **safe by default** and does nothing unless explicitly enabled, so it
-never claims files during normal human work or test runs:
-
-```powershell
-# PowerShell
-$env:COLLAB_AGENT_HOOKS = "1"
-$env:COLLAB_AGENT_LABEL = "fix-ci-dashboard"   # optional task ("what for")
-```
+You normally do **not** need to do anything. The dev setup scripts
+(`scripts/setup-dev.ps1` / `scripts/setup-dev.sh`) run:
 
 ```bash
-# bash/zsh
-export COLLAB_AGENT_HOOKS=1
-export COLLAB_AGENT_LABEL=fix-ci-dashboard
+collab install-agent-hooks
 ```
 
-Identity is resolved automatically (overridable via env):
+which idempotently writes/merges, using the project `.venv` interpreter by
+absolute path (no `PATH`/activation assumptions):
+
+| File                    | IDE / agent       | Mechanism                                          |
+| ----------------------- | ----------------- | -------------------------------------------------- |
+| `.cursor/hooks.json`    | Cursor (+ forks)  | `afterFileEdit` (fires on AI edits)                |
+| `.claude/settings.json` | Claude Code       | `PostToolUse` for Edit/Write/MultiEdit             |
+| `.junie/guidelines.md`  | JetBrains / Junie | Instruction to run `collab claim` (no native hook) |
+
+Re-run any time (safe, idempotent):
+
+```bash
+collab install-agent-hooks          # add --force to overwrite an unparsable config
+```
+
+The installed command carries `--from-ide-hook`, so the runner **self-enables**:
+because `afterFileEdit` / `PostToolUse` fire only for genuine agent edits, no
+`COLLAB_AGENT_HOOKS` environment variable is required.
+
+### Why `.cursor/hooks.json` and `.claude/settings.json` are git-ignored
+
+Those two files bake in the **absolute, machine-specific** `.venv` interpreter
+path (so attribution works without relying on `PATH`/activation). A single
+committed file cannot hold the right interpreter for every OS, so they are
+git-ignored and **regenerated per machine** by `collab install-agent-hooks`
+(run automatically by `setup-dev`). The portable Junie guidance
+(`.junie/guidelines.md`) has no machine path and **is** committed, like
+`AGENTS.md` / `CLAUDE.md`.
+
+## Identity (all optional — auto-resolved)
 
 | Env var              | Purpose                                              |
 | -------------------- | ---------------------------------------------------- |
-| `COLLAB_AGENT_HOOKS` | Master on/off switch for the hook (default off)      |
 | `COLLAB_AGENT_ID`    | Stable unique id; else derived from the session      |
 | `COLLAB_AGENT_LABEL` | Human task label shown on the dashboard ("what for") |
 | `COLLAB_AGENT_KIND`  | Runtime family for the icon; else auto-detected      |
+| `COLLAB_AGENT_HOOKS` | Legacy opt-in for ad-hoc pipelines without the flag  |
 
-## Wire it to your IDE
+## IDEs without a native per-edit hook
+
+Plain **VS Code + Copilot**, **Windsurf**, and **JetBrains/Junie** do not expose
+an `afterFileEdit`-style hook to third parties. For those, attribution relies on
+the agent running `collab claim` itself — which is exactly what `AGENTS.md` and
+the `file-locking` skill instruct agents to do, and what `.junie/guidelines.md`
+tells Junie to do.
+
+## Manual wiring (only if you opted out of setup)
 
 ### Cursor
 
 Copy `cursor-hooks.json` to `.cursor/hooks.json` (project) or `~/.cursor/hooks.json`
-(user). Cursor reloads `hooks.json` on save.
+(user). Cursor reloads `hooks.json` on save. Or just run `collab install-agent-hooks`.
 
 ### Claude Code
 
-Add a `PostToolUse` hook for `Edit`/`Write` in your Claude settings that pipes the
-event to the script:
+Add a `PostToolUse` hook for `Edit`/`Write`/`MultiEdit` that pipes the event to the
+runner:
 
 ```json
 {
@@ -64,7 +93,7 @@ event to the script:
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/agent-hooks/collab_claim_hook.py"
+            "command": "python -m collab.agent_hooks run-hook --from-ide-hook"
           }
         ]
       }
@@ -77,13 +106,14 @@ event to the script:
 
 Either:
 
-- Pipe the post-edit event JSON to `python scripts/agent-hooks/collab_claim_hook.py`, or
-- Call `collab claim <file> --label "<task>"` directly from your agent workflow
-  (set `COLLAB_AGENT_ID`/`COLLAB_AGENT_LABEL` once per task).
+- Pipe the post-edit event JSON to `python -m collab.agent_hooks run-hook --from-ide-hook`
+  (the standalone shim `python scripts/agent-hooks/collab_claim_hook.py` does the
+  same), or
+- Call `collab claim <file> --label "<task>"` directly from your agent workflow.
 
 ## Notes
 
 - The hook **fails open**: any error exits 0 and never blocks an edit.
-- Ensure `python` on `PATH` resolves to the environment where `collab-runtime` is
-  installed (or use the project's `.venv` python in the command).
+- The installed command uses the project `.venv` interpreter, so it works even
+  when `PATH` is wrong or the venv is not activated.
 - The background watcher must be running (`collab daemon-start`) for locks to sync.

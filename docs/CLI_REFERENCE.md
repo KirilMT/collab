@@ -23,10 +23,11 @@ collab [--agent-id ID] [--agent-label LABEL] [-h] <command> ...
 Set `COLLAB_AGENT_MODE=1` to auto-generate and persist an agent id when none is provided
 (useful for AI agent sessions). Run `collab whoami` to see the resolved identity.
 
-For automatic, **runtime-agnostic** agent attribution, wire your IDE's edit hook to
-`collab claim` (see [`scripts/agent-hooks/`](../scripts/agent-hooks/README.md)). The background
-watcher always attributes bulk git changes to the human; set `COLLAB_WATCHER_AGENT_ID` only if you
-intentionally want a dedicated agent watcher.
+For automatic, **runtime-agnostic** agent attribution, run `collab install-agent-hooks` (done
+automatically by `setup-dev`) to wire Cursor / Claude Code / Junie to `collab claim` with zero manual
+steps — see [`scripts/agent-hooks/`](../scripts/agent-hooks/README.md). The background watcher always
+attributes bulk git changes to the human; set `COLLAB_WATCHER_AGENT_ID` only if you intentionally
+want a dedicated agent watcher.
 
 Exit codes: most commands use `0` on success, `1` on failure. `daemon-status` uses `0` if the watcher is running, `1` if not.
 
@@ -61,9 +62,10 @@ collab release-all
 
 ## Project setup
 
-| Command      | Options   | Description                                                                                                  |
-| ------------ | --------- | ------------------------------------------------------------------------------------------------------------ |
-| `init-hooks` | `--force` | Install collab git hooks (`pre-commit`, `post-commit`, `pre-push`, `commit-msg`) into the current repository |
+| Command               | Options   | Description                                                                                                                                                          |
+| --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init-hooks`          | `--force` | Install collab git hooks (`pre-commit`, `post-commit`, `pre-push`, `commit-msg`) into the current repository                                                         |
+| `install-agent-hooks` | `--force` | Wire IDE AI-agent attribution hooks (Cursor `.cursor/hooks.json`, Claude Code `.claude/settings.json`, JetBrains `.junie/guidelines.md`) into the current repository |
 
 `init-hooks` is an **offline** filesystem operation — it does not contact Supabase. It copies the
 hooks bundled with the installed wheel into the repo's git hooks directory (honoring

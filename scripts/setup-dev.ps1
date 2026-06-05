@@ -915,6 +915,24 @@ switch ($detectedIDE) {
     }
 }
 
+# Agent attribution hooks (Cursor / Claude Code / Junie) — installed for ALL
+# IDEs so AI-agent edits are auto-claimed (origin=agent) with zero manual steps.
+Write-Host "`n   Installing AI-agent attribution hooks (Cursor / Claude Code / Junie)..." -ForegroundColor Yellow
+try {
+    & $pythonPath -m collab install-agent-hooks 2>&1 |
+        ForEach-Object { Write-Host "     $_" -ForegroundColor Gray }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host '     - Agent attribution hooks ' -NoNewline -ForegroundColor White
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+    }
+    else {
+        Write-Host '     - Agent attribution hooks install returned non-zero (non-fatal)' -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "     - Agent attribution hooks install failed (non-fatal): $_" -ForegroundColor Yellow
+}
+
 # Final Summary
 Write-SetupBannerLine "`n========================================" -Color Cyan
 if ($script:ErrorCount -eq 0) {

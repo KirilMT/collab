@@ -125,10 +125,11 @@ working on_ — not a cryptic id. Attribution is decided by an explicit signal:
 - The background watcher locks bulk git changes as the **human** (`User` chip), even inside an AI
   IDE. So normal work is never mislabelled as an agent.
 - An AI agent claims the files it edits, producing an **"AI Agent"** badge (runtime icon + task).
-  Make this automatic by wiring your IDE's edit hook to `collab claim` — see
-  [scripts/agent-hooks/](scripts/agent-hooks/README.md). It is **runtime-agnostic** (Cursor, Claude
-  Code, Copilot, Gemini, ...). Enable with `COLLAB_AGENT_HOOKS=1` and optionally
-  `COLLAB_AGENT_LABEL="<task>"`.
+  This is wired **automatically** during `setup-dev` (and via `collab install-agent-hooks`): the
+  installer idempotently configures Cursor (`.cursor/hooks.json`), Claude Code
+  (`.claude/settings.json`) and JetBrains/Junie (`.junie/guidelines.md`) to claim agent edits with
+  zero manual steps. See [scripts/agent-hooks/](scripts/agent-hooks/README.md). It is
+  **runtime-agnostic** (Cursor, Claude Code, Copilot, Gemini, ...).
 
 Agents can also claim explicitly:
 

@@ -50,6 +50,63 @@ def test_validate_watcher_argv_rejects_wrong_module():
         )
 
 
+def test_validate_agent_claim_argv_accepts_paths_and_flags():
+    argv = [
+        sys.executable,
+        "-m",
+        "collab",
+        "claim",
+        "collab/app.py",
+        "README.md",
+        "--label",
+        "fix-ci",
+        "--reason",
+        "AI agent edit",
+    ]
+    resolved = safe_subprocess.validate_argv(argv, policy="agent_claim")
+    assert resolved[1:4] == ("-m", "collab", "claim")
+
+
+def test_validate_agent_claim_argv_rejects_wrong_module():
+    with pytest.raises(SubprocessSecurityError):
+        safe_subprocess.validate_argv(
+            [sys.executable, "-m", "os", "claim", "a.py"],
+            policy="agent_claim",
+        )
+
+
+def test_validate_agent_claim_argv_rejects_unknown_flag():
+    with pytest.raises(SubprocessSecurityError):
+        safe_subprocess.validate_argv(
+            [sys.executable, "-m", "collab", "claim", "a.py", "--force"],
+            policy="agent_claim",
+        )
+
+
+def test_validate_agent_claim_argv_requires_a_path():
+    with pytest.raises(SubprocessSecurityError):
+        safe_subprocess.validate_argv(
+            [sys.executable, "-m", "collab", "claim", "--label", "x"],
+            policy="agent_claim",
+        )
+
+
+def test_validate_agent_claim_argv_flag_requires_value():
+    with pytest.raises(SubprocessSecurityError):
+        safe_subprocess.validate_argv(
+            [sys.executable, "-m", "collab", "claim", "a.py", "--label"],
+            policy="agent_claim",
+        )
+
+
+def test_validate_agent_claim_argv_rejects_non_python():
+    with pytest.raises(SubprocessSecurityError):
+        safe_subprocess.validate_argv(
+            ["bash", "-m", "collab", "claim", "a.py"],
+            policy="agent_claim",
+        )
+
+
 def test_validate_taskkill_argv_requires_numeric_pid():
     safe_subprocess.validate_argv(
         ["taskkill", "/F", "/PID", "1234"],

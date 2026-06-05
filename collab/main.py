@@ -208,6 +208,18 @@ def _run_cli() -> None:
         help="Overwrite existing non-collab hooks",
     )
 
+    # install-agent-hooks (offline: wires IDE edit hooks for AI-agent
+    # attribution into the current repo — Cursor/Claude Code/Junie).
+    iah = sub.add_parser(
+        "install-agent-hooks",
+        help="Install IDE agent-attribution hooks (Cursor/Claude Code/Junie)",
+    )
+    iah.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing but unparsable hooks config",
+    )
+
     # reconcile
     sub.add_parser("reconcile", help="Sync local git status with Supabase")
 
@@ -289,6 +301,14 @@ def _run_cli() -> None:
                 "  Skipped (existing non-collab hooks; rerun with --force): "
                 f"{', '.join(skipped)}"
             )
+        sys.exit(0)
+
+    # install-agent-hooks is a purely local filesystem operation: wire IDE edit
+    # hooks for AI-agent attribution without constructing a LockClient.
+    if args.command == "install-agent-hooks":
+        from .agent_hooks import _print_summary, install_agent_hooks
+
+        _print_summary(install_agent_hooks(force=getattr(args, "force", False)))
         sys.exit(0)
 
     local_only = args.command in ("daemon-status", "daemon-stop")

@@ -3,8 +3,7 @@
   "hooks": {
     "afterFileEdit": [
       {
-        "command": "python scripts/agent-hooks/collab_claim_hook.py",
-        "matcher": "Write|TabWrite"
+        "command": "python -m collab.agent_hooks run-hook --from-ide-hook"
       }
     ]
   }
