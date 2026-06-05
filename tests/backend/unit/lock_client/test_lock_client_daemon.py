@@ -3776,3 +3776,157 @@ def test_daemon_status_local_only_missing_pid_discovery_cmdline_match(monkeypatc
     monkeypatch.setattr(c, "_discover_running_watchers", lambda: [33333])
 
     assert mod.LockClient.daemon_status(c) is True
+
+
+def test_daemon_start_failure_terminates_orphan_launcher(tmp_path, monkeypatch, capsys):
+    """daemon_start terminates launcher and orphan child on verification failure."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    pid_file = tmp_path / "daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    fake_create = make_create_client(FakeResponse())
+    monkeypatch.setattr(mod, "_get_create_client", lambda: fake_create)
+
+    # No parent IDE detected
+    monkeypatch.setattr(
+        mod.LockClient, "_get_parent_ide_pid", lambda self: (None, None)
+    )
+
+    launcher_pid = 55555
+    orphan_pid = 66666  # Different from launcher (child watcher wrote it)
+
+    class FakeProc:
+        pid = launcher_pid
+
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
+
+    # First _read_pid() call is in daemon_start's initial "already running?"
+    # check. Return None there so it proceeds to spawn. Subsequent calls
+    # return orphan_pid (simulating child wrote PID but died).
+    read_calls = {"n": 0}
+
+    def _read_pid_seq():
+        read_calls["n"] += 1
+        if read_calls["n"] == 1:
+            return None  # Initial check: no watcher running
+        return orphan_pid  # Later: child wrote PID
+
+    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(_read_pid_seq))
+    # Process appears dead -> verification loop fails
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
+    )
+    monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
+
+    # Track terminate calls (accept self to match class method signature)
+    terminated_pids = []
+
+    def _fake_terminate(self, pid):
+        terminated_pids.append(pid)
+
+    monkeypatch.setattr(mod.LockClient, "_terminate_process", _fake_terminate)
+
+    # Track remove_pid calls
+    remove_called = []
+
+    def _fake_remove(self):
+        remove_called.append(True)
+        if pid_file.exists():
+            pid_file.unlink(missing_ok=True)
+
+    monkeypatch.setattr(mod.LockClient, "_remove_pid", _fake_remove)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    captured = capsys.readouterr()
+    assert "exited" in captured.out.lower() or "failed" in captured.out.lower()
+
+    # Launcher should NOT be terminated because is_process_alive returns False.
+    # But _remove_pid should have been called.
+    assert len(remove_called) >= 1
+
+
+def test_daemon_start_failure_terminates_still_alive_launcher(
+    tmp_path, monkeypatch, capsys
+):
+    """daemon_start terminates launcher that is still alive after verification fails."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    pid_file = tmp_path / "daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    fake_create = make_create_client(FakeResponse())
+    monkeypatch.setattr(mod, "_get_create_client", lambda: fake_create)
+
+    monkeypatch.setattr(
+        mod.LockClient, "_get_parent_ide_pid", lambda self: (None, None)
+    )
+
+    launcher_pid = 55555
+    orphan_child_pid = 66666
+
+    class FakeProc:
+        pid = launcher_pid
+
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
+
+    # Verification loop: _read_pid() returns None, so the loop body
+    # `if pid and is_alive(pid)` is never true → actual_pid stays None.
+    # Cleanup path: _read_pid() returns orphan_child_pid (different from
+    # launcher), and _is_alive returns True for both → both terminated.
+    read_calls = {"n": 0}
+
+    def _read_pid_seq():
+        read_calls["n"] += 1
+        # During the 100-iteration loop: return None (no watcher PID found)
+        if read_calls["n"] <= 101:
+            return None
+        # During cleanup: return orphan child PID (different from launcher)
+        return orphan_child_pid
+
+    alive_pids = {launcher_pid, orphan_child_pid}
+
+    def _is_alive(pid):
+        return pid in alive_pids
+
+    monkeypatch.setattr(mod.LockClient, "_read_pid", staticmethod(_read_pid_seq))
+    monkeypatch.setattr(mod.LockClient, "_is_process_alive", staticmethod(_is_alive))
+    monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
+
+    terminated_pids = []
+
+    def _fake_terminate(self, pid):
+        terminated_pids.append(pid)
+        alive_pids.discard(pid)
+
+    monkeypatch.setattr(mod.LockClient, "_terminate_process", _fake_terminate)
+
+    remove_called = []
+
+    def _fake_remove(self):
+        remove_called.append(True)
+        if pid_file.exists():
+            pid_file.unlink(missing_ok=True)
+
+    monkeypatch.setattr(mod.LockClient, "_remove_pid", _fake_remove)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    captured = capsys.readouterr()
+    assert "exited" in captured.out.lower() or "failed" in captured.out.lower()
+
+    # Launcher PID should be terminated (still alive)
+    assert launcher_pid in terminated_pids, (
+        f"Expected launcher PID {launcher_pid} to be terminated, "
+        f"got {terminated_pids}"
+    )
+    # Orphan child should also be terminated
+    assert orphan_child_pid in terminated_pids, (
+        f"Expected orphan child PID {orphan_child_pid} to be terminated, "
+        f"got {terminated_pids}"
+    )
+    # PID file should be removed
+    assert len(remove_called) >= 1

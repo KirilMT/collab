@@ -1733,9 +1733,45 @@ class LockClient:
             logger.error("%s: %s", start_error.code, start_error.message)
             print(f"❌ {start_error.message}")
             print("   Check logs/collab.log for details.")
-            pid = self._read_pid()
-            if pid == proc.pid:
-                self._remove_pid()
+
+            # Clean up orphan processes on failed startup.
+            # The launcher (proc.pid) may still be running even though
+            # verification timed out, and a child watcher may have
+            # recorded a different PID before dying.
+            pid_from_file = self._read_pid()
+            killed_any = False
+
+            # 1) Terminate the launcher process if it's still alive.
+            if self._is_process_alive(proc.pid):
+                logger.info("Startup failed — terminating launcher PID %d", proc.pid)
+                self._terminate_process(proc.pid)
+                killed_any = True
+
+            # 2) If a child watcher wrote a different PID before dying,
+            #    terminate it too so we don't leave an orphan.
+            if (
+                pid_from_file
+                and pid_from_file != proc.pid
+                and self._is_process_alive(pid_from_file)
+            ):
+                logger.info(
+                    "Startup failed — terminating orphan watcher PID %d "
+                    "(different from launcher PID %d)",
+                    pid_from_file,
+                    proc.pid,
+                )
+                self._terminate_process(pid_from_file)
+                killed_any = True
+
+            # 3) Remove the PID file so stale state is cleared.
+            self._remove_pid()
+
+            if killed_any:
+                logger.info(
+                    "Cleaned up orphan process(es) after failed daemon start "
+                    "(launcher PID: %d)",
+                    proc.pid,
+                )
 
     def daemon_stop(self) -> None:
         """Stop the running watcher daemon."""
