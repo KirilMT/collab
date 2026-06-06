@@ -346,6 +346,22 @@ def test_graceful_shutdown_active_raises_logs_error(monkeypatch, tmp_path):
     lc._graceful_shutdown()  # should not raise
 
 
+def test_graceful_shutdown_active_fails_writes_error_sentinel(
+    monkeypatch,
+    tmp_path,
+):
+    """When active() fails during shutdown, .shutdown_complete contains -1."""
+    state_dir = str(tmp_path)
+    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
+    lc = _make_client(monkeypatch, tmp_path)
+    lc.active = mock.Mock(side_effect=RuntimeError("API down"))
+    lc._graceful_shutdown()
+    marker = tmp_path / ".shutdown_complete"
+    assert marker.exists()
+    content = marker.read_text().strip()
+    assert content == "-1", f"Expected -1 sentinel, got {content!r}"
+
+
 def test_graceful_shutdown_active_has_my_locks(monkeypatch, tmp_path):
     """Active() returns locks owned by developer — logs preserved message."""
     lc = _make_client(monkeypatch, tmp_path)
