@@ -43,7 +43,7 @@ Exit codes: most commands use `0` on success, `1` on failure. `daemon-status` us
 | `status`            | `file_path`     | —                     | Show lock holder or unlocked                                                                                  |
 | `active`            | —               | `--mine`              | List all active locks (may auto-start watcher)                                                                |
 | `whoami`            | —               | —                     | Show resolved developer and agent identity                                                                    |
-| `release-all`       | —               | —                     | Release all locks held by you                                                                                 |
+| `release-all`       | —               | `--identity-only`     | Release every lock held by you (incl. your AI-agent locks); `--identity-only` keeps the current identity only |
 | `acquire-batch`     | `file_paths...` | `--reason`            | Acquire multiple files                                                                                        |
 | `release-batch`     | `file_paths...` | —                     | Release multiple files                                                                                        |
 | `force-release`     | `file_path`     | —                     | Admin/service-role force release                                                                              |

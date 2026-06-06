@@ -1086,7 +1086,7 @@ def validate_python_backend(
             compare_branch, branch_warning = _resolve_diff_compare_branch(quick)
             if not compare_branch:
                 checks.append(("Diff Coverage", False))
-                print_error("Diff Coverage Check (New Code needs 92% coverage) failed")
+                print_error("Diff Coverage Check (New Code needs 95% coverage) failed")
                 if branch_warning:
                     print_warning(branch_warning)
                 print_section("Python Backend Validation Summary")
@@ -1102,7 +1102,7 @@ def validate_python_backend(
                 "diff-cover",
                 "coverage.xml",
                 f"--compare-branch={compare_branch}",
-                "--fail-under=92",
+                "--fail-under=95",
                 "--include-untracked",
             ]
 
@@ -1116,7 +1116,7 @@ def validate_python_backend(
 
             success, _ = run_command(
                 diff_cover_cmd,
-                "Diff Coverage Check (New Code needs 92% coverage)",
+                "Diff Coverage Check (New Code needs 95% coverage)",
             )
             checks.append(("Diff Coverage", success))
         else:

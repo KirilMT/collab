@@ -161,13 +161,11 @@ create or replace function acquire_lock(
 declare
   rec record;
 begin
-  -- Try to insert; on conflict the lock may be taken over only when:
-  --   1. The same human AND the same agent already own it (normal renewal), OR
-  --   2. An AI agent explicitly claims a file currently held by a *human*
-  --      auto-lock of the SAME developer (attribution upgrade). This keeps
-  --      attribution correct regardless of the race between the background
-  --      watcher (human) and an agent's explicit claim. A human/watcher lock
-  --      can never take over an existing agent lock of the same developer.
+  -- Try to insert; on conflict the lock may be taken over when the same
+  -- developer already owns it (renewal, agent claim after human auto-lock,
+  -- human pre-commit acquire after agent edit, etc.). Cross-developer
+  -- conflicts are rejected. The background watcher still skips agent-held
+  -- files so attribution is not downgraded during bulk auto-watch.
   insert into file_locks(
     file_path, developer_id, branch_name, lock_token, reason,
     acquired_at, is_ephemeral, agent_id, agent_label, origin, agent_kind
@@ -189,10 +187,6 @@ begin
         origin = excluded.origin,
         agent_kind = excluded.agent_kind
     where file_locks.developer_id = excluded.developer_id
-      and (
-        coalesce(file_locks.agent_id, '') = coalesce(excluded.agent_id, '')
-        or (excluded.origin = 'agent' and file_locks.origin = 'human')
-      )
   returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id into rec;
 
   if found then

@@ -169,7 +169,7 @@ def test_diff_cover_fails_reports_failure(monkeypatch):
         if "diff-cover" in cmd and "--version" in cmd:
             return True, "diff-cover 1.0"
         if "diff-cover" in cmd and "coverage.xml" in cmd:
-            return False, "Coverage below 92%"
+            return False, "Coverage below 95%"
         return True, ""
 
     monkeypatch.setattr(validate_code, "run_command", mock_run)

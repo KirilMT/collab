@@ -73,10 +73,18 @@ collab status path/to/file.py
 
 #### `release-all`
 
-Release all locks held by the current developer session.
+Release every lock held by you. By default this is **developer-scoped**: it clears all locks under
+your `developer_id`, including locks created by your own AI agents (e.g. stale agent locks left after
+a session ended without pushing). Cross-developer locks are never touched.
 
 ```bash
 collab release-all
+```
+
+Use `--identity-only` to restrict cleanup to the current `(developer_id, agent_id)` identity:
+
+```bash
+collab release-all --identity-only
 ```
 
 ---

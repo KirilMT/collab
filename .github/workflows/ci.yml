@@ -124,7 +124,7 @@ jobs:
         run: |
           diff-cover coverage.xml \
             --compare-branch=origin/main \
-            --fail-under=92
+            --fail-under=95
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

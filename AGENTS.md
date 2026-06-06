@@ -164,7 +164,7 @@ python scripts/validate_code.py
 ### Coverage Thresholds (IMMUTABLE)
 
 - Backend total coverage: >=85 percent
-- Backend diff coverage on changed lines: >=92 percent
+- Backend diff coverage on changed lines: >=95 percent
 - Frontend checks (ESLint + Playwright E2E/visual) remain enabled; real tests exist under `tests/frontend/playwright/`
 
 ### Test Organization

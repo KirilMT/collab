@@ -152,7 +152,18 @@ def _run_cli() -> None:
     st.add_argument("file_path")
 
     # release-all
-    sub.add_parser("release-all", help="Release all locks held by you")
+    ra = sub.add_parser(
+        "release-all",
+        help="Release all locks held by you (including your AI-agent locks)",
+    )
+    ra.add_argument(
+        "--identity-only",
+        action="store_true",
+        help=(
+            "Only release locks for the current identity (developer + agent), "
+            "not every lock owned by your developer id"
+        ),
+    )
 
     # force-release
     fr = sub.add_parser(
@@ -473,7 +484,9 @@ def _run_cli() -> None:
                 print("🔓 File is unlocked.")
 
         elif args.command == "release-all":
-            count = client.release_all()
+            count = client.release_all(
+                include_agent=not getattr(args, "identity_only", False)
+            )
             print(f"Released {count} lock(s).")
 
         elif args.command == "force-release":
