@@ -3117,7 +3117,10 @@ class LockClient:
         try:
             shutdown_file = _state_path(".shutdown_complete")
             with open(shutdown_file, "w") as f:
-                f.write(f"{n_kept}\n")
+                # Write -1 sentinel when enumeration failed so that IDE
+                # extensions can distinguish "0 locks held" (normal) from
+                # "could not verify" (transient service error).
+                f.write(f"{-1 if not enumeration_ok else n_kept}\n")
                 f.flush()
                 try:
                     os.fsync(f.fileno())
