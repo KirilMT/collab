@@ -479,6 +479,44 @@ def test_cli_release_all(monkeypatch, capsys):
     assert "released" in captured.out.lower()
 
 
+def test_cli_release_all_developer_scope_default(monkeypatch, capsys):
+    """`collab release-all` defaults to developer scope (include_agent=True)."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    captured_kwargs: dict = {}
+
+    def _release_all(self, include_agent: bool = True) -> int:
+        captured_kwargs["include_agent"] = include_agent
+        return 0
+
+    monkeypatch.setattr(mod.LockClient, "release_all", _release_all)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "release-all"])
+
+    mod._run_cli()
+    assert captured_kwargs["include_agent"] is True
+
+
+def test_cli_release_all_identity_only(monkeypatch, capsys):
+    """`--identity-only` narrows release-all to the current identity."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    captured_kwargs: dict = {}
+
+    def _release_all(self, include_agent: bool = True) -> int:
+        captured_kwargs["include_agent"] = include_agent
+        return 0
+
+    monkeypatch.setattr(mod.LockClient, "release_all", _release_all)
+    monkeypatch.setattr(
+        sys, "argv", ["lock_client.py", "release-all", "--identity-only"]
+    )
+
+    mod._run_cli()
+    assert captured_kwargs["include_agent"] is False
+
+
 def test_cli_force_release(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")

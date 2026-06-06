@@ -14,7 +14,8 @@ from ._helpers import (
 mod = load_lock_client_module()
 
 
-def test_acquire_conflict_same_developer_different_agent(monkeypatch, tmp_path):
+def test_acquire_same_developer_different_agent_succeeds(monkeypatch, tmp_path):
+    """Same developer may re-acquire a lock held under another agent identity."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
     monkeypatch.setenv("COLLAB_AGENT_MODE", "1")
@@ -24,26 +25,59 @@ def test_acquire_conflict_same_developer_different_agent(monkeypatch, tmp_path):
     test_file = tmp_path / "app.py"
     test_file.write_text("# code")
 
-    conflict = FakeResponse(
+    ok_response = FakeResponse(
         status=200,
         data=[
             {
-                "status": "conflict",
+                "status": "ok",
                 "owner": "alice",
-                "agent_id": "agent-other",
+                "agent_id": "agent-a",
                 "lock_token": "tok",
             }
         ],
     )
-    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(conflict))
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(ok_response)
+    )
 
     state = str(tmp_path / ".collab")
     monkeypatch.setattr(mod, "_get_state_dir", lambda: state)
 
     client_a = mod.LockClient(developer_id="alice", agent_id="agent-a")
     ok, msg = client_a.acquire(str(test_file))
-    assert ok is False
-    assert "agent-other" in msg or "alice" in msg
+    assert ok is True
+    assert msg
+
+
+def test_acquire_human_takes_over_own_agent_lock(monkeypatch, tmp_path):
+    """Pre-commit human acquire must not conflict on the developer's agent lock."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(mod, "_ensure_lock_service_reachable", lambda: None)
+
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    ok_response = FakeResponse(
+        status=200,
+        data=[
+            {
+                "status": "ok",
+                "owner": "alice",
+                "agent_id": None,
+                "lock_token": "tok",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(ok_response)
+    )
+
+    human = mod.LockClient(developer_id="alice", agent_id=None)
+    ok, msg = human.acquire(str(test_file), reason="pre-commit")
+    assert ok is True
+    assert msg
 
 
 def test_release_scoped_to_agent(monkeypatch, tmp_path):

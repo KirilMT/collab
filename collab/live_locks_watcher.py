@@ -822,9 +822,9 @@ def _fetch_dev_other_identity_locks(client) -> dict[str, dict]:
 def _filter_agent_held_new_files(client, new_files: set[str]) -> set[str]:
     """Drop files already held by this developer's AI agent from the auto-lock set.
 
-    Prevents the human watcher from fighting (and logging false CONFLICTs for) the
-    developer's own agent locks. The ``acquire_lock`` RPC lets an agent take over a
-    human auto-lock, never the reverse, so the human watcher must simply step aside.
+    Prevents the human watcher from downgrading the developer's own agent locks during
+    bulk auto-watch. Explicit ``acquire`` / pre-commit paths may still re-own same-
+    developer agent locks via the ``acquire_lock`` RPC.
     """
     if not new_files:
         return new_files

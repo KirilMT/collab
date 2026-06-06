@@ -1227,22 +1227,45 @@ class LockClient:
             "can_edit": self._lock_owned_by_me(lock),
         }
 
-    def release_all(self) -> int:
-        """Release all locks held by this developer.
+    def release_all(self, include_agent: bool = True) -> int:
+        """Release locks held by this developer.
 
-        Returns count released.
+        By default (``include_agent=True``) every lock owned by this ``developer_id`` is
+        released regardless of ``agent_id`` — both the human auto-locks and this
+        developer's own AI-agent locks. This lets a human session fully clear locks left
+        behind by its own agents (for example stale agent locks after a session ended
+        without pushing). Genuine cross-developer locks are never touched.
+
+        Set ``include_agent=False`` to restrict cleanup to the current ``(developer_id,
+        agent_id)`` identity only.
+
+        Returns the number of locks released.
         """
         try:
             locks = self.active()
         except LockServiceUnavailableError as exc:
             logger.error("release_all skipped — lock service unavailable: %s", exc)
             return 0
-        my_locks = [lk for lk in locks if self._lock_owned_by_me(lk)]
+
         count = 0
-        for lk in my_locks:
-            ok, _ = self.release(lk.get("file_path", ""))
-            if ok:
-                count += 1
+        for lk in locks:
+            file_path = lk.get("file_path", "")
+            if not file_path:
+                continue
+            if include_agent:
+                # Developer-scoped: clear any lock under our developer_id,
+                # including this developer's own agent identities.
+                if lk.get("developer_id") != self.developer_id:
+                    continue
+                if self._release_developer_scope(file_path):
+                    count += 1
+            else:
+                # Identity-scoped: only the current (developer_id, agent_id).
+                if not self._lock_owned_by_me(lk):
+                    continue
+                ok, _ = self.release(file_path)
+                if ok:
+                    count += 1
         return count
 
     def force_release(self, file_path: str) -> Tuple[bool, str]:
@@ -3268,8 +3291,8 @@ class LockClient:
 
         # Calculate lock categories. ``missing`` excludes files already held by
         # this developer under another (agent) identity so the human watcher does
-        # not generate conflicts trying to re-lock an agent's file. Agent claims
-        # take over human auto-locks atomically in the acquire_lock RPC instead.
+        # not downgrade agent attribution during bulk reconcile. Explicit acquire
+        # (e.g. pre-commit) may still re-own same-developer agent locks via RPC.
         stale = my_locks - git_modified
         missing = git_modified - my_locks - dev_other_locked
         still_valid = my_locks & git_modified

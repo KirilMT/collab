@@ -139,7 +139,7 @@ collab release path/to/file.py
 # Check lock status for a specific file
 collab status path/to/file.py
 
-# Release all locks held by you
+# Release all locks held by you (including your own AI-agent locks)
 collab release-all
 
 # Force release (requires SUPABASE_SERVICE_ROLE_KEY)

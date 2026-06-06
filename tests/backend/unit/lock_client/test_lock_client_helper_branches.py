@@ -895,16 +895,17 @@ def test_force_release_all_exception_path(monkeypatch):
 
 
 def test_release_all_counts_success_and_failure(monkeypatch):
-    """release_all counts successful releases only."""
+    """release_all (identity-only) counts successful releases only."""
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
+    c.agent_id = None
 
     releases = {"file_a.py": (True, "ok"), "file_b.py": (False, "err")}
 
     def _active():
         return [
-            {"developer_id": "alice", "file_path": "file_a.py"},
-            {"developer_id": "alice", "file_path": "file_b.py"},
+            {"developer_id": "alice", "agent_id": None, "file_path": "file_a.py"},
+            {"developer_id": "alice", "agent_id": None, "file_path": "file_b.py"},
         ]
 
     def _release(fp):
@@ -912,7 +913,61 @@ def test_release_all_counts_success_and_failure(monkeypatch):
 
     monkeypatch.setattr(c, "active", _active)
     monkeypatch.setattr(c, "release", _release)
-    assert c.release_all() == 1
+    assert c.release_all(include_agent=False) == 1
+
+
+def test_release_all_developer_scope_includes_agent_locks(monkeypatch):
+    """Default release_all clears this developer's own agent locks too."""
+    c = mod.LockClient(local_only=True)
+    c.developer_id = "alice"
+    c.agent_id = None
+
+    def _active():
+        return [
+            {"developer_id": "alice", "agent_id": None, "file_path": "human.py"},
+            {"developer_id": "alice", "agent_id": "agent-x", "file_path": "agent.py"},
+            {"developer_id": "bob", "agent_id": None, "file_path": "bob.py"},
+        ]
+
+    released: list[str] = []
+
+    def _dev_release(fp):
+        released.append(fp)
+        return True
+
+    monkeypatch.setattr(c, "active", _active)
+    monkeypatch.setattr(c, "_release_developer_scope", _dev_release)
+
+    # Human session (agent_id=None) still releases its own agent lock,
+    # but never touches another developer's lock.
+    assert c.release_all() == 2
+    assert set(released) == {"human.py", "agent.py"}
+    assert "bob.py" not in released
+
+
+def test_release_all_identity_only_skips_agent_locks(monkeypatch):
+    """include_agent=False keeps the narrow (developer+agent) scope."""
+    c = mod.LockClient(local_only=True)
+    c.developer_id = "alice"
+    c.agent_id = None
+
+    def _active():
+        return [
+            {"developer_id": "alice", "agent_id": None, "file_path": "human.py"},
+            {"developer_id": "alice", "agent_id": "agent-x", "file_path": "agent.py"},
+        ]
+
+    released: list[str] = []
+
+    def _release(fp):
+        released.append(fp)
+        return True, "released"
+
+    monkeypatch.setattr(c, "active", _active)
+    monkeypatch.setattr(c, "release", _release)
+
+    assert c.release_all(include_agent=False) == 1
+    assert released == ["human.py"]
 
 
 def test_get_lock_status_exception_and_error_branches(monkeypatch):

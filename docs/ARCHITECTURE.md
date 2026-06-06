@@ -75,9 +75,10 @@ Lock ownership is keyed on **`(developer_id, agent_id)`**:
 | `origin`       | Authoritative attribution: `human` or `agent`                            |
 | `agent_kind`   | AI runtime family for display (`cursor`, `claude-code`, `copilot`, ...)  |
 
-When `agent_id` is `NULL`, behavior matches the original human-only model. Two agents under the same
-human conflict on acquire; a human may `force-release` any lock held under their own `developer_id`
-(including other agents' locks) without an admin key.
+When `agent_id` is `NULL`, behavior matches the original human-only model. The same `developer_id`
+may re-acquire any of their own locks regardless of `agent_id` (human commit after agent edit,
+agent claim after human auto-lock, etc.). A human may also `force-release` any lock held under their
+own `developer_id` (including other agents' locks) without an admin key.
 
 ### Strict attribution (who actually edited)
 
@@ -91,10 +92,10 @@ ambient IDE environment variables:
   `COLLAB_WATCHER_AGENT_ID`.
 - An **AI agent** claims the files it edits via `collab claim` (or an IDE edit hook), producing
   `origin=agent` with a unique `agent_id`.
-- The `acquire_lock` RPC lets an agent claim atomically **take over** a same-developer human
-  auto-lock (attribution upgrade), but a human/watcher lock can **never** take over an agent lock of
-  the same developer. The watcher also skips files already held by the developer's agent and cleans
-  up the developer's agent locks once the work is pushed.
+- The `acquire_lock` RPC lets the same `developer_id` **take over** their own lock regardless of
+  `agent_id` (e.g. agent claim after human auto-lock, or human pre-commit acquire after agent edit).
+  The background watcher still **skips** files already held by the developer's agent so bulk auto-watch
+  does not downgrade attribution; it cleans up the developer's agent locks once the work is pushed.
 
 The dashboard renders `origin`/`agent_kind`/`agent_label` as a friendly **"AI Agent"** badge (runtime
 icon + task) for agent locks and a **"User"** chip for human locks. The raw `agent_id` is shown only
