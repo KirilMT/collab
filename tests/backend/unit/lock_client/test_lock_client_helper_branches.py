@@ -970,6 +970,33 @@ def test_release_all_identity_only_skips_agent_locks(monkeypatch):
     assert released == ["human.py"]
 
 
+def test_release_all_skips_locks_without_file_path(monkeypatch):
+    """Lock rows with an empty/missing file_path are skipped, not released."""
+    c = mod.LockClient(local_only=True)
+    c.developer_id = "alice"
+    c.agent_id = None
+
+    def _active():
+        return [
+            {"developer_id": "alice", "agent_id": None, "file_path": ""},
+            {"developer_id": "alice", "agent_id": None},
+            {"developer_id": "alice", "agent_id": None, "file_path": "real.py"},
+        ]
+
+    released: list[str] = []
+
+    def _dev_release(fp):
+        released.append(fp)
+        return True
+
+    monkeypatch.setattr(c, "active", _active)
+    monkeypatch.setattr(c, "_release_developer_scope", _dev_release)
+
+    # Only the row with a real file_path is released.
+    assert c.release_all() == 1
+    assert released == ["real.py"]
+
+
 def test_get_lock_status_exception_and_error_branches(monkeypatch):
     """get_lock_status returns error dict on API exception and parse error."""
     c = mod.LockClient(local_only=True)
