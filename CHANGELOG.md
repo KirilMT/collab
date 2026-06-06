@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1](https://github.com/KirilMT/collab/compare/v0.6.0...v0.6.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* **lock_client:** write -1 sentinel to .shutdown_complete when active() fails during shutdown ([#108](https://github.com/KirilMT/collab/issues/108)) ([e4a5a07](https://github.com/KirilMT/collab/commit/e4a5a0748c8e50498aa15abaf3f6de01ba833494)), closes [#75](https://github.com/KirilMT/collab/issues/75)
+* **locks:** allow same-developer lock takeover and clear own agent locks ([#110](https://github.com/KirilMT/collab/issues/110)) ([#111](https://github.com/KirilMT/collab/issues/111)) ([e869de3](https://github.com/KirilMT/collab/commit/e869de31d65683fa8aec81f6b7436417852bf1f9))
+
 ## [0.6.0](https://github.com/KirilMT/collab/compare/v0.5.1...v0.6.0) (2026-06-05)
 
 ### Features
