@@ -7,6 +7,24 @@
 
 ---
 
+## Task Tracking — Issue-First Workflow
+
+Every task must trace to a GitHub Issue. When the user requests work that does
+not yet have an issue:
+
+1. Restate the task to confirm scope.
+2. Search [existing issues](https://github.com/KirilMT/collab/issues) for duplicates.
+3. If none found, **create the issue now** — before touching any code — with:
+   - Title: `type: description` (e.g., `feat: add restart and --version CLI commands`)
+   - Labels: `type:*`, `priority:*`, `scope:*`, `status: in-progress`
+   - Assignee: yourself
+   - Project: [Collab Roadmap](https://github.com/users/KirilMT/projects/2), Status → `In Progress`
+4. Use `Closes #<N>` in the commit body so the issue auto-closes on merge.
+
+See `AGENTS.md` → "Issue-First Workflow" for full details.
+
+---
+
 ## Conflict Prevention (MANDATORY — before ANY work)
 
 No two developers or AI agents may work on the same task at the same time. Before touching code:

@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2](https://github.com/KirilMT/collab/compare/v0.6.1...v0.6.2) (2026-06-07)
+
+### Bug Fixes
+
+- **cli:** release() now clears agent-claimed locks; eliminates false-positive 204 ([#113](https://github.com/KirilMT/collab/issues/113)) ([ada512c](https://github.com/KirilMT/collab/commit/ada512cdb122e39f75f95a37ad48ae406a090470)), closes [#112](https://github.com/KirilMT/collab/issues/112)
+
 ## [0.6.1](https://github.com/KirilMT/collab/compare/v0.6.0...v0.6.1) (2026-06-06)
 
 ### Bug Fixes

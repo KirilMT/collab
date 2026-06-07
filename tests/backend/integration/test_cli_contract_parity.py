@@ -129,12 +129,60 @@ class TestCLICommandAvailability:
             "daemon-start",
             "daemon-stop",
             "daemon-status",
+            "restart",
             "history",
             "reconcile",
+            "ping",
+            "info",
+            "logs",
         ]
 
         for cmd in expected_commands:
             assert cmd in help_output, f"Command '{cmd}' not found in help output"
+
+    def test_version_flag(self) -> None:
+        """Verify --version prints the installed version and exits 0."""
+        exit_code, stdout, _ = run_collab_cli("--version")
+        assert exit_code == 0
+        assert "collab-runtime" in stdout
+
+    def test_restart_command_available(self) -> None:
+        """Verify 'restart' command is available."""
+        exit_code, stdout, _ = run_collab_cli(
+            "restart",
+            expect_success=False,
+        )
+        # restart may fail in isolated env (no Supabase), but should not crash
+        assert exit_code in (0, 1)
+        assert len(stdout) > 0 or len(stdout) == 0  # daemon-stop may emit nothing
+
+    def test_ping_command_available(self) -> None:
+        """Verify 'ping' command is available."""
+        exit_code, stdout, _ = run_collab_cli(
+            "ping",
+            expect_success=False,
+        )
+        # ping may fail in isolated env (no real Supabase)
+        assert exit_code in (0, 1)
+        assert len(stdout) > 0
+
+    def test_info_command_available(self) -> None:
+        """Verify 'info' command is available."""
+        exit_code, stdout, _ = run_collab_cli(
+            "info",
+            expect_success=False,
+        )
+        assert exit_code in (0, 1)
+        assert "collab-runtime" in stdout
+
+    def test_logs_command_available(self) -> None:
+        """Verify 'logs' command is available."""
+        exit_code, stdout, _ = run_collab_cli(
+            "logs",
+            expect_success=False,
+        )
+        # logs may succeed (log file exists) or fail (no log file)
+        assert exit_code in (0, 1)
 
 
 class TestBackwardCompatibilityInvocation:

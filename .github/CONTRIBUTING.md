@@ -92,8 +92,9 @@ No two developers or AI agents may work on the same task at the same time. Befor
 
 1. **Check the GitHub Issue** — is it already assigned? If yes, **STOP**.
 2. **Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2)** — is the Status already `In Progress`? If yes, **STOP**.
-3. **Claim the issue** — assign to yourself, set `status: in-progress` label, set board Status to `In Progress`.
-4. **File locking** — run `collab active` before editing files.
+3. **If no issue exists for this task, create one now** — every task must trace to a GitHub Issue (see `AGENTS.md` → "Issue-First Workflow").
+4. **Claim the issue** — assign to yourself, set `status: in-progress` label, set board Status to `In Progress`.
+5. **File locking** — run `collab active` before editing files.
 
 See `AGENTS.md` → "Conflict Prevention Protocol" for full details.
 
@@ -405,7 +406,7 @@ For bug tracking:
 1. **Pick or create an issue** — All work must have a corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
 2. **Label it correctly** — Every issue needs `type:*`, `priority:*`, `scope:*`, and `status:*` lifecycle labels.
 3. **Claim the issue** — Assign yourself, set `status: in-progress` label, AND update the board Status to `In Progress` on the [Collab Roadmap](https://github.com/users/KirilMT/projects/2).
-4. **Branch naming** — Use `feat/issue-<N>-desc` for features, `fix/issue-<N>-desc` for bugs.
+4. **Branch naming** — Recommended: `feat/issue-<N>-desc` for features, `fix/issue-<N>-desc` for bugs, where `<N>` is the GitHub issue number. The key rule: the issue number must appear in the branch name. Other common patterns (e.g. `feat/<N>-desc`, `feature/<N>-description`, `bugfix/<N>-description`) are also acceptable.
 5. **Commit with references** — Include `Fixes #<N>` or `Closes #<N>` in the commit body.
 6. **Open a PR** — Set issue label to `status: needs-review`.
 7. **After merge** — The issue auto-closes AND the board Status auto-updates to `Done` (via GitHub's built-in project workflow). No manual board update needed.

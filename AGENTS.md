@@ -327,6 +327,38 @@ The `status:*` labels track the **review/blocker lifecycle** independently of th
 
 ---
 
+## Issue-First Workflow (MANDATORY — every task must trace to a GitHub Issue)
+
+**No code shall be written without a corresponding GitHub Issue.** This is the
+single source of truth for WHAT is being done, WHO is doing it, and WHERE it
+stands.
+
+### When you receive a task request (direct chat, not from an existing Issue)
+
+1. **Understand the task** — restate it back to the user to confirm scope.
+2. **Search existing issues** — is there already an issue for this? If yes, use it.
+3. **If no issue exists → create one NOW**, before touching any code:
+   - Title: concise, action-oriented (e.g., `feat: add --version and restart CLI commands`)
+   - Body: brief description of what's being done and why
+   - Labels: `type:*` + `priority:*` + `scope:*` + `status: in-progress`
+   - Assignee: the developer responsible for the task (e.g., the repo owner, GitHub user that is working on this task or whoever requested the work)
+   - Project: add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2)
+   - Board Status: set to `In Progress`
+4. **Branch naming** — Recommended: `feat/issue-<N>-desc` (features) or `fix/issue-<N>-desc` (bugs), where `<N>` is the GitHub issue number. Other common patterns are also acceptable:
+   - `feat/<N>-short-desc` or `fix/<N>-short-desc`
+   - `feature/<N>-description` or `bugfix/<N>-description`
+   - The key rule: the issue number must appear in the branch name so anyone can trace the branch back to its issue.
+5. **Commit messages** — include `Closes #<N>` or `Fixes #<N>` in the body so the issue auto-closes on merge.
+
+### Why this matters
+
+- Every commit in `main` links to a tracked, documented work item.
+- The [Collab Roadmap](https://github.com/users/KirilMT/projects/2) always reflects reality.
+- Auto-close on merge means zero manual issue-closing cleanup.
+- The dashboard's lock ownership ties back to a concrete task.
+
+---
+
 ## Conflict Prevention Protocol (CRITICAL)
 
 **No two developers or AI agents may work on the same issue at the same time.** This is enforced by a strict "claim before work" protocol:
@@ -342,7 +374,7 @@ The `status:*` labels track the **review/blocker lifecycle** independently of th
 
 1. **New bug discovered** → Ask user → Open issue with `type: bug` + `priority:*` + `scope:*` labels + `status: triage` → Add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2) project
 2. **Before starting work** → Verify issue is unassigned and board Status is `Todo` → Assign self → Set `status: in-progress` label → Set board Status to `In Progress`
-3. **Fix/implement** → Branch `feat/issue-<N>-desc` or `fix/issue-<N>-desc` → Code + tests → Format → Validate
+3. **Fix/implement** → Branch (e.g. `feat/issue-<N>-desc` or `fix/<N>-short-desc`) → Code + tests → Format → Validate
 4. **Commit** → Include `Fixes #<N>` or `Closes #<N>` in body → Open PR → Set `status: needs-review` label
 5. **Merged** → Issue auto-closes → Board Status auto-updates to `Done` (via built-in workflow)
 6. **New feature idea** → Open issue → Add to project → `priority: low`

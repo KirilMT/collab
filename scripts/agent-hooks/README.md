@@ -72,6 +72,25 @@ the agent running `collab claim` itself — which is exactly what `AGENTS.md` an
 the `file-locking` skill instruct agents to do, and what `.junie/guidelines.md`
 tells Junie to do.
 
+### GitHub Copilot
+
+Copilot attribution is **guidelines-based** (same pattern as Junie). The file
+[`.github/copilot-instructions.md`](../../.github/copilot-instructions.md)
+contains a dedicated **"Agent File Claiming"** section that instructs the Copilot
+agent to run `collab claim` after every `replace_string_in_file`,
+`create_file`, `multi_replace_string_in_file`, and `edit_notebook_file` operation.
+
+The agent runs:
+
+```powershell
+$env:COLLAB_AGENT_MODE = "1"
+.\.venv\Scripts\python.exe -m collab claim <files> --reason "<description>"
+```
+
+This auto-generates a stable agent id, persists it to `.collab/.agent_id`, and
+claims every edited file so the dashboard shows **AI Agent** badges instead of
+`KirilMT (human)`.
+
 ## Manual wiring (only if you opted out of setup)
 
 ### Cursor

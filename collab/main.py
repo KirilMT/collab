@@ -15,6 +15,8 @@ import traceback as _tb
 from argparse import ArgumentParser
 from contextlib import nullcontext
 
+from . import __version__
+
 logger = logging.getLogger("collab.lock_client")
 
 
@@ -109,6 +111,11 @@ def _run_cli() -> None:
         description="Collaborative File Lock Manager (Supabase)",
         parents=[common],
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"collab-runtime {__version__}",
+    )
     sub = parser.add_subparsers(dest="command")
 
     # acquire
@@ -200,6 +207,20 @@ def _run_cli() -> None:
     # daemon-status
     sub.add_parser("daemon-status", help="Check watcher daemon status")
 
+    # restart
+    rst = sub.add_parser(
+        "restart",
+        help="Restart the watcher daemon (stop + start)",
+    )
+    rst.add_argument("--interval", type=int, default=5, help="Poll interval (seconds)")
+    rst.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="Idle timeout in minutes (0 = disabled)",
+    )
+    rst.add_argument("--open-dashboard", action="store_true")
+
     # cleanup - kill orphaned processes
     sub.add_parser(
         "cleanup", help="Kill all orphaned lock_client processes (preserves locks)"
@@ -245,6 +266,27 @@ def _run_cli() -> None:
     # history-prune
     hpr = sub.add_parser("history-prune", help="Delete lock history older than N days")
     hpr.add_argument("--days", type=int, default=30, help="Retention window in days")
+
+    # ping
+    sub.add_parser("ping", help="Check Supabase connectivity")
+
+    # info
+    sub.add_parser("info", help="Show comprehensive status overview")
+
+    # logs
+    lg = sub.add_parser("logs", help="Show recent collab log entries")
+    lg.add_argument(
+        "--lines",
+        type=int,
+        default=50,
+        help="Number of recent log lines to display (default: 50)",
+    )
+    lg.add_argument(
+        "--follow",
+        "-f",
+        action="store_true",
+        help="Follow the log file (tail -f mode, Ctrl+C to stop)",
+    )
 
     # watch (internal, called by daemon-start)
     wp = sub.add_parser("watch", help="Run watcher in foreground")
@@ -374,6 +416,9 @@ def _run_cli() -> None:
         "history",
         "history-prune",
         "whoami",
+        "ping",
+        "info",
+        "logs",
     }
     quiet_ctx = (
         _quiet_console_loggers() if args.command in quiet_commands else nullcontext()
@@ -540,6 +585,20 @@ def _run_cli() -> None:
             running = client.daemon_status()
             sys.exit(0 if running else 1)
 
+        elif args.command == "restart":
+            open_flag = getattr(args, "open_dashboard", False)
+            auto_env = os.getenv("AUTO_OPEN_DASHBOARD", "0").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            client.daemon_stop()
+            client.daemon_start(
+                interval=getattr(args, "interval", 5),
+                timeout_mins=getattr(args, "timeout", 0),
+                open_dashboard=(open_flag or auto_env),
+            )
+
         elif args.command == "cleanup":
             client.cleanup_orphaned_processes()
 
@@ -598,6 +657,144 @@ def _run_cli() -> None:
             else:
                 print(f"✗ Failed to prune lock history: {msg}")
                 sys.exit(1)
+
+        elif args.command == "ping":
+            import time as _t
+            from socket import create_connection as _connect
+            from urllib.parse import urlparse as _urlparse
+
+            url = os.getenv("SUPABASE_URL", "")
+            if not url:
+                print("✗ SUPABASE_URL is not configured (check .env)")
+                sys.exit(1)
+
+            try:
+                host = _urlparse(url).hostname or ""
+            except Exception:
+                print(f"✗ Invalid SUPABASE_URL: {url!r}")
+                sys.exit(1)
+
+            if not host:
+                print(f"✗ Could not parse hostname from SUPABASE_URL: {url!r}")
+                sys.exit(1)
+
+            try:
+                start = _t.monotonic()
+                with _connect((host, 443), timeout=5.0):
+                    pass
+                elapsed = _t.monotonic() - start
+                print(f"✓ Supabase is reachable " f"({host}, {elapsed*1000:.0f}ms)")
+                sys.exit(0)
+            except OSError as exc:
+                print(f"✗ Cannot reach {host}: {exc}")
+                print("   Verify network/VPN and that the Supabase project is active.")
+                sys.exit(1)
+
+        elif args.command == "info":
+            # Gather daemon status (suppress daemon_status()'s own print output)
+            import io as _io
+
+            from . import __version__ as _ver
+            from . import agent_identity
+            from .lock_client import _COLLAB_ROOT as _root
+            from .lock_client import _PROJECT_ROOT as _p_root
+
+            try:
+                _old_stdout = sys.stdout
+                sys.stdout = _io.StringIO()
+                try:
+                    daemon_running = client.daemon_status()
+                finally:
+                    sys.stdout = _old_stdout
+            except Exception:
+                daemon_running = False
+            daemon_state = "RUNNING" if daemon_running else "stopped"
+
+            # Count active locks
+            lock_count: int | str
+            my_locks: int | str
+            try:
+                active_locks = client.active()
+                lock_count = len(active_locks)
+                my_locks = sum(1 for lk in active_locks if client._lock_owned_by_me(lk))
+            except Exception:
+                lock_count = "?"
+                my_locks = "?"
+
+            # Identity summary
+            ident = agent_identity.identity_summary(
+                client.developer_id,
+                client.agent_id,
+                client.agent_label,
+                getattr(client, "agent_kind", None),
+            )
+
+            state_dir = os.path.join(_root, ".collab")
+
+            print(f"collab-runtime v{_ver}")
+            print()
+            print("── Daemon ──")
+            print(f"  Status:      {daemon_state}")
+            print(f"  PID file:    {os.path.join(state_dir, '.daemon.pid')}")
+            print()
+            print("── Identity ──")
+            print(f"  Developer:   {ident['developer_id']}")
+            print(f"  Mode:        {ident['mode']}")
+            if ident.get("agent_id"):
+                print(f"  Agent ID:    {ident['agent_id']}")
+            if ident.get("agent_label"):
+                print(f"  Agent label: {ident['agent_label']}")
+            if ident.get("agent_kind"):
+                print(f"  Agent kind:  {ident['agent_kind']}")
+            print()
+            print("── Locks ──")
+            print(f"  Active:      {lock_count}")
+            print(f"  Mine:        {my_locks}")
+            print(f"  Admin:       {'yes' if client.is_admin else 'no'}")
+            print()
+            print("── Paths ──")
+            print(f"  Runtime:     {_root}")
+            print(f"  Project:     {_p_root}")
+            print(f"  State dir:   {state_dir}")
+            print(f"  Log file:    {os.path.join(_root, 'logs', 'collab.log')}")
+            sys.exit(0)
+
+        elif args.command == "logs":
+            from .lock_client import _COLLAB_ROOT as _root
+
+            log_path = os.path.join(_root, "logs", "collab.log")
+            lines = int(getattr(args, "lines", 50))
+            follow = getattr(args, "follow", False)
+
+            if not os.path.isfile(log_path):
+                print(f"No log file found at {log_path}")
+                sys.exit(1)
+
+            if follow:
+                # tail -f mode
+                print(f"Following {log_path} (Ctrl+C to stop)...")
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                        fh.seek(0, 2)  # seek to end
+                        while True:
+                            line = fh.readline()
+                            if line:
+                                print(line, end="")
+                            else:
+                                time.sleep(0.25)
+                except KeyboardInterrupt:
+                    print()
+                sys.exit(0)
+            else:
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                        all_lines = fh.readlines()
+                    for line in all_lines[-lines:]:
+                        print(line, end="")
+                except OSError as exc:
+                    print(f"✗ Cannot read log file: {exc}")
+                    sys.exit(1)
+                sys.exit(0)
 
         elif args.command == "watch":
             # Ensure watcher child process uses the explicit PID namespace passed by
