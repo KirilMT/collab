@@ -31,12 +31,16 @@ Before touching any code, verify you are the ONLY person working on this issue:
 
 ### Planning Steps
 
-1. Analyze and restate the requirement.
-2. Find or create the corresponding [GitHub Issue](https://github.com/KirilMT/collab/issues).
-3. **Claim the issue** (see Pre-Flight above) — assign self, set `status: in-progress` label, update board Status to `In Progress`.
+1. Analyze and restate the requirement to the user.
+2. **Search for an existing issue** — if none, **create one now** (see `AGENTS.md` → "Issue-First Workflow").
+3. **Claim the issue** — assign self, set `status: in-progress` label, update board Status to `In Progress`.
 4. Outline the implementation plan with exact files.
 5. Check AGENTS.md boundaries before changes.
-6. Create a feature branch: `git checkout -b feat/issue-<N>-description`.
+6. Create a feature branch: `git checkout -b feat/issue-<N>-desc` (or `feat/<N>-desc`, etc. — the issue number `<N>` must be present).
+
+> **⚠️ Issue-First Rule:** If no GitHub Issue exists for this task, create it
+> BEFORE writing any code. The issue number is used in the branch name and the
+> commit message (`Closes #<N>`).
 
 ---
 

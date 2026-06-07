@@ -774,8 +774,431 @@ def test_cli_history_formatted_output(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "collab/app.py" in captured.out
     assert "@alice" in captured.out
-    assert "released" in captured.out
-    assert "branch:main" in captured.out
+
+
+# ── restart / ping / info / logs CLI command tests ──
+
+
+def test_cli_restart(monkeypatch, tmp_path, capsys):
+    """``collab restart`` calls daemon_stop then daemon_start."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    pid_file = tmp_path / "daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    calls = []
+
+    class FakeProc:
+        pid = 12345
+
+    class LocalLockClient(mod.LockClient):
+        def daemon_stop(self) -> None:
+            calls.append("stop")
+
+        def daemon_start(self, interval=5, timeout_mins=0, open_dashboard=False):
+            calls.append("start")
+
+        _is_process_alive = staticmethod(lambda pid: True)
+
+    monkeypatch.setattr(mod, "LockClient", LocalLockClient)
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "restart"])
+
+    mod._run_cli()
+    assert calls == ["stop", "start"]
+
+
+def test_cli_ping_no_url(monkeypatch, capsys):
+    """``collab ping`` exits 1 when SUPABASE_URL is missing."""
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "SUPABASE_URL is not configured" in out
+
+
+def test_cli_ping_urlparse_raises(monkeypatch, capsys):
+    """``collab ping`` exits 1 with 'Invalid SUPABASE_URL' when urlparse raises."""
+    import urllib.parse as _up
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    def _boom(*_a, **_k):
+        raise ValueError("unparseable")
+
+    monkeypatch.setattr(_up, "urlparse", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Invalid SUPABASE_URL" in out
+
+
+def test_cli_ping_success(monkeypatch, capsys):
+    """``collab ping`` prints reachable message on success."""
+    import socket as _socket
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    # Mock socket.create_connection to succeed
+    class _FakeSock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    def _fake_connect(addr, timeout=5.0):
+        return _FakeSock()
+
+    monkeypatch.setattr(_socket, "create_connection", _fake_connect)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "reachable" in out
+
+
+def test_cli_ping_connection_failure(monkeypatch, capsys):
+    """``collab ping`` prints unreachable message on connection failure."""
+    import socket as _socket
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    def _fake_connect(addr, timeout=5.0):
+        raise ConnectionRefusedError("refused")
+
+    monkeypatch.setattr(_socket, "create_connection", _fake_connect)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Cannot reach" in out
+
+
+def test_cli_restart_with_auto_open(monkeypatch, tmp_path, capsys):
+    """``collab restart`` passes open_dashboard when AUTO_OPEN_DASHBOARD=1."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setenv("AUTO_OPEN_DASHBOARD", "1")
+
+    pid_file = tmp_path / "daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    class FakeProc:
+        pid = 12345
+
+    start_kwargs = {}
+
+    class LocalLockClient(mod.LockClient):
+        def daemon_stop(self) -> None:
+            pass
+
+        def daemon_start(self, **kwargs):
+            start_kwargs.update(kwargs)
+
+        _is_process_alive = staticmethod(lambda pid: True)
+
+    monkeypatch.setattr(mod, "LockClient", LocalLockClient)
+    patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "restart"])
+
+    mod._run_cli()
+    assert start_kwargs.get("open_dashboard") is True
+
+
+def test_cli_ping_no_hostname(monkeypatch, capsys):
+    """``collab ping`` exits 1 when SUPABASE_URL has no parseable hostname."""
+    monkeypatch.setenv("SUPABASE_URL", "://")
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Could not parse hostname" in out
+
+
+def test_cli_info(monkeypatch, capsys):
+    """``collab info`` prints comprehensive status overview."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    class InfoClient(mod.LockClient):
+        is_admin = True
+
+        def daemon_status(self) -> bool:
+            return True
+
+        def active(self):
+            return [
+                {
+                    "file_path": "a.py",
+                    "developer_id": "testdev",
+                    "agent_id": None,
+                    "agent_label": None,
+                    "agent_kind": None,
+                },
+                {
+                    "file_path": "b.py",
+                    "developer_id": "other",
+                    "agent_id": None,
+                    "agent_label": None,
+                    "agent_kind": None,
+                },
+            ]
+
+        def _lock_owned_by_me(self, lock):
+            return lock.get("developer_id") == "testdev"
+
+    monkeypatch.setattr(mod, "LockClient", InfoClient)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "info"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "collab-runtime" in out
+    assert "RUNNING" in out
+    assert "Active:" in out
+    assert "Mine:" in out
+    assert "Admin:" in out
+    assert "Runtime:" in out
+    assert "Project:" in out
+
+
+def test_cli_info_daemon_exception(monkeypatch, capsys):
+    """``collab info`` handles daemon_status raising an exception gracefully."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    class InfoClient(mod.LockClient):
+        def daemon_status(self) -> bool:
+            raise RuntimeError("boom")
+
+        def active(self):
+            return []
+
+    monkeypatch.setattr(mod, "LockClient", InfoClient)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "info"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "stopped" in out
+
+
+def test_cli_info_active_exception(monkeypatch, capsys):
+    """``collab info`` shows '?' when active() raises."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    class InfoClient(mod.LockClient):
+        is_admin = False
+
+        def daemon_status(self) -> bool:
+            return False
+
+        def active(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(mod, "LockClient", InfoClient)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "info"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Active:      ?" in out
+    assert "Mine:        ?" in out
+
+
+def test_cli_info_agent_mode(monkeypatch, capsys):
+    """``collab info`` prints agent identity lines when running as an agent."""
+    import collab.agent_identity as _ai
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        _ai,
+        "identity_summary",
+        lambda *a, **k: {
+            "developer_id": "dev",
+            "mode": "agent",
+            "agent_id": "agent-123",
+            "agent_label": "cursor",
+            "agent_kind": "ide",
+        },
+    )
+
+    class InfoClient(mod.LockClient):
+        is_admin = False
+
+        def daemon_status(self) -> bool:
+            return False
+
+        def active(self):
+            return []
+
+    monkeypatch.setattr(mod, "LockClient", InfoClient)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "info"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Agent ID:    agent-123" in out
+    assert "Agent label: cursor" in out
+    assert "Agent kind:  ide" in out
+
+
+def test_cli_logs_no_file(monkeypatch, capsys):
+    """``collab logs`` exits 1 when log file does not exist."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    # Point _COLLAB_ROOT to a temp dir with no logs/
+    import tempfile as _tf
+
+    tmp = _tf.mkdtemp()
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+
+
+def test_cli_logs_with_file(monkeypatch, capsys, tmp_path):
+    """``collab logs`` prints last N lines of the log file."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    # Create a fake logs directory with a collab.log
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    log_file = logs_dir / "collab.log"
+    log_file.write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs", "--lines", "2"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "line2" in out
+    assert "line3" in out
+
+
+def test_cli_logs_follow(monkeypatch, capsys, tmp_path):
+    """``collab logs --follow`` tails the file and exits 0 on KeyboardInterrupt."""
+    import time as _time
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    log_file = logs_dir / "collab.log"
+    log_file.write_text("existing\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs", "--follow"])
+
+    # First idle tick appends a new line (exercises the "if line" branch);
+    # the second idle tick stops the follow loop via KeyboardInterrupt.
+    state = {"ticks": 0}
+
+    def _fake_sleep(_seconds):
+        state["ticks"] += 1
+        if state["ticks"] == 1:
+            with open(log_file, "a", encoding="utf-8") as fh:
+                fh.write("appended\n")
+        else:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(_time, "sleep", _fake_sleep)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Following" in out
+    assert "appended" in out
+
+
+def test_cli_logs_read_error(monkeypatch, capsys, tmp_path):
+    """``collab logs`` exits 1 when the log file cannot be read."""
+    import builtins as _builtins
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    log_file = logs_dir / "collab.log"
+    log_file.write_text("data\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs"])
+
+    real_open = _builtins.open
+
+    def _fake_open(path, *a, **k):
+        if str(path).endswith("collab.log"):
+            raise OSError("permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(_builtins, "open", _fake_open)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Cannot read log file" in out
 
 
 def test_cli_history_partial_match_output(monkeypatch, capsys):

@@ -11,7 +11,7 @@ For conceptual overview and environment variables, see [API.md](./API.md).
 ## Global usage
 
 ```bash
-collab [--agent-id ID] [--agent-label LABEL] [-h] <command> ...
+collab [--agent-id ID] [--agent-label LABEL] [--version] [-h] <command> ...
 ```
 
 | Global option   | Env fallback         | Description                                              |
@@ -19,6 +19,7 @@ collab [--agent-id ID] [--agent-label LABEL] [-h] <command> ...
 | `--agent-id`    | `COLLAB_AGENT_ID`    | Stable agent identity (multi-agent workflows)            |
 | `--agent-label` | `COLLAB_AGENT_LABEL` | Human task label for display ("why / what for")          |
 | `--agent-kind`  | `COLLAB_AGENT_KIND`  | AI runtime family for the dashboard icon (auto-detected) |
+| `--version`     | —                    | Print the installed collab-runtime version and exit      |
 
 Set `COLLAB_AGENT_MODE=1` to auto-generate and persist an agent id when none is provided
 (useful for AI agent sessions). Run `collab whoami` to see the resolved identity.
@@ -114,6 +115,7 @@ additions (runtime fingerprinting, extra install guidance, etc.) on top.
 | `daemon-start`  | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Start background watcher                         |
 | `daemon-stop`   | —                                                                          | Stop watcher                                     |
 | `daemon-status` | —                                                                          | Print running/stopped; exit code reflects state  |
+| `restart`       | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Stop and restart the watcher daemon              |
 | `cleanup`       | —                                                                          | Kill orphaned watcher processes; preserves locks |
 | `watch`         | See [watch options](#watch-internal)                                       | Foreground watcher (used by daemon-start)        |
 
@@ -122,6 +124,7 @@ additions (runtime fingerprinting, extra install guidance, etc.) on top.
 ```bash
 collab daemon-start --interval 10
 collab daemon-status
+collab restart --interval 10
 collab daemon-stop
 ```
 
@@ -146,14 +149,26 @@ Spawn contract (validated): `python -m collab.lock_client watch ...`
 
 ---
 
-## Sync, dashboard, history
+## Sync, dashboard, history, diagnostics
 
-| Command         | Arguments     | Options                  | Description                             |
-| --------------- | ------------- | ------------------------ | --------------------------------------- |
-| `dashboard`     | —             | —                        | Open collaborative dashboard in browser |
-| `reconcile`     | —             | —                        | Sync git status with Supabase locks     |
-| `history`       | `[file_path]` | `--limit` (20), `--json` | Lock audit trail                        |
-| `history-prune` | —             | `--days` (30)            | Delete old history rows                 |
+| Command         | Arguments     | Options                           | Description                             |
+| --------------- | ------------- | --------------------------------- | --------------------------------------- |
+| `dashboard`     | —             | —                                 | Open collaborative dashboard in browser |
+| `reconcile`     | —             | —                                 | Sync git status with Supabase locks     |
+| `history`       | `[file_path]` | `--limit` (20), `--json`          | Lock audit trail                        |
+| `history-prune` | —             | `--days` (30)                     | Delete old history rows                 |
+| `ping`          | —             | —                                 | Check Supabase connectivity + latency   |
+| `info`          | —             | —                                 | Comprehensive status overview           |
+| `logs`          | —             | `--lines` (50), `--follow` (`-f`) | Show recent collab log entries          |
+
+**Examples:**
+
+```bash
+collab ping
+collab info
+collab logs --lines 20
+collab logs --follow
+```
 
 ---
 

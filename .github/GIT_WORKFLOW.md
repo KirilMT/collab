@@ -54,8 +54,9 @@ Before creating a branch or touching any code:
 
 1. Check the [GitHub Issue](https://github.com/KirilMT/collab/issues) — already assigned? If yes, **STOP**.
 2. Check the [Collab Roadmap](https://github.com/users/KirilMT/projects/2) — Status already `In Progress`? If yes, **STOP**.
-3. Assign the issue to yourself, set `status: in-progress` label, and set the board Status to `In Progress`.
-4. Run `collab active` to check file-level conflicts.
+3. **If no issue exists for this task, create one now** (see `AGENTS.md` → "Issue-First Workflow").
+4. Assign the issue to yourself, set `status: in-progress` label, and set the board Status to `In Progress`.
+5. Run `collab active` to check file-level conflicts.
 
 See `AGENTS.md` → "Conflict Prevention Protocol" for the full policy.
 

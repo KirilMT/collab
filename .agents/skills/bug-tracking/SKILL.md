@@ -29,7 +29,14 @@ When you observe unexpected behavior:
    - What actually happened
    - Evidence if available
 3. WAIT for user confirmation before opening an issue.
-4. Apply labels (`type: bug`, `priority:*`, `scope:*`) with user input.
+4. **Once confirmed → create the issue** with:
+   - Labels: `type: bug`, `priority:*`, `scope:*`, `status: triage`
+   - Project: add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2)
+5. Proceed to "Bug Fix Workflow" below to claim and fix.
+
+> **Issue-First Rule (AGENTS.md):** Every task must trace to a GitHub Issue.
+> For bugs, the user confirmation step gates issue creation, but once confirmed,
+> the issue MUST be created before any fix code is written.
 
 ---
 
@@ -63,7 +70,7 @@ Before touching any code, verify you are the ONLY person working on this issue:
 
 1. Verify the bug exists and reproduce it.
 2. **Claim the issue** (see Pre-Flight above).
-3. Create a branch: `git checkout -b fix/issue-<N>-description`.
+3. Create a branch: `git checkout -b fix/issue-<N>-desc` (or `fix/<N>-desc`, etc. — the issue number `<N>` must be present).
 4. Apply the fix with tests.
 5. Run `python scripts/format_code.py` then `python scripts/validate_code.py`.
 6. Commit with `Fixes #<N>` in the commit message body to auto-close on merge.

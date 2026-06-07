@@ -47,6 +47,32 @@ Before outputting any terminal command, internally verify it is compatible with 
 
 ---
 
+## Task Tracking — Issue-First Workflow (MANDATORY)
+
+Every task must trace to a GitHub Issue. When the user requests work outside of
+existing Issues:
+
+1. **Restate the task** to the user to confirm scope.
+2. **Search** [existing issues](https://github.com/KirilMT/collab/issues) for duplicates.
+3. **If no issue exists → create one NOW**, before touching any code:
+   - Title: concise, action-oriented (e.g., `feat: add --version and restart CLI commands`)
+   - Body: brief description of what's being done
+   - Labels: `type:*` + `priority:*` + `scope:*` + `status: in-progress`
+   - Assignee: yourself
+   - Project: add to [Collab Roadmap](https://github.com/users/KirilMT/projects/2)
+   - Board Status: set to `In Progress`
+4. **Branch** — Recommended: `feat/issue-<N>-desc` for features, `fix/issue-<N>-desc` for bugs. Other common patterns (e.g. `feat/<N>-desc`, `feature/<N>-description`) are also acceptable — the issue number must be present.
+5. **Commit body** — include `Closes #<N>` or `Fixes #<N>`
+
+### When NOT to create an issue
+
+- The task is explicitly linked to an existing issue the user referenced
+- The user says "no issue needed" (rare — default is to create one)
+
+See `AGENTS.md` → "Issue-First Workflow" for the canonical policy.
+
+---
+
 ## Conflict Prevention (MANDATORY — before ANY work)
 
 No two developers or AI agents may work on the same task at the same time. Before touching code:
@@ -100,6 +126,53 @@ Since Copilot cannot run browser tests automatically:
 2. **Provide instructions** — give clear steps to verify changes manually
 3. **Create checklist** — if no test plan exists, add one to the PR description
 4. **Wait for confirmation** — do not mark task complete until user confirms
+
+---
+
+## Agent File Claiming (MANDATORY — after EVERY file edit)
+
+GitHub Copilot does **not** have native `afterFileEdit` hooks like Cursor or Claude Code.
+To maintain correct agent attribution in the dashboard, you **MUST** claim every file you
+edit **immediately** after the edit completes.
+
+### When to claim
+
+Run `collab claim` after **every** use of these tools:
+
+| Tool                           | Claim trigger                       |
+| ------------------------------ | ----------------------------------- |
+| `replace_string_in_file`       | After each replacement              |
+| `multi_replace_string_in_file` | After all replacements in the batch |
+| `create_file`                  | After creating the file             |
+| `edit_notebook_file`           | After each notebook cell edit       |
+
+### How to claim
+
+Always use the project's venv interpreter. On this Windows workspace:
+
+```powershell
+$env:COLLAB_AGENT_MODE = "1"
+.\.venv\Scripts\python.exe -m collab claim <file_paths...> --reason "<what was done>"
+```
+
+**Rules:**
+
+1. Claim ALL files touched in the edit operation — never skip any.
+2. The `--reason` must be a short, human-readable summary of the edit (e.g. `"Add ping CLI command"`).
+3. If the claim command fails (locked by another developer), **report it** — do not silently continue.
+4. Batch multiple files from a single `multi_replace_string_in_file` into one `collab claim` call.
+5. After claiming a batch of files across multiple independent edits, you may combine them into a single `collab claim` call for efficiency.
+
+### Why this matters
+
+Without claiming, all file edits show as the **human developer** (`origin=human`) in the
+dashboard and lock history. Claiming ensures the dashboard correctly shows **AI Agent**
+badges with task labels, giving the team full visibility into who (or what) is working on
+each file.
+
+This is the same pattern that Junie uses (guidelines-based claiming instead of native
+IDE hooks). The Cursor and Claude Code agents don't need this because their native
+`afterFileEdit` / `PostToolUse` hooks fire automatically.
 
 ---
 
