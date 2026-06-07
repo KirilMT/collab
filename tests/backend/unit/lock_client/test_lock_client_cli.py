@@ -824,18 +824,23 @@ def test_cli_ping_no_url(monkeypatch, capsys):
     assert "SUPABASE_URL is not configured" in out
 
 
-def test_cli_ping_invalid_url(monkeypatch, capsys):
-    """``collab ping`` exits 1 when SUPABASE_URL cannot be parsed."""
-    # urlparse is lenient; a URL without a scheme yields empty hostname
-    # which hits the "Could not parse hostname" branch
-    monkeypatch.setenv("SUPABASE_URL", "not-a-valid-url-!!!")
+def test_cli_ping_urlparse_raises(monkeypatch, capsys):
+    """``collab ping`` exits 1 with 'Invalid SUPABASE_URL' when urlparse raises."""
+    import urllib.parse as _up
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "ping"])
+
+    def _boom(*_a, **_k):
+        raise ValueError("unparseable")
+
+    monkeypatch.setattr(_up, "urlparse", _boom)
 
     with pytest.raises(SystemExit) as exc:
         mod._run_cli()
     assert exc.value.code == 1
     out = capsys.readouterr().out
-    assert "Could not parse hostname" in out
+    assert "Invalid SUPABASE_URL" in out
 
 
 def test_cli_ping_success(monkeypatch, capsys):
@@ -1036,6 +1041,48 @@ def test_cli_info_active_exception(monkeypatch, capsys):
     assert "Mine:        ?" in out
 
 
+def test_cli_info_agent_mode(monkeypatch, capsys):
+    """``collab info`` prints agent identity lines when running as an agent."""
+    import collab.agent_identity as _ai
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        _ai,
+        "identity_summary",
+        lambda *a, **k: {
+            "developer_id": "dev",
+            "mode": "agent",
+            "agent_id": "agent-123",
+            "agent_label": "cursor",
+            "agent_kind": "ide",
+        },
+    )
+
+    class InfoClient(mod.LockClient):
+        is_admin = False
+
+        def daemon_status(self) -> bool:
+            return False
+
+        def active(self):
+            return []
+
+    monkeypatch.setattr(mod, "LockClient", InfoClient)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "info"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Agent ID:    agent-123" in out
+    assert "Agent label: cursor" in out
+    assert "Agent kind:  ide" in out
+
+
 def test_cli_logs_no_file(monkeypatch, capsys):
     """``collab logs`` exits 1 when log file does not exist."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
@@ -1078,6 +1125,80 @@ def test_cli_logs_with_file(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "line2" in out
     assert "line3" in out
+
+
+def test_cli_logs_follow(monkeypatch, capsys, tmp_path):
+    """``collab logs --follow`` tails the file and exits 0 on KeyboardInterrupt."""
+    import time as _time
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    log_file = logs_dir / "collab.log"
+    log_file.write_text("existing\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs", "--follow"])
+
+    # First idle tick appends a new line (exercises the "if line" branch);
+    # the second idle tick stops the follow loop via KeyboardInterrupt.
+    state = {"ticks": 0}
+
+    def _fake_sleep(_seconds):
+        state["ticks"] += 1
+        if state["ticks"] == 1:
+            with open(log_file, "a", encoding="utf-8") as fh:
+                fh.write("appended\n")
+        else:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(_time, "sleep", _fake_sleep)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Following" in out
+    assert "appended" in out
+
+
+def test_cli_logs_read_error(monkeypatch, capsys, tmp_path):
+    """``collab logs`` exits 1 when the log file cannot be read."""
+    import builtins as _builtins
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    log_file = logs_dir / "collab.log"
+    log_file.write_text("data\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "logs"])
+
+    real_open = _builtins.open
+
+    def _fake_open(path, *a, **k):
+        if str(path).endswith("collab.log"):
+            raise OSError("permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(_builtins, "open", _fake_open)
+
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Cannot read log file" in out
 
 
 def test_cli_history_partial_match_output(monkeypatch, capsys):
