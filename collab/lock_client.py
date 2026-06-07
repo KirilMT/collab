@@ -1118,6 +1118,11 @@ class LockClient:
     def release(self, file_path: str) -> Tuple[bool, str]:
         """Release a lock on file_path owned by this developer.
 
+        When called by a **human** (``agent_id`` is ``None``), any lock owned by this
+        ``developer_id`` is released regardless of which agent claimed it — the human is
+        in charge of all their agents.  When called by an **agent** (``agent_id`` is
+        set), only locks claimed by that specific agent identity are released.
+
         Returns (success: bool, message: str).
         """
         # If ephemeral, nothing was persisted so there's nothing to delete.
@@ -1127,16 +1132,45 @@ class LockClient:
             )
             return True, "ephemeral-released"
 
+        norm = self._normalize_file_path(file_path)
         client = self._require_client()
+
+        # Pre-check: verify a lock row exists for this file *and* belongs to
+        # this developer before attempting the DELETE.  PostgREST returns
+        # 204 No Content even when zero rows are deleted, so without this
+        # guard the CLI would falsely report "✓ released" for locks that
+        # belong to another developer or do not exist at all.
         try:
-            norm = self._normalize_file_path(file_path)
+            check_res = _retry_on_network_error(
+                lambda: client.table("file_locks")
+                .select("developer_id")
+                .eq("file_path", norm)
+                .execute()
+            )
+        except Exception as e:
+            return False, f"API Error: {e}"
+        _st, rows, _err = self._parse_response(check_res)
+        if not rows or not isinstance(rows, list) or len(rows) == 0:
+            return False, f"No lock found for: {file_path}"
+        lock_owner = rows[0].get("developer_id")
+        if lock_owner != self.developer_id:
+            return False, (
+                f"Permission denied: {file_path} is locked by @{lock_owner or '?'}. "
+                "Use `collab force-release` if you have admin credentials."
+            )
+
+        try:
             delete_query = (
                 client.table("file_locks")
                 .delete()
                 .eq("file_path", norm)
                 .eq("developer_id", self.developer_id)
             )
-            delete_query = self._apply_agent_scope(delete_query)
+            # Human (agent_id is None): developer-scoped — release any agent's
+            # lock.  Agent (agent_id is set): identity-scoped — only release
+            # this specific agent's lock.
+            if self.agent_id is not None:
+                delete_query = delete_query.eq("agent_id", self.agent_id)
             res = _retry_on_network_error(lambda: delete_query.execute())
         except Exception as e:
             return False, f"API Error: {e}"
@@ -1145,9 +1179,7 @@ class LockClient:
         if error:
             return False, f"API Error: {error}"
         if status in (200, 204) or data is not None:
-            logger.info(
-                "🔓 [RELEASED] %s — lock released", self._normalize_file_path(file_path)
-            )
+            logger.info("🔓 [RELEASED] %s — lock released", norm)
             return True, "released"
         return False, "No lock released (not owner or lock does not exist)"
 
@@ -2008,7 +2040,7 @@ class LockClient:
         try:
             pid = self._read_pid(strict=True)
         except PidParseError as exc:
-            print(f"❌ Lock watcher status unavailable: {exc.message}")
+            print(f"ℹ️  Lock watcher status unavailable: {exc.message}")
             return False
         local_only_mode = bool(getattr(self, "local_only", False))
         if pid and self._is_process_alive(pid):
@@ -2137,7 +2169,7 @@ class LockClient:
                     return True
             except (ValueError, OSError):
                 pass
-        print("❌ Lock watcher is NOT running.")
+        print("ℹ️  Lock watcher is not running.")
         return False
 
     def cleanup_orphaned_processes(self) -> None:

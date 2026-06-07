@@ -175,8 +175,13 @@ def test_cli_acquire(monkeypatch, tmp_path, capsys):
 def test_cli_release(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setenv("COLLAB_DEVELOPER_ID", "testdev")
 
-    response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
+    # release() now does a pre-check SELECT before DELETE.  The response must
+    # include "developer_id" matching the client so the ownership guard passes.
+    response = FakeResponse(
+        status=200, data=[{"file_path": "collab/app.py", "developer_id": "testdev"}]
+    )
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "release", "collab/app.py"])
 

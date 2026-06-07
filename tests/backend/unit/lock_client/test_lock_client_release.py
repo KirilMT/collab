@@ -60,7 +60,11 @@ def test_release_api_exception(monkeypatch):
 
 
 def test_release_not_acquired(monkeypatch):
-    """Release when the file was not actually acquired (no supabase data)."""
+    """Release when the file was not actually acquired (no supabase data).
+
+    The pre-check SELECT returns an empty list, so release() returns a clear "No lock
+    found" message instead of a raw API error.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
@@ -68,10 +72,10 @@ def test_release_not_acquired(monkeypatch):
         mod,
         "_get_create_client",
         lambda: make_create_client(
-            FakeResponse(status=404, data=None, error="not found")
+            FakeResponse(status=200, data=[])  # empty — no lock exists
         ),
     )
     client = mod.LockClient(developer_id="releaser")
     ok, msg = client.release("tmp/x")
     assert ok is False
-    assert "API Error" in msg
+    assert "No lock found" in msg
