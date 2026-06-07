@@ -1044,6 +1044,9 @@ def test_release_no_lock_released_branch(monkeypatch):
         def delete(self):
             return self
 
+        def select(self, *a, **k):
+            return self
+
         def eq(self, *a, **k):
             return self
 

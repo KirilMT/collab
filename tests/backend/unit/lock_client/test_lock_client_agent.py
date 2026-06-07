@@ -81,17 +81,30 @@ def test_acquire_human_takes_over_own_agent_lock(monkeypatch, tmp_path):
 
 
 def test_release_scoped_to_agent(monkeypatch, tmp_path):
+    """Agent release() scopes the DELETE to its own agent_id.
+
+    The pre-check SELECT is developer-scoped (no agent_id filter) so a human can see the
+    lock exists.  The actual DELETE is agent-scoped.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    captured: dict = {}
+    captured: dict = {"select_filters": [], "delete_filters": []}
+    _call_seq: list[str] = []
 
     class RecordingTable:
         def __init__(self, name: str):
             self.name = name
             self._filters: list[tuple[str, str]] = []
 
+        # -- mutation operations (delete chain) --
         def delete(self):
+            _call_seq.append("delete")
+            return self
+
+        # -- read operations (select chain) --
+        def select(self, *_cols):
+            _call_seq.append("select")
             return self
 
         def eq(self, col, val):
@@ -103,13 +116,16 @@ def test_release_scoped_to_agent(monkeypatch, tmp_path):
             return self
 
         def execute(self):
-            captured["filters"] = list(self._filters)
+            if _call_seq and _call_seq[-1] == "select":
+                captured["select_filters"] = list(self._filters)
+                # Return a row owned by alice so the pre-check passes
+                return FakeResponse(status=200, data=[{"developer_id": "alice"}])
+            captured["delete_filters"] = list(self._filters)
             return FakeResponse(status=200, data=[{"file_path": "x"}])
 
     class RecordingClient(FakeClient):
         def table(self, name):
-            captured["table"] = RecordingTable(name)
-            return captured["table"]
+            return RecordingTable(name)
 
     monkeypatch.setattr(
         mod,
@@ -121,9 +137,73 @@ def test_release_scoped_to_agent(monkeypatch, tmp_path):
     client = mod.LockClient(developer_id="alice", agent_id="agent-a")
     client.release("collab/app.py")
 
-    filters = dict(captured.get("filters", []))
-    assert filters.get("developer_id") == "alice"
-    assert filters.get("agent_id") == "agent-a"
+    # DELETE must be scoped to this agent
+    delete_filters = dict(captured.get("delete_filters", []))
+    assert delete_filters.get("developer_id") == "alice"
+    assert delete_filters.get("agent_id") == "agent-a"
+
+
+def test_release_human_developer_scoped(monkeypatch, tmp_path):
+    """Human release() (agent_id=None) must NOT filter by agent_id at all.
+
+    This is the regression test for issue #112 — a human must be able to release locks
+    claimed by their own AI agents without using force-release.
+    """
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    captured: dict = {"select_filters": [], "delete_filters": []}
+    _call_seq: list[str] = []
+
+    class RecordingTable:
+        def __init__(self, name: str):
+            self.name = name
+            self._filters: list[tuple[str, str]] = []
+
+        def delete(self):
+            _call_seq.append("delete")
+            return self
+
+        def select(self, *_cols):
+            _call_seq.append("select")
+            return self
+
+        def eq(self, col, val):
+            self._filters.append((col, val))
+            return self
+
+        def is_(self, col, op):
+            self._filters.append((col, op))
+            return self
+
+        def execute(self):
+            if _call_seq and _call_seq[-1] == "select":
+                captured["select_filters"] = list(self._filters)
+                return FakeResponse(status=200, data=[{"developer_id": "alice"}])
+            captured["delete_filters"] = list(self._filters)
+            return FakeResponse(status=200, data=[{"file_path": "x"}])
+
+    class RecordingClient(FakeClient):
+        def table(self, name):
+            return RecordingTable(name)
+
+    monkeypatch.setattr(
+        mod,
+        "_get_create_client",
+        lambda: lambda url, key: RecordingClient(FakeResponse()),
+    )
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", str(tmp_path))
+
+    # Human: agent_id is None
+    client = mod.LockClient(developer_id="alice", agent_id=None)
+    client.release("collab/app.py")
+
+    # DELETE must NOT include agent_id filter (human = developer-scoped)
+    delete_filters = dict(captured.get("delete_filters", []))
+    assert delete_filters.get("developer_id") == "alice"
+    assert (
+        "agent_id" not in delete_filters
+    ), "Human release must be developer-scoped — no agent_id filter"
 
 
 def test_force_release_same_developer_different_agent_allowed(monkeypatch, tmp_path):
