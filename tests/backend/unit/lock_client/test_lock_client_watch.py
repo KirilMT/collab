@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -630,6 +631,177 @@ def test_watch_heartbeat_stale_softskip_then_shutdown(monkeypatch, tmp_path):
     )
 
     assert "heartbeat_stale" in shutdown_reasons
+
+
+# ---------------------------------------------------------------------------
+# _heartbeat_should_shutdown() unit tests (issue #74 — refactored helper)
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatShouldShutdown:
+    """Direct unit tests for the extracted _heartbeat_should_shutdown() helper."""
+
+    def test_no_heartbeat_file_configured(self):
+        """Returns None when no heartbeat file is set."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        assert lc._heartbeat_should_shutdown(0.0) is None
+
+    def test_missing_within_startup_grace(self, tmp_path, monkeypatch):
+        """Missing file within startup grace returns None."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 10
+        # File does not exist; startup_time is "now" so age_since_startup ≈ 0
+        result = lc._heartbeat_should_shutdown(time.time())
+        assert result is None
+
+    def test_missing_after_startup_grace(self, tmp_path, monkeypatch):
+        """Missing file after startup grace returns 'heartbeat_missing'."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 10
+        # startup_time is 10s in the past → well past the 3s default grace
+        result = lc._heartbeat_should_shutdown(time.time() - 10.0)
+        assert result == "heartbeat_missing"
+
+    def test_missing_startup_grace_configurable(self, tmp_path, monkeypatch):
+        """COLLAB_HEARTBEAT_STARTUP_GRACE_SECONDS env var is honoured."""
+        # Override the module-level constant directly (it is read at import
+        # time, so monkeypatch the attribute rather than setenv).
+        monkeypatch.setattr(mod, "_HEARTBEAT_STARTUP_GRACE_SECONDS", 10.0)
+
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 10
+        # startup_time is 8s ago → within the overridden 10s grace
+        result = lc._heartbeat_should_shutdown(time.time() - 8.0)
+        assert result is None
+        # But 12s ago → past the overridden 10s grace
+        result2 = lc._heartbeat_should_shutdown(time.time() - 12.0)
+        assert result2 == "heartbeat_missing"
+
+    def test_healthy_fresh_heartbeat(self, tmp_path, monkeypatch):
+        """Fresh heartbeat (age < grace) returns None."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 10
+        # getmtime returns "now" → age ≈ 0
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: time.time())
+        result = lc._heartbeat_should_shutdown(0.0)
+        assert result is None
+
+    def test_stale_soft_skip_parent_alive(self, tmp_path, monkeypatch):
+        """Stale but parent alive → one-time soft skip, returns None."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 5
+        lc._parent_pid = 9999
+        lc._heartbeat_soft_skipped = False
+        monkeypatch.setattr(
+            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+        )
+        # getmtime returns 0 → age = now_ts (which is time.time())
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
+        # Set time.time high enough that age > grace
+        fake_now = 100.0
+        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
+        result = lc._heartbeat_should_shutdown(0.0)
+        assert result is None  # soft-skipped
+        assert lc._heartbeat_soft_skipped is True  # flag was set
+
+    def test_stale_final_shutdown(self, tmp_path, monkeypatch):
+        """Stale after soft skip exhausted → returns 'heartbeat_stale'."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 5
+        lc._parent_pid = 9999
+        lc._heartbeat_soft_skipped = True  # already used the soft skip
+        monkeypatch.setattr(
+            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+        )
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
+        fake_now = 100.0  # age = 100 > 5 + 5
+        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
+        result = lc._heartbeat_should_shutdown(0.0)
+        assert result == "heartbeat_stale"
+
+    def test_stale_parent_dead_no_soft_skip_needed(self, tmp_path, monkeypatch):
+        """Stale with parent dead → returns 'heartbeat_stale' (no soft skip)."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 5
+        lc._parent_pid = 9999
+        lc._heartbeat_soft_skipped = False
+        monkeypatch.setattr(
+            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
+        )
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
+        fake_now = 100.0  # age = 100 > 5 + 5
+        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
+        result = lc._heartbeat_should_shutdown(0.0)
+        # Parent dead → no soft skip, age >> grace+extra → immediate shutdown
+        assert result == "heartbeat_stale"
+        assert lc._heartbeat_soft_skipped is False  # never set
+
+    def test_marginally_stale_no_shutdown(self, tmp_path, monkeypatch):
+        """Heartbeat slightly over grace but within soft_extra → returns None."""
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 5
+        lc._parent_pid = 9999
+        lc._heartbeat_soft_skipped = True  # already used soft skip
+        monkeypatch.setattr(
+            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+        )
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
+        # age=7 → >5 (grace) but <10 (grace+soft_extra)
+        fake_now = 7.0
+        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
+        result = lc._heartbeat_should_shutdown(0.0)
+        assert result is None
+
+    def test_exception_during_file_read_graceful(self, tmp_path, monkeypatch):
+        """Helper returns 'heartbeat_stale' even when reading file content fails."""
+        import builtins
+
+        lc = mod.LockClient(developer_id="dev_hb")
+        hb_file = tmp_path / ".heartbeat"
+        hb_file.write_text("alive")
+        lc._heartbeat_file = str(hb_file)
+        lc._heartbeat_grace_seconds = 1
+        lc._parent_pid = 9999
+        lc._heartbeat_soft_skipped = True
+        monkeypatch.setattr(
+            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+        )
+        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
+        # age=100 >> 1+5 → will try to read file contents for debug
+        fake_now = 100.0
+        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
+        # Make open() fail
+        real_open = builtins.open
+
+        def bad_open(*a, **kw):
+            raise OSError("disk error")
+
+        monkeypatch.setattr(builtins, "open", bad_open)
+        result = lc._heartbeat_should_shutdown(0.0)
+        assert result == "heartbeat_stale"
+        # Restore open for cleanup
+        monkeypatch.setattr(builtins, "open", real_open)
 
 
 def test_watch_parent_zombie_name_unresolvable_shutdown(monkeypatch, tmp_path):

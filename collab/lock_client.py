@@ -320,6 +320,21 @@ def _refresh_pid_file(agent_id: Optional[str]) -> None:
 MAX_RETRIES = 3
 
 # ---------------------------------------------------------------------------
+# Heartbeat grace constants (single coherent policy block — see
+# _heartbeat_should_shutdown() and watch()).
+# ---------------------------------------------------------------------------
+# Startup grace: allow the IDE extension time to create the heartbeat file
+# after spawning the watcher. Configurable via env for slow machines or
+# unusually slow extension-host startup.
+_HEARTBEAT_STARTUP_GRACE_SECONDS = float(
+    os.getenv("COLLAB_HEARTBEAT_STARTUP_GRACE_SECONDS", "3.0")
+)
+# Soft extra: one-time additional grace window when the parent IDE process
+# is still alive but the heartbeat mtime is stale. Tolerates brief extension-
+# host hiccups (file-system delays, quick reloads) without shutting down.
+_HEARTBEAT_SOFT_EXTRA_SECONDS = 5.0
+
+# ---------------------------------------------------------------------------
 # Supabase client (lazy import)
 # ---------------------------------------------------------------------------
 _supabase_create_client = None
@@ -2335,6 +2350,92 @@ class LockClient:
         )
 
     # ------------------------------------------------------------------
+    # Heartbeat policy (extracted from watch() for clarity and testability)
+    # ------------------------------------------------------------------
+    def _heartbeat_should_shutdown(self, startup_time: float) -> Optional[str]:
+        """Return a reason string if the watcher should shut down due to heartbeat.
+
+        Single coherent policy:
+
+        1. **Missing file** — silent during
+           ``COLLAB_HEARTBEAT_STARTUP_GRACE_SECONDS`` (default 3 s), then
+           returns ``"heartbeat_missing"``.
+        2. **Stale mtime** — one-time soft skip when the parent IDE process
+           is still alive, then returns ``"heartbeat_stale"`` once the age
+           exceeds ``heartbeat_grace_seconds + _HEARTBEAT_SOFT_EXTRA_SECONDS``.
+
+        Returns ``None`` when the heartbeat is healthy or inside an allowed
+        grace window.
+        """
+        if not self._heartbeat_file:
+            return None
+
+        now_ts = time.time()
+
+        # --- Missing heartbeat file ---
+        if not os.path.exists(self._heartbeat_file):
+            age_since_startup = now_ts - startup_time
+            if age_since_startup < _HEARTBEAT_STARTUP_GRACE_SECONDS:
+                logger.debug(
+                    "Heartbeat missing but within startup grace (%.2fs) — ignoring",
+                    age_since_startup,
+                )
+                return None
+            logger.info(
+                "Heartbeat file missing (%s). Shutting down...",
+                self._heartbeat_file,
+            )
+            return "heartbeat_missing"
+
+        # --- Stale heartbeat ---
+        age = now_ts - os.path.getmtime(self._heartbeat_file)
+        logger.debug(
+            "Heartbeat age: %.1fs (threshold: %ss)",
+            age,
+            self._heartbeat_grace_seconds,
+        )
+
+        if age <= float(self._heartbeat_grace_seconds):
+            return None
+
+        parent_alive = bool(
+            self._parent_pid and self._is_process_alive(self._parent_pid)
+        )
+
+        # One-time soft skip: tolerate a brief extension-host hiccup
+        # when the parent IDE process is still running.
+        if parent_alive and not self._heartbeat_soft_skipped:
+            logger.warning(
+                (
+                    "Heartbeat stale (%.1fs > %ss). "
+                    "Parent alive; allowing one-time extra %.1fs grace."
+                ),
+                age,
+                self._heartbeat_grace_seconds,
+                _HEARTBEAT_SOFT_EXTRA_SECONDS,
+            )
+            self._heartbeat_soft_skipped = True
+            return None
+
+        if age > float(self._heartbeat_grace_seconds) + _HEARTBEAT_SOFT_EXTRA_SECONDS:
+            # Final failure: log file contents for debugging
+            try:
+                with open(self._heartbeat_file, "r", encoding="utf-8") as hf:
+                    content = hf.read().strip()
+                logger.debug("Heartbeat file content: %s", content)
+            except Exception:
+                pass
+            logger.info(
+                "Heartbeat stale (%.1fs > %ss) at %s. Shutting down...",
+                age,
+                self._heartbeat_grace_seconds,
+                self._heartbeat_file,
+            )
+            return "heartbeat_stale"
+
+        return None
+
+    # ------------------------------------------------------------------
     # Watcher (foreground process)
     # ------------------------------------------------------------------
     def watch(
@@ -2570,107 +2671,17 @@ class LockClient:
                         # heartbeat makes the watcher more robust to fast reloads.
                         if self._heartbeat_file:
                             try:
-                                # DEBUG: Log heartbeat check
-                                now_ts = time.time()
                                 logger.debug(
                                     "Heartbeat check: file=%s exists=%s",
                                     self._heartbeat_file,
                                     os.path.exists(self._heartbeat_file),
                                 )
-
-                                # If the heartbeat file is missing, allow a short
-                                # startup grace window to avoid races with the
-                                # extension creating the heartbeat immediately
-                                # after spawning the watcher.
-                                if not os.path.exists(self._heartbeat_file):
-                                    if now_ts - startup_time < 3.0:
-                                        logger.debug(
-                                            (
-                                                "Heartbeat missing but within startup "
-                                                "grace (%.2fs) — ignoring"
-                                            ),
-                                            now_ts - startup_time,
-                                        )
-                                    else:
-                                        logger.info(
-                                            (
-                                                "Heartbeat file missing (%s). "
-                                                "Shutting down..."
-                                            ),
-                                            self._heartbeat_file,
-                                        )
-                                        self._graceful_shutdown(
-                                            reason="heartbeat_missing"
-                                        )
-                                        return
-
-                                # If the heartbeat file exists, ensure it has been
-                                # updated recently according to the configured
-                                # grace window.
-                                age = now_ts - os.path.getmtime(self._heartbeat_file)
-                                logger.debug(
-                                    "Heartbeat age: %.1fs (threshold: %ss)",
-                                    age,
-                                    self._heartbeat_grace_seconds,
-                                )
-                                # Allow a small one-time soft skip when the parent
-                                # IDE process is still alive. This helps tolerate
-                                # brief extension-host hiccups (file system delays,
-                                # quick reloads) while preserving safety.
-                                soft_extra = 5.0
-                                if age > float(self._heartbeat_grace_seconds):
-                                    parent_alive = bool(
-                                        self._parent_pid
-                                        and self._is_process_alive(self._parent_pid)
-                                    )
-                                    if parent_alive and not getattr(
-                                        self, "_heartbeat_soft_skipped", False
-                                    ):
-                                        logger.warning(
-                                            (
-                                                "Heartbeat stale (%.1fs > %ss). "
-                                                "Parent alive; allowing "
-                                                "one-time extra %.1fs grace."
-                                            ),
-                                            age,
-                                            self._heartbeat_grace_seconds,
-                                            soft_extra,
-                                        )
-                                        self._heartbeat_soft_skipped = True
-                                    elif (
-                                        age
-                                        > float(self._heartbeat_grace_seconds)
-                                        + soft_extra
-                                    ):
-                                        # Final failure: log file contents for debugging
-                                        try:
-                                            with open(
-                                                self._heartbeat_file,
-                                                "r",
-                                                encoding="utf-8",
-                                            ) as hf:
-                                                content = hf.read().strip()
-                                            logger.debug(
-                                                "Heartbeat file content: %s", content
-                                            )
-                                        except Exception:
-                                            pass
-                                        logger.info(
-                                            (
-                                                "Heartbeat stale (%.1fs > %ss) at %s. "
-                                                "Shutting down..."
-                                            ),
-                                            age,
-                                            self._heartbeat_grace_seconds,
-                                            self._heartbeat_file,
-                                        )
-                                        self._graceful_shutdown(
-                                            reason="heartbeat_stale"
-                                        )
-                                        return
+                                reason = self._heartbeat_should_shutdown(startup_time)
+                                if reason:
+                                    self._graceful_shutdown(reason=reason)
+                                    return
                             except Exception as e:
                                 logger.debug("Heartbeat check exception: %s", e)
-                                pass
 
                         # Parent diagnostics are useful during debugging but too noisy
                         # for normal collab.log operation, so keep them at DEBUG.
