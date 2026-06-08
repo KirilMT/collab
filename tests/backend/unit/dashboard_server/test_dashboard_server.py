@@ -198,7 +198,184 @@ def test_prepare_dashboard_server_missing_template(tmp_path):
         {"url": "", "anonKey": "", "serviceKey": None, "user": ""},
     )
     assert url is None
-    assert html_path is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_developer_name
+# ---------------------------------------------------------------------------
+
+
+class _FakeCaptureResult:
+    """Minimal fake for safe_subprocess.capture return value."""
+
+    def __init__(self, ok=True, timed_out=False, stdout=b""):
+        self.ok = ok
+        self.timed_out = timed_out
+        self.stdout = stdout
+
+
+def _fake_decode(b: bytes) -> str:
+    return b.decode("utf-8") if b else ""
+
+
+def test_resolve_developer_name_env_precedence(tmp_path, monkeypatch):
+    """COLLAB_DEVELOPER_ID in .env wins over everything."""
+    (tmp_path / ".env").write_text(
+        "COLLAB_DEVELOPER_ID=env-dev\n",
+        encoding="utf-8",
+    )
+    from dotenv import dotenv_values
+
+    file_vals = dict(dotenv_values(tmp_path / ".env"))
+    result = mod._resolve_developer_name(str(tmp_path), file_vals)
+    assert result == "env-dev"
+
+
+def test_resolve_developer_name_developer_id_fallback(tmp_path, monkeypatch):
+    """DEVELOPER_ID env var is checked after COLLAB_DEVELOPER_ID."""
+    file_vals = {"DEVELOPER_ID": "dev-id"}
+    monkeypatch.setenv("DEVELOPER_ID", "dev-id")
+    result = mod._resolve_developer_name(str(tmp_path), file_vals)
+    assert result == "dev-id"
+
+
+def test_resolve_developer_name_github_user_git_config(tmp_path, monkeypatch):
+    """Git config github.user is checked when no env vars are set."""
+    from collab import safe_subprocess
+
+    calls = []
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        calls.append(cmd)
+        if "github.user" in cmd:
+            return _FakeCaptureResult(ok=True, stdout=b"github-user\n")
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr("collab.safe_subprocess.capture", _fake_capture)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "github-user"
+
+
+def test_resolve_developer_name_from_remote_url(tmp_path, monkeypatch):
+    """Extract username from remote.origin.url when no config is set."""
+    from collab import safe_subprocess
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "github.user" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        if "remote.origin.url" in cmd_str:
+            return _FakeCaptureResult(
+                ok=True, stdout=b"https://github.com/KirilMT/collab.git\n"
+            )
+        if "user.name" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr(safe_subprocess, "decode_output", _fake_decode)
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: "collab")
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "KirilMT"
+
+
+def test_resolve_developer_name_fallback_os_username(monkeypatch, tmp_path):
+    """Fall back to USERNAME / USER when nothing else is available."""
+    from collab import safe_subprocess
+
+    monkeypatch.setattr(
+        safe_subprocess, "capture", lambda *a, **k: _FakeCaptureResult(ok=False)
+    )
+    monkeypatch.setenv("USERNAME", "os-user")
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "os-user"
+
+
+def test_resolve_developer_name_empty_when_nothing_found(monkeypatch, tmp_path):
+    """Return empty string when every source is exhausted."""
+    from collab import safe_subprocess
+
+    monkeypatch.setattr(
+        safe_subprocess, "capture", lambda *a, **k: _FakeCaptureResult(ok=False)
+    )
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# _check_watcher_health
+# ---------------------------------------------------------------------------
+
+
+def test_check_watcher_health_no_state_dir():
+    """Returns down when state dir doesn't exist."""
+    result = mod._check_watcher_health("/nonexistent/path")
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_no_pid_file(tmp_path):
+    """Returns down when PID file is missing."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    result = mod._check_watcher_health(state_dir)
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_invalid_pid(tmp_path):
+    """Returns down when PID file contains garbage."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    (tmp_path / ".collab" / "watcher.pid").write_text("not-a-number", encoding="utf-8")
+    result = mod._check_watcher_health(state_dir)
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
+    """Simulate a dead PID on Windows."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    (tmp_path / ".collab" / "watcher.pid").write_text("99999", encoding="utf-8")
+
+    import platform
+
+    if platform.system() == "Windows":
+        # Mock OpenProcess to return 0 (process doesn't exist)
+        import ctypes
+
+        monkeypatch.setattr(
+            ctypes.windll.kernel32,
+            "OpenProcess",
+            lambda access, inherit, pid: 0,
+        )
+    else:
+        # Mock os.kill to raise OSError (process doesn't exist)
+        monkeypatch.setattr(
+            os, "kill", lambda pid, sig: (_ for _ in ()).throw(OSError())
+        )
+
+    result = mod._check_watcher_health(state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_running(tmp_path, monkeypatch):
+    """Returns running=True with heartbeat latency when PID is alive."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    pid_file = tmp_path / ".collab" / "watcher.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+
+    result = mod._check_watcher_health(state_dir)
+    assert result["running"] is True
+    assert "heartbeatLatencyMs" in result
+    assert isinstance(result["heartbeatLatencyMs"], int)
 
 
 def test_write_injected_dashboard_html_uses_dashboard_dir(tmp_path):

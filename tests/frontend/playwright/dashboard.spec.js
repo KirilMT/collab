@@ -221,6 +221,10 @@ test.describe("Collaborative Lock Dashboard — populated (seeded data)", () => 
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
+    // Flush any pending timers / rAF callbacks induced by Chart.js
+    // initialization so the page is stable before interactions.
+    await page.clock.fastForward(0);
+
     // Wait until the dashboard has rendered the seeded data (deterministic).
     await expect(page.getByTestId("stat-active")).toHaveText(
       EXPECTED_STATS.active,

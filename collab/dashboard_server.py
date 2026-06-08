@@ -121,6 +121,90 @@ def resolve_project_display_name(
     return os.path.basename(os.path.abspath(project_root)) or "project"
 
 
+def _resolve_developer_name(project_root: str, file_vals: dict[str, Any]) -> str:
+    """Return a human-friendly developer identifier for the dashboard header.
+
+    Precedence (developer-first, as shown in the user-info chip):
+
+    1. ``COLLAB_DEVELOPER_ID`` (``.env`` or environment)
+    2. ``DEVELOPER_ID`` (``.env`` or environment)
+    3. ``git config github.user`` (local → global)
+    4. GitHub username extracted from ``remote.origin.url``
+    5. ``git config user.name`` (local → global)
+    6. ``USERNAME`` / ``USER`` environment variables
+    7. Empty string (dashboard hides the chip)
+    """
+
+    def _pick(name: str) -> Optional[str]:
+        val = file_vals.get(name)
+        if not val:
+            val = os.getenv(name)
+        return val
+
+    # 1-2. Explicit env vars
+    for key in ("COLLAB_DEVELOPER_ID", "DEVELOPER_ID"):
+        val = _pick(key)
+        if val and val.strip():
+            return val.strip()
+
+    # 3. git config github.user
+    from collab import safe_subprocess
+
+    for scope in ("--local", "--global"):
+        captured = safe_subprocess.capture(
+            ["git", "config", scope, "github.user"],
+            policy="git",
+            cwd=project_root,
+            timeout=5,
+        )
+        if captured.ok and not captured.timed_out:
+            gh_user = safe_subprocess.decode_output(captured.stdout).strip()
+            if gh_user:
+                return gh_user
+
+    # 4. Extract from remote.origin.url (e.g. github.com/KirilMT/collab.git)
+    remote_name = _name_from_git_remote(project_root)
+    if remote_name:
+        captured = safe_subprocess.capture(
+            ["git", "config", "--get", "remote.origin.url"],
+            policy="git",
+            cwd=project_root,
+            timeout=5,
+        )
+        if captured.ok and not captured.timed_out:
+            remote_url = safe_subprocess.decode_output(captured.stdout).strip()
+            if remote_url:
+                # Try to extract GitHub username from SSH or HTTPS URL
+                import re
+
+                # SSH: git@github.com:USER/REPO.git
+                # HTTPS: https://github.com/USER/REPO.git
+                match = re.search(r"github\.com[:/]([^/]+)/", remote_url)
+                if match:
+                    return match.group(1)
+
+    # 5. git config user.name
+    captured = safe_subprocess.capture(
+        ["git", "config", "--get", "user.name"],
+        policy="git",
+        cwd=project_root,
+        timeout=5,
+    )
+    if captured.ok and not captured.timed_out:
+        git_name = safe_subprocess.decode_output(captured.stdout).strip()
+        if git_name:
+            return git_name
+
+    # 6. OS username
+    for env_name in ("USERNAME", "USER"):
+        val = os.getenv(env_name)
+        if val and val.strip():
+            return val.strip()
+
+    # 7. Nothing found
+    return ""
+
+
 def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     """Read ``.env`` from *project_root* and return dashboard Supabase settings.
 
@@ -148,13 +232,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     url = pick("SUPABASE_URL") or ""
     anon = pick("SUPABASE_ANON_KEY") or ""
     service = pick("SUPABASE_SERVICE_ROLE_KEY") or None
-    user = (
-        pick("COLLAB_DEVELOPER_ID")
-        or pick("DEVELOPER_ID")
-        or os.getenv("USERNAME")
-        or os.getenv("USER")
-        or ""
-    )
+    user = _resolve_developer_name(project_root, file_vals)
     from . import agent_identity
 
     state_override = os.getenv("COLLAB_STATE_DIR", "").strip()
@@ -163,6 +241,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     agent_label = agent_identity.resolve_agent_label()
     agent_kind = agent_identity.resolve_agent_kind(agent_id=agent_id)
     project_name = resolve_project_display_name(project_root, file_vals)
+    watcher_status = _check_watcher_health(state_dir)
     return {
         "url": url,
         "anonKey": anon,
@@ -172,7 +251,65 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
         "agentLabel": agent_label,
         "agentKind": agent_kind,
         "projectName": project_name,
+        "watcher": watcher_status,
     }
+
+
+def _check_watcher_health(state_dir: str) -> dict[str, Any]:
+    """Check if the collab watcher daemon is running and return health info.
+
+    Returns a dict with ``running`` (bool) and optionally ``heartbeatLatencyMs`` (int)
+    when available.
+    """
+    if not state_dir or not os.path.isdir(state_dir):
+        return {"running": False}
+
+    pid_file = os.path.join(state_dir, "watcher.pid")
+    if not os.path.isfile(pid_file):
+        return {"running": False}
+
+    try:
+        with open(pid_file, "r", encoding="utf-8") as fh:
+            pid_str = fh.read().strip()
+        pid = int(pid_str)
+    except (OSError, ValueError):
+        return {"running": False}
+
+    # Check if PID is alive
+    import platform
+
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(
+                0x0400, False, pid
+            )  # PROCESS_QUERY_INFORMATION
+            if handle:
+                kernel32.CloseHandle(handle)
+                # Process exists
+            else:
+                return {"running": False}
+        except OSError:
+            return {"running": False}
+    else:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return {"running": False}
+
+    # Compute heartbeat latency from watcher PID file mtime
+    try:
+        mtime = os.path.getmtime(pid_file)
+        latency_ms = int((time.time() - mtime) * 1000)
+    except OSError:
+        latency_ms = None
+
+    result: dict[str, Any] = {"running": True}
+    if latency_ms is not None:
+        result["heartbeatLatencyMs"] = latency_ms
+    return result
 
 
 def create_dashboard_handler(project_root: str, directory: str) -> type:

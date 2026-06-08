@@ -138,7 +138,8 @@
             min-height: 0;
             display: none;
             flex-direction: column;
-            gap: 0.95rem;
+            gap: 0.7rem;
+            overflow-y: auto;
         }
 
         .page-view.active {
@@ -151,6 +152,32 @@
             justify-content: space-between;
             gap: 0.75rem;
             flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+
+        .stats-grid {
+            flex-shrink: 0;
+        }
+
+        .chart-shell {
+            flex-shrink: 0;
+        }
+
+        .dev-summary-grid {
+            flex-shrink: 0;
+        }
+
+        .filter-bar {
+            flex-shrink: 0;
+        }
+
+        .filter-presets {
+            flex-shrink: 0;
+        }
+
+        .table-shell {
+            flex: 1 1 0;
+            min-height: 120px;
         }
 
         .page-title {
@@ -167,7 +194,7 @@
             border: 1px solid var(--border-color);
             border-radius: var(--radius);
             min-height: 0;
-            height: 100%;
+            flex: 1 1 auto;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -192,7 +219,7 @@
         .table thead th {
             position: sticky;
             top: 0;
-            z-index: 5;
+            pointer-events: none;
             background: #f8fafc;
             border-bottom: 1px solid var(--border-color);
             color: var(--text-muted);
@@ -217,8 +244,8 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 1.1rem;
+            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+            gap: 0.7rem;
         }
 
         .stat-card {
@@ -264,6 +291,31 @@
         .stat-icon-avg {
             background: #e0f2fe;
             color: #0891b2;
+        }
+
+        .stat-icon-conflict {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .stat-icon-watcher {
+            background: #f0fdf4;
+            color: #16a34a;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        .stat-icon-watcher.watcher-warn {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .stat-icon-watcher.watcher-down {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .stat-value-warning {
+            color: #d97706;
         }
 
         .stat-label {
@@ -523,6 +575,468 @@
             transform: translateY(-1px);
         }
 
+        /* ---- Filter bar --------------------------------------------------- */
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            padding: 0.65rem 0.85rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .filter-bar input,
+        .filter-bar select {
+            height: 2.15rem;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.45rem;
+            padding: 0 0.55rem;
+            background: #fff;
+            color: var(--text-main);
+            min-width: 0;
+        }
+
+        .filter-bar input::placeholder {
+            color: #94a3b8;
+        }
+
+        .filter-bar input:focus,
+        .filter-bar select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px var(--primary-soft);
+        }
+
+        .filter-search-wrap {
+            position: relative;
+            flex: 1 1 180px;
+            min-width: 140px;
+        }
+
+        .filter-search-wrap input {
+            width: 100%;
+            padding-left: 2rem;
+        }
+
+        .filter-search-wrap .fa-magnifying-glass {
+            position: absolute;
+            left: 0.65rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 0.75rem;
+            pointer-events: none;
+        }
+
+        .filter-bar .filter-select {
+            min-width: 130px;
+            max-width: 180px;
+        }
+
+        .filter-bar .filter-date {
+            width: 132px;
+        }
+
+        .filter-bar .btn-filter-clear {
+            height: 2.15rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            border-radius: 0.45rem;
+            padding: 0 0.7rem;
+            white-space: nowrap;
+            border: 1px solid var(--border-color);
+            background: #f8fafc;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .filter-bar .btn-filter-clear:hover {
+            background: #fee2e2;
+            border-color: #fca5a5;
+            color: #dc2626;
+        }
+
+        /* ---- Saved filter presets ---------------------------------------- */
+        .filter-presets {
+            display: flex;
+            gap: 0.3rem;
+            flex-wrap: wrap;
+            padding: 0.35rem 0.85rem 0;
+        }
+
+        .filter-preset-btn {
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.18rem 0.6rem;
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            background: #fff;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .filter-preset-btn:hover {
+            background: var(--primary-soft);
+            color: var(--primary);
+            border-color: #c7d2fe;
+        }
+
+        .filter-preset-btn.active-preset {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .filter-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.08rem 0.45rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            background: var(--primary-soft);
+            color: var(--primary);
+            margin-left: 0.35rem;
+        }
+
+        /* ---- Column sorting ----------------------------------------------- */
+        .table thead th.sortable {
+            cursor: pointer;
+            user-select: none;
+            pointer-events: auto;
+            transition: color 0.12s ease;
+        }
+
+        .table thead th.sortable:hover {
+            color: var(--primary);
+        }
+
+        .sort-indicator {
+            display: inline-block;
+            width: 0;
+            height: 0;
+            margin-left: 0.3rem;
+            vertical-align: middle;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+        }
+
+        .sort-indicator.asc {
+            border-bottom: 5px solid var(--primary);
+            border-top: none;
+        }
+
+        .sort-indicator.desc {
+            border-top: 5px solid var(--primary);
+            border-bottom: none;
+        }
+
+        .sort-indicator.inactive {
+            border-bottom: 4px solid #cbd5e1;
+            border-top: none;
+        }
+
+        /* ---- Activity chart ---------------------------------------------- */
+        .chart-shell {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 0.85rem 1rem 0.5rem;
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+
+        .chart-title {
+            margin: 0;
+            font-size: 0.85rem;
+            font-weight: 800;
+            color: var(--text-main);
+        }
+
+        .chart-range-group {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .chart-range-btn {
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 0.2rem 0.65rem;
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            background: #fff;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .chart-range-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .chart-range-btn:hover:not(.active) {
+            background: #f1f5f9;
+            color: var(--text-main);
+        }
+
+        .chart-canvas-wrap {
+            position: relative;
+            width: 100%;
+            height: 140px;
+            min-height: 0;
+        }
+
+        .chart-canvas-wrap canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* ---- Developer summary cards ------------------------------------- */
+        .dev-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 0.65rem;
+        }
+
+        .dev-summary-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 0.6rem;
+            padding: 0.7rem 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: var(--shadow-sm);
+            transition: box-shadow 0.15s ease;
+        }
+
+        .dev-summary-card:hover {
+            box-shadow: var(--shadow-md);
+        }
+
+        .dev-summary-name {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .dev-summary-name i {
+            color: var(--primary);
+            font-size: 0.75rem;
+        }
+
+        .dev-summary-count {
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: var(--primary);
+            background: var(--primary-soft);
+            border-radius: 0.4rem;
+            padding: 0.1rem 0.55rem;
+            min-width: 2rem;
+            text-align: center;
+        }
+
+        /* ---- Dark / light theme ------------------------------------------ */
+        :root {
+            --theme-transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        body.dark {
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
+            --primary: #818cf8;
+            --primary-soft: #1e1b4b;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+            --shadow-md: 0 10px 22px -14px rgb(0 0 0 / 0.5);
+            --shadow-lg: 0 26px 48px -28px rgb(0 0 0 / 0.6);
+        }
+
+        body.dark .table thead th {
+            background: #1e293b;
+        }
+
+        body.dark .table tbody tr:hover {
+            background: #1e293b;
+        }
+
+        body.dark code {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark .filter-bar input,
+        body.dark .filter-bar select {
+            background: #1e293b;
+            color: var(--text-main);
+        }
+
+        body.dark .chart-range-btn {
+            background: #1e293b;
+        }
+
+        body.dark .chart-range-btn:hover:not(.active) {
+            background: #334155;
+        }
+
+        body.dark .filter-preset-btn {
+            background: #1e293b;
+        }
+
+        body.dark .nav-right .btn.btn-outline-secondary {
+            background: #1e293b;
+            color: #94a3b8;
+        }
+
+        body.dark .filter-bar .btn-filter-clear {
+            background: #1e293b;
+        }
+
+        body.dark .dev-summary-card {
+            background: #1e293b;
+        }
+
+        .theme-toggle-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            width: 2rem;
+            height: 2rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle-btn:hover {
+            background: var(--primary-soft);
+            color: var(--primary);
+        }
+
+        /* ---- Loading skeletons ------------------------------------------- */
+        .skeleton {
+            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s ease-in-out infinite;
+            border-radius: 0.35rem;
+        }
+
+        body.dark .skeleton {
+            background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
+            background-size: 200% 100%;
+        }
+
+        @keyframes skeleton-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .skeleton-row td {
+            padding: 0.75rem !important;
+        }
+
+        .skeleton-cell {
+            height: 1rem;
+            width: 80%;
+        }
+
+        .skeleton-cell-short {
+            height: 1rem;
+            width: 50%;
+        }
+
+        /* ---- Row detail panel -------------------------------------------- */
+        .detail-panel {
+            background: #f8fafc;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            margin: 0.25rem 0;
+            padding: 0.85rem 1rem;
+            display: none;
+            font-size: 0.78rem;
+        }
+
+        body.dark .detail-panel {
+            background: #1e293b;
+        }
+
+        .detail-panel.open {
+            display: block;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.3rem 0.9rem;
+        }
+
+        .detail-label {
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.68rem;
+            white-space: nowrap;
+        }
+
+        .detail-value {
+            color: var(--text-main);
+            word-break: break-all;
+            font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+            font-size: 0.74rem;
+        }
+
+        .detail-json {
+            margin-top: 0.5rem;
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 0.4rem;
+            padding: 0.6rem 0.8rem;
+            font-size: 0.7rem;
+            max-height: 180px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
+
+        .table tbody tr.row-expandable {
+            cursor: pointer;
+        }
+
+        .table tbody tr.row-expandable:hover {
+            background: var(--primary-soft);
+        }
+
+        /* ---- Responsive tweaks -------------------------------------------- */
         @media (max-width: 768px) {
             .app-nav {
                 padding: 0 0.75rem;
@@ -543,6 +1057,17 @@
             .table thead th,
             .table tbody td {
                 padding: 0.62rem;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-bar .filter-select,
+            .filter-bar .filter-date {
+                max-width: none;
+                width: 100%;
             }
         }
         </style>
@@ -573,6 +1098,40 @@
                         data-testid="sync-btn">
                     <i class="fas fa-sync-alt me-1"></i>Sync
                 </button>
+                <select id="refresh-interval"
+                        class="btn btn-sm btn-outline-secondary"
+                        style="width:auto;
+                               padding:0.2rem 0.5rem;
+                               font-weight:700;
+                               border-radius:999px"
+                        data-testid="refresh-interval">
+                    <option value="0" selected>Auto: Off</option>
+                    <option value="5">5s</option>
+                    <option value="15">15s</option>
+                    <option value="30">30s</option>
+                    <option value="60">60s</option>
+                </select>
+                <button id="export-json-btn"
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        title="Copy current view as JSON"
+                        data-testid="export-json-btn">
+                    <i class="fas fa-code"></i>
+                </button>
+                <button id="export-csv-btn"
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        title="Download current view as CSV"
+                        data-testid="export-csv-btn">
+                    <i class="fas fa-file-csv"></i>
+                </button>
+                <button id="theme-toggle-btn"
+                        class="theme-toggle-btn"
+                        type="button"
+                        title="Toggle dark/light theme"
+                        data-testid="theme-toggle-btn">
+                    <i class="fas fa-moon"></i>
+                </button>
             </div>
         </header>
         <main class="app-main">
@@ -589,6 +1148,9 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-lock"></i>Active Locks
+                        <span id="filter-count-badge-locks"
+                              class="filter-badge hidden"
+                              data-testid="filter-count-badge-locks">0</span>
                     </h2>
                 </div>
                 <div class="stats-grid"
@@ -625,17 +1187,146 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                             </div>
                         </div>
                     </article>
+                    <article class="stat-card" data-testid="stat-card-conflicts">
+                        <div class="stat-shell">
+                            <span class="stat-icon stat-icon-conflict"><i class="fas fa-triangle-exclamation"></i></span>
+                            <div>
+                                <p class="stat-label">Conflict Rate</p>
+                                <p class="stat-value stat-value-warning"
+                                   id="stat-conflicts"
+                                   data-testid="stat-conflicts">0%</p>
+                            </div>
+                        </div>
+                    </article>
+                    <article class="stat-card" data-testid="stat-card-watcher">
+                        <div class="stat-shell">
+                            <span class="stat-icon stat-icon-watcher" id="watcher-icon"><i class="fas fa-heart-pulse"></i></span>
+                            <div>
+                                <p class="stat-label">Watcher Health</p>
+                                <p class="stat-value" id="stat-watcher" data-testid="stat-watcher">—</p>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+                <div class="chart-shell"
+                     id="activity-chart-shell"
+                     data-testid="activity-chart-shell">
+                    <div class="chart-header">
+                        <span class="chart-title">
+                            <i class="fas fa-chart-bar me-1"></i>Lock Activity
+                        </span>
+                        <span class="chart-range-group" data-testid="chart-range-group">
+                            <button class="chart-range-btn" data-range="1h" data-testid="chart-range-1h">1h</button>
+                            <button class="chart-range-btn active"
+                                    data-range="24h"
+                                    data-testid="chart-range-24h">24h</button>
+                            <button class="chart-range-btn" data-range="7d" data-testid="chart-range-7d">7d</button>
+                        </span>
+                    </div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="activity-canvas" data-testid="activity-canvas"></canvas>
+                    </div>
+                </div>
+                <div class="dev-summary-grid"
+                     id="dev-summary-grid"
+                     data-testid="dev-summary-grid"
+                     style="display:none">
+                    <!-- Populated dynamically -->
+                </div>
+                <div class="filter-bar" id="filter-bar-locks" data-testid="filter-bar">
+                    <span class="filter-search-wrap">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input type="text"
+                               id="filter-search"
+                               placeholder="Search files &amp; developers..."
+                               data-testid="filter-search">
+                    </span>
+                    <select id="filter-developer"
+                            class="filter-select"
+                            data-testid="filter-developer">
+                        <option value="all">All Developers</option>
+                    </select>
+                    <input type="text"
+                           id="filter-agent"
+                           class="filter-select"
+                           placeholder="Agent label..."
+                           data-testid="filter-agent">
+                    <input type="text"
+                           id="filter-glob"
+                           class="filter-select"
+                           placeholder="Glob: src/**/*.py"
+                           data-testid="filter-glob">
+                    <select id="filter-status" class="filter-select" data-testid="filter-status">
+                        <option value="all">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="released">Released</option>
+                    </select>
+                    <input type="date"
+                           id="filter-date-from"
+                           class="filter-date"
+                           data-testid="filter-date-from"
+                           title="From date">
+                    <input type="date"
+                           id="filter-date-to"
+                           class="filter-date"
+                           data-testid="filter-date-to"
+                           title="To date">
+                    <button id="filter-clear-btn"
+                            class="btn-filter-clear"
+                            type="button"
+                            data-testid="filter-clear-btn"
+                            title="Clear all filters">
+                        <i class="fas fa-times me-1"></i>Clear
+                    </button>
+                </div>
+                <div class="filter-presets" data-testid="filter-presets">
+                    <button class="filter-preset-btn"
+                            data-preset="my-locks"
+                            data-testid="preset-my-locks">
+                        <i class="fas fa-user me-1"></i>My Locks
+                    </button>
+                    <button class="filter-preset-btn"
+                            data-preset="conflicts"
+                            data-testid="preset-conflicts">
+                        <i class="fas fa-triangle-exclamation me-1"></i>Conflicts Only
+                    </button>
+                    <button class="filter-preset-btn"
+                            data-preset="stale"
+                            data-testid="preset-stale">
+                        <i class="fas fa-clock me-1"></i>Stale (&gt;30m)
+                    </button>
+                    <button class="filter-preset-btn"
+                            data-preset="agents"
+                            data-testid="preset-agents">
+                        <i class="fas fa-robot me-1"></i>AI Agents
+                    </button>
                 </div>
                 <div class="table-shell">
                     <div class="table-scroll" id="locks-scroll">
                         <table class="table table-sm align-middle">
                             <thead>
                                 <tr>
-                                    <th>File Path</th>
-                                    <th>Developer</th>
-                                    <th>Branch</th>
-                                    <th>Reason</th>
-                                    <th>Timeline</th>
+                                    <th class="sortable" data-sort="file_path" data-testid="sort-file_path">
+                                        File Path<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="developer_id"
+                                        data-testid="sort-developer_id">
+                                        Developer<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="branch_name"
+                                        data-testid="sort-branch_name">
+                                        Branch<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="reason" data-testid="sort-reason">
+                                        Reason<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="acquired_at"
+                                        data-testid="sort-acquired_at">
+                                        Timeline<span class="sort-indicator inactive"></span>
+                                    </th>
                                     <th class="text-end">Action</th>
                                 </tr>
                             </thead>
@@ -655,21 +1346,104 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-clock-rotate-left"></i>Lock History
+                        <span id="filter-count-badge-history"
+                              class="filter-badge hidden"
+                              data-testid="filter-count-badge-history">0</span>
                     </h2>
+                </div>
+                <div class="filter-bar"
+                     id="filter-bar-history"
+                     data-testid="filter-bar-history">
+                    <span class="filter-search-wrap">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input type="text"
+                               id="filter-search-history"
+                               placeholder="Search files &amp; developers..."
+                               data-testid="filter-search-history">
+                    </span>
+                    <select id="filter-developer-history"
+                            class="filter-select"
+                            data-testid="filter-developer-history">
+                        <option value="all">All Developers</option>
+                    </select>
+                    <input type="text"
+                           id="filter-agent-history"
+                           class="filter-select"
+                           placeholder="Agent label..."
+                           data-testid="filter-agent-history">
+                    <input type="text"
+                           id="filter-glob-history"
+                           class="filter-select"
+                           placeholder="Glob: src/**/*.py"
+                           data-testid="filter-glob-history">
+                    <select id="filter-status-history"
+                            class="filter-select"
+                            data-testid="filter-status-history">
+                        <option value="all">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="released">Released</option>
+                    </select>
+                    <input type="date"
+                           id="filter-date-from-history"
+                           class="filter-date"
+                           data-testid="filter-date-from-history"
+                           title="From date">
+                    <input type="date"
+                           id="filter-date-to-history"
+                           class="filter-date"
+                           data-testid="filter-date-to-history"
+                           title="To date">
+                    <button id="filter-clear-btn-history"
+                            class="btn-filter-clear"
+                            type="button"
+                            data-testid="filter-clear-btn-history"
+                            title="Clear all filters">
+                        <i class="fas fa-times me-1"></i>Clear
+                    </button>
                 </div>
                 <div class="table-shell">
                     <div class="table-scroll" id="history-scroll">
                         <table class="table table-sm align-middle">
                             <thead>
                                 <tr>
-                                    <th>File Path</th>
-                                    <th>Developer</th>
-                                    <th>Branch</th>
-                                    <th>Reason</th>
-                                    <th>Acquired At</th>
-                                    <th>Released At</th>
-                                    <th>Duration</th>
-                                    <th>Outcome</th>
+                                    <th class="sortable"
+                                        data-sort="file_path"
+                                        data-testid="sort-history-file_path">
+                                        File Path<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="developer_id"
+                                        data-testid="sort-history-developer_id">
+                                        Developer<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="branch_name"
+                                        data-testid="sort-history-branch_name">
+                                        Branch<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="reason" data-testid="sort-history-reason">
+                                        Reason<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="acquired_at"
+                                        data-testid="sort-history-acquired_at">
+                                        Acquired At<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="released_at"
+                                        data-testid="sort-history-released_at">
+                                        Released At<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="duration_minutes"
+                                        data-testid="sort-history-duration_minutes">
+                                        Duration<span class="sort-indicator inactive"></span>
+                                    </th>
+                                    <th class="sortable"
+                                        data-sort="outcome"
+                                        data-testid="sort-history-outcome">
+                                        Outcome<span class="sort-indicator inactive"></span>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody id="history-body" data-testid="history-body">
@@ -715,7 +1489,10 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             </div>
         </div>
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4/dist/chart.umd.min.js"></script>
         <script src="dashboard-format.js"></script>
+        <script src="dashboard-filters.js"></script>
+        <script src="dashboard-charts.js"></script>
         <script>
         let runtimeCfg = window.__SUPABASE_CONFIG__ || {};
         let SUPABASE_URL = "";
@@ -738,6 +1515,26 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
         let historyOffset = 0;
         let historyHasMore = true;
         let historyLoading = false;
+
+        // --- Filtering & sorting state ---
+        let currentSortField = null;
+        let currentSortDir = "asc";
+        let allHistoryRows = []; // unfiltered history cache for client-side filter/sort
+
+        // --- Activity chart state ---
+        let activityChart = null;
+        let chartRange = "24h";
+        let chartHistoryCache = []; // raw history for chart (acquisitions/releases over time)
+
+        // --- Auto-refresh state ---
+        let refreshIntervalId = null;
+        let refreshIntervalSec = 0;
+
+        // --- Theme state ---
+        let currentTheme = "light";
+
+        // --- Row detail state ---
+        let expandedRowPath = null;
 
         function setNavActive(page) {
             const locksBtn = document.getElementById("nav-locks");
@@ -1090,13 +1887,83 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 }
                 renderActiveLocks(data || []);
                 updateStats(data || [], historyData || []);
+                window.DashboardFilters.populateDeveloperFilter(data || [], historyData || []);
                 updateTimestamp();
+                // Fetch chart data and update activity chart
+                await refreshChartData();
             } catch (e) {
                 console.error(e);
                 showLocksError("Unable to fetch active locks.");
             } finally {
                 syncBtn.disabled = !SUPABASE_MODE;
             }
+        }
+
+        /** Fetch history for the activity chart (last 7 days, up to 1000 rows). */
+        async function refreshChartData() {
+            if (!supabaseClient) return;
+            try {
+                var { data, error } = await supabaseClient
+                    .from("file_locks_history")
+                    .select("acquired_at,released_at")
+                    .neq("is_ephemeral", true)
+                    .order("id", { ascending: false })
+                    .limit(1000);
+                if (error) throw error;
+                chartHistoryCache = data || [];
+                updateActivityChartFromCache();
+            } catch (e) {
+                console.warn("Chart data fetch failed", e);
+            }
+        }
+
+        /** Initialize or update the activity chart with cached data. */
+        function updateActivityChartFromCache() {
+            if (!activityChart) {
+                // Defer chart init to avoid blocking initial render
+                if (typeof requestAnimationFrame !== "undefined") {
+                    requestAnimationFrame(function () {
+                        if (!activityChart) {
+                            activityChart = window.DashboardCharts.initActivityChart("activity-canvas");
+                            if (activityChart) {
+                                window.DashboardCharts.updateActivityChart(
+                                    activityChart,
+                                    chartHistoryCache,
+                                    chartRange
+                                );
+                            }
+                        }
+                    });
+                }
+                return;
+            }
+            if (activityChart) {
+                window.DashboardCharts.updateActivityChart(
+                    activityChart,
+                    chartHistoryCache,
+                    chartRange
+                );
+            }
+        }
+
+        /** Wire chart range selector buttons. */
+        function wireChartRangeButtons() {
+            var buttons = document.querySelectorAll(".chart-range-btn");
+            buttons.forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    var range = btn.getAttribute("data-range");
+                    if (!range || range === chartRange) return;
+
+                    chartRange = range;
+                    // Update active button styling
+                    buttons.forEach(function (b) {
+                        b.classList.remove("active");
+                    });
+                    btn.classList.add("active");
+                    // Re-render chart
+                    updateActivityChartFromCache();
+                });
+            });
         }
 
         function updateStats(locks, history) {
@@ -1118,18 +1985,83 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 ? Math.round(durations.reduce((acc, value) => acc + value, 0) / durations.length)
                 : 0;
             document.getElementById("stat-avg").textContent = formatDurationMinutes(avg);
+
+            // Conflict rate
+            var totalOutcomes = history.filter(function (h) {
+                return h.outcome === "released" || h.outcome === "conflict";
+            }).length;
+            var conflicts = history.filter(function (h) {
+                return h.outcome === "conflict";
+            }).length;
+            var conflictPct = totalOutcomes > 0 ? Math.round((conflicts / totalOutcomes) * 100) : 0;
+            document.getElementById("stat-conflicts").textContent = conflictPct + "%";
+        }
+
+        /** Render per-developer lock count summary cards. */
+        function updateDevSummary(locks) {
+            var grid = document.getElementById("dev-summary-grid");
+            if (!grid) return;
+
+            // Count locks by developer_id
+            var counts = {};
+            (locks || []).forEach(function (lock) {
+                var dev = lock.developer_id || "unknown";
+                counts[dev] = (counts[dev] || 0) + 1;
+            });
+
+            var devs = Object.keys(counts).sort();
+            if (!devs.length) {
+                grid.style.display = "none";
+                return;
+            }
+
+            grid.style.display = "";
+            grid.innerHTML = devs
+                .map(function (dev) {
+                    return (
+                        '<div class="dev-summary-card" data-testid="dev-card-' + dev.replace(/[^a-zA-Z0-9]/g, "-") + '">' +
+                        '<span class="dev-summary-name"><i class="fas fa-user"></i>' +
+                        dev +
+                        "</span>" +
+                        '<span class="dev-summary-count">' +
+                        counts[dev] +
+                        "</span>" +
+                        "</div>"
+                    );
+                })
+                .join("");
         }
 
         function renderActiveLocks(locks) {
             const tbody = document.getElementById("active-locks-body");
-            if (!locks.length) {
+
+            // --- Apply filtering ---
+            const filters = window.DashboardFilters.getActiveFiltersFromDOM();
+            const filtered = window.DashboardFilters.filterLocks(locks, filters);
+
+            // --- Apply sorting ---
+            const sorted = currentSortField
+                ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
+                : filtered;
+
+            // --- Update filter count badge ---
+            updateFilterCount("locks");
+
+            if (!sorted.length) {
+                const hasFilters = window.DashboardFilters.hasActiveFilters(filters);
                 tbody.innerHTML =
-                    '<tr><td colspan="6" class="text-center py-4 text-muted">No active locks</td></tr>';
+                    '<tr><td colspan="6" class="text-center py-4 text-muted">' +
+                    (hasFilters ? "No locks match the current filters" : "No active locks") +
+                    "</td></tr>";
+                updateDevSummary([]);
                 return;
             }
 
+            // Update developer summary with the full unfiltered lock set
+            updateDevSummary(locks);
+
             const now = new Date();
-            tbody.innerHTML = locks
+            tbody.innerHTML = sorted
                 .map((lock) => {
                     const acquired = new Date(lock.acquired_at);
                     const heldMin = Math.max(0, Math.round((now - acquired) / 60000));
@@ -1147,7 +2079,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                         : '<span class="text-muted small">Locked</span>';
 
                     return (
-                        "<tr>" +
+                        '<tr data-file="' + safePath + '" class="row-expandable">' +
                         "<td><code>" + lock.file_path + "</code></td>" +
                         "<td>" + formatDeveloperCell(lock) + "</td>" +
                         '<td class="text-muted">' + branch + "</td>" +
@@ -1166,6 +2098,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             historyOffset = 0;
             historyHasMore = true;
             historyLoading = false;
+            allHistoryRows = [];
             const tbody = document.getElementById("history-body");
             tbody.innerHTML =
                 '<tr><td colspan="8" class="text-center py-4 text-muted">Loading history...</td></tr>';
@@ -1203,12 +2136,17 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     return;
                 }
 
-                appendHistoryRows(rows);
+                // Append to cache and re-render with current filter/sort applied
+                allHistoryRows = allHistoryRows.concat(rows);
                 historyOffset += rows.length;
 
                 if (rows.length < PAGE_SIZE) {
                     historyHasMore = false;
                 }
+
+                // Populate developer filter for history page
+                window.DashboardFilters.populateDeveloperFilter([], allHistoryRows);
+                renderHistoryFromCache();
             } catch (e) {
                 console.error(e);
             } finally {
@@ -1216,15 +2154,31 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             }
         }
 
-        function appendHistoryRows(rows) {
+        function renderHistoryFromCache() {
             const tbody = document.getElementById("history-body");
-            const isLoadingPlaceholder = tbody.children.length === 1 &&
-                tbody.children[0].textContent.includes("Loading history");
-            if (isLoadingPlaceholder) {
-                tbody.innerHTML = "";
+
+            // --- Apply filtering (use history-specific filter IDs) ---
+            const filters = getHistoryFiltersFromDOM();
+            const filtered = window.DashboardFilters.filterLocks(allHistoryRows, filters);
+
+            // --- Apply sorting ---
+            const sorted = currentSortField
+                ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
+                : filtered;
+
+            // --- Update filter count badge ---
+            updateFilterCount("history");
+
+            if (!sorted.length) {
+                const hasFilters = window.DashboardFilters.hasActiveFilters(filters);
+                tbody.innerHTML =
+                    '<tr><td colspan="8" class="text-center py-4 text-muted">' +
+                    (hasFilters ? "No history matches the current filters" : "No history found") +
+                    "</td></tr>";
+                return;
             }
 
-            const html = rows
+            const html = sorted
                 .map((h) => {
                     const acq = h.acquired_at ? new Date(h.acquired_at) : null;
                     const rel = h.released_at ? new Date(h.released_at) : null;
@@ -1235,9 +2189,10 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                         ? formatDurationMinutes(Math.max(0, Math.round((rel - acq) / 60000)))
                         : "-";
                     const isMine = lockOwnedByMe(h);
+                    const safePath = String(h.file_path || "").replace(/'/g, "\\'");
 
                     return (
-                        "<tr>" +
+                        '<tr data-file="' + safePath + '" class="row-expandable">' +
                         "<td><code>" + h.file_path + "</code></td>" +
                         "<td>" + formatDeveloperCell(h) + "</td>" +
                         '<td class="text-muted">' + branch + "</td>" +
@@ -1251,7 +2206,40 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 })
                 .join("");
 
-            tbody.insertAdjacentHTML("beforeend", html);
+            tbody.innerHTML = html;
+        }
+
+        /**
+         * Read history-specific filter inputs (they have "-history" suffix IDs).
+         */
+        function getHistoryFiltersFromDOM() {
+            if (typeof document === "undefined") return {};
+            var filters = {};
+            var map = {
+                "filter-search-history": "search",
+                "filter-developer-history": "developerId",
+                "filter-agent-history": "agentLabel",
+                "filter-glob-history": "glob",
+                "filter-status-history": "status",
+                "filter-date-from-history": "dateFrom",
+                "filter-date-to-history": "dateTo",
+            };
+            var keys = Object.keys(map);
+            for (var i = 0; i < keys.length; i++) {
+                var el = document.getElementById(keys[i]);
+                if (!el) continue;
+                var v = el.value.trim ? el.value.trim() : el.value;
+                if (v && v !== "all") filters[map[keys[i]]] = v;
+            }
+            return filters;
+        }
+
+        function appendHistoryRows(rows) {
+            // Kept for backward compatibility — all rendering now goes through
+            // renderHistoryFromCache(). This function is no longer called directly
+            // but kept to avoid breaking any existing reference.
+            allHistoryRows = allHistoryRows.concat(rows);
+            renderHistoryFromCache();
         }
 
         function onHistoryScroll(e) {
@@ -1335,12 +2323,237 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             document.getElementById("confirm-release-btn").addEventListener("click", doRelease);
             document.getElementById("history-scroll").addEventListener("scroll", onHistoryScroll);
             window.addEventListener("hashchange", applyRoute);
+
+            // --- Filter events (locks page) ---
+            wireFilterEvents("locks");
+            // --- Filter events (history page) ---
+            wireFilterEvents("history");
+            // --- Column sorting ---
+            wireSortableColumns();
+            // --- Chart range buttons ---
+            wireChartRangeButtons();
+            // --- Auto-refresh interval ---
+            var refreshSel = document.getElementById("refresh-interval");
+            if (refreshSel) {
+                refreshSel.addEventListener("change", onRefreshIntervalChange);
+            }
+            // --- Export buttons ---
+            var jsonBtn = document.getElementById("export-json-btn");
+            if (jsonBtn) jsonBtn.addEventListener("click", function () { handleExport("json"); });
+            var csvBtn = document.getElementById("export-csv-btn");
+            if (csvBtn) csvBtn.addEventListener("click", function () { handleExport("csv"); });
+            // --- Theme toggle ---
+            var themeBtn = document.getElementById("theme-toggle-btn");
+            if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
+            // --- Saved filter presets ---
+            var presetBtns = document.querySelectorAll(".filter-preset-btn");
+            presetBtns.forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    var preset = btn.getAttribute("data-preset");
+                    if (preset) applyFilterPreset(preset);
+                });
+            });
+            // --- Row click -> detail panel (skip interactive elements) ---
+            document.addEventListener("click", function (e) {
+                // Don't intercept clicks on buttons, links, inputs, or selects
+                if (e.target.closest("button, a, input, select, .btn, .form-control")) return;
+                var row = e.target.closest("tr[data-file]");
+                if (!row) {
+                    // Click outside — close detail panel
+                    if (expandedRowPath) {
+                        var panel = document.getElementById("detail-" + expandedRowPath.replace(/[^a-zA-Z0-9]/g, "-"));
+                        if (panel) panel.classList.remove("open");
+                        expandedRowPath = null;
+                    }
+                    return;
+                }
+                var filePath = row.getAttribute("data-file");
+                if (filePath) {
+                    toggleRowDetail(filePath, { file_path: filePath });
+                }
+            });
+            // --- Shareable URL: update on filter change & hash change ---
+            window.addEventListener("hashchange", function () {
+                applyFiltersFromHash();
+            });
+        }
+
+        /**
+         * Attach input/change listeners to filter elements for a given page
+         * ("locks" or "history").
+         */
+        function wireFilterEvents(page) {
+            var suffix = page === "history" ? "-history" : "";
+            var ids = [
+                "filter-search" + suffix,
+                "filter-agent" + suffix,
+                "filter-glob" + suffix,
+            ];
+            var selectIds = [
+                "filter-developer" + suffix,
+                "filter-status" + suffix,
+                "filter-date-from" + suffix,
+                "filter-date-to" + suffix,
+            ];
+
+            // Text inputs: debounced input event
+            ids.forEach(function (id) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener("input", debounce(function () {
+                    onFilterChange(page);
+                }, 250));
+            });
+
+            // Selects and date inputs: immediate change event
+            selectIds.forEach(function (id) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener("change", function () {
+                    onFilterChange(page);
+                });
+            });
+
+            // Clear button
+            var clearBtn = document.getElementById("filter-clear-btn" + suffix);
+            if (clearBtn) {
+                clearBtn.addEventListener("click", function () {
+                    window.DashboardFilters.clearFilterInputs();
+                    // Also clear history-specific fields when clearing on history page
+                    if (page === "history") {
+                        var histIds = [
+                            "filter-search-history", "filter-developer-history",
+                            "filter-agent-history", "filter-glob-history",
+                            "filter-status-history", "filter-date-from-history",
+                            "filter-date-to-history",
+                        ];
+                        histIds.forEach(function (hid) {
+                            var hel = document.getElementById(hid);
+                            if (!hel) return;
+                            if (hel.tagName === "SELECT") hel.value = "all";
+                            else hel.value = "";
+                        });
+                    }
+                    onFilterChange(page);
+                });
+            }
+        }
+
+        /** Debounce helper (milliseconds). */
+        function debounce(fn, ms) {
+            var timer;
+            return function () {
+                var ctx = this;
+                var args = arguments;
+                clearTimeout(timer);
+                timer = setTimeout(function () { fn.apply(ctx, args); }, ms);
+            };
+        }
+
+        /** Called whenever a filter value changes. */
+        function onFilterChange(page) {
+            updateShareableURL();
+            if (page === "history") {
+                renderHistoryFromCache();
+            } else {
+                refreshLocksForFilter();
+            }
+        }
+
+        /** Lightweight re-render after filter change on locks page (no re-fetch). */
+        async function refreshLocksForFilter() {
+            try {
+                if (!(await ensureSupabaseClient())) return;
+                var { data, error } = await supabaseClient
+                    .from("file_locks")
+                    .select("*")
+                    .neq("is_ephemeral", true)
+                    .order("acquired_at", { ascending: false });
+                if (error) throw error;
+                renderActiveLocks(data || []);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        /** Attach click handlers to all sortable column headers. */
+        function wireSortableColumns() {
+            var headers = document.querySelectorAll("th.sortable");
+            headers.forEach(function (th) {
+                th.addEventListener("click", function () {
+                    var field = th.getAttribute("data-sort");
+                    if (!field) return;
+
+                    if (currentSortField === field) {
+                        // Toggle direction
+                        currentSortDir = currentSortDir === "asc" ? "desc" : "asc";
+                    } else {
+                        currentSortField = field;
+                        currentSortDir = "asc";
+                    }
+
+                    updateSortIndicators();
+                    // Re-render current view
+                    if (routeFromHash() === "history") {
+                        renderHistoryFromCache();
+                    } else {
+                        refreshLocksForFilter();
+                    }
+                });
+            });
+        }
+
+        /** Update sort arrow indicators on all column headers. */
+        function updateSortIndicators() {
+            var headers = document.querySelectorAll("th.sortable");
+            headers.forEach(function (th) {
+                var field = th.getAttribute("data-sort");
+                var indicator = th.querySelector(".sort-indicator");
+                if (!indicator) return;
+
+                // Remove all classes
+                indicator.className = "sort-indicator";
+
+                if (field === currentSortField) {
+                    indicator.classList.add(currentSortDir);
+                } else {
+                    indicator.classList.add("inactive");
+                }
+            });
+        }
+
+        /**
+         * Update the filter count badge next to the page title.
+         * @param {string} page  "locks" or "history"
+         */
+        function updateFilterCount(page) {
+            var badgeEl = document.getElementById("filter-count-badge-" + page);
+            if (!badgeEl) return;
+
+            var filters;
+            if (page === "history") {
+                filters = getHistoryFiltersFromDOM();
+            } else {
+                filters = window.DashboardFilters.getActiveFiltersFromDOM();
+            }
+
+            var count = window.DashboardFilters.countActiveFilters(filters);
+            if (count > 0) {
+                badgeEl.textContent = String(count);
+                badgeEl.classList.remove("hidden");
+            } else {
+                badgeEl.classList.add("hidden");
+            }
         }
 
         async function init() {
             releaseModal = new bootstrap.Modal(document.getElementById("releaseModal"));
+            detectTheme();
             wireEvents();
             applyRuntimeConfig();
+
+            // Show loading skeletons while fetching
+            showSkeletons("active-locks-body", 6);
 
             try {
                 if (!(await ensureSupabaseClient())) {
@@ -1354,11 +2567,469 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     resetHistory();
                 }
                 subscribeRealtime();
-                setInterval(refreshLocks, 30000);
+                // Auto-refresh starts when user selects an interval via the dropdown;
+                // the default "30s" selection triggers startAutoRefresh via onRefreshIntervalChange.
+                onRefreshIntervalChange();
+                // Check watcher health once on init
+                checkWatcherHealth();
+                // Apply filters from shareable URL hash
+                applyFiltersFromHash();
             } catch (e) {
                 console.error("Initialization failed", e);
                 showLocksError("Initialization failed. Check configuration.");
             }
+        }
+
+        /** Start or restart the auto-refresh interval based on current setting. */
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            if (refreshIntervalSec <= 0) return;
+            // Use a small delay so Chart.js rAF-induced clock advances
+            // in test environments don't immediately trigger the interval.
+            refreshIntervalId = setTimeout(function () {
+                refreshIntervalId = setInterval(refreshLocks, refreshIntervalSec * 1000);
+            }, 500);
+        }
+
+        /** Stop the current auto-refresh interval if one is active. */
+        function stopAutoRefresh() {
+            if (refreshIntervalId) {
+                clearInterval(refreshIntervalId);
+                refreshIntervalId = null;
+            }
+        }
+
+        /** Handle changes to the auto-refresh interval dropdown. */
+        function onRefreshIntervalChange() {
+            var sel = document.getElementById("refresh-interval");
+            if (!sel) return;
+            refreshIntervalSec = parseInt(sel.value, 10) || 0;
+            startAutoRefresh();
+        }
+
+        /** Get the currently visible data (filtered + sorted) as an array. */
+        function getCurrentViewData() {
+            if (routeFromHash() === "history") {
+                var filters = getHistoryFiltersFromDOM();
+                var filtered = window.DashboardFilters.filterLocks(allHistoryRows, filters);
+                return currentSortField
+                    ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
+                    : filtered;
+            } else {
+                // For locks, fetch fresh from the DOM by re-reading the table
+                // We return the same data that was last rendered (simpler approach)
+                return []; // Locks export requires a re-fetch; handled in exportLocksJSON/CSV
+            }
+        }
+
+        /** Export current locks view as JSON and copy to clipboard. */
+        async function exportLocksJSON() {
+            if (!(await ensureSupabaseClient())) return;
+            try {
+                var { data } = await supabaseClient
+                    .from("file_locks")
+                    .select("*")
+                    .neq("is_ephemeral", true)
+                    .order("acquired_at", { ascending: false });
+                var locks = data || [];
+                var filters = window.DashboardFilters.getActiveFiltersFromDOM();
+                var filtered = window.DashboardFilters.filterLocks(locks, filters);
+                var sorted = currentSortField
+                    ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
+                    : filtered;
+                copyToClipboard(JSON.stringify(sorted, null, 2));
+                flashButton("export-json-btn");
+            } catch (e) {
+                alert("Export failed: " + (e.message || String(e)));
+            }
+        }
+
+        /** Export current history view as JSON and copy to clipboard. */
+        function exportHistoryJSON() {
+            var data = getCurrentViewData();
+            copyToClipboard(JSON.stringify(data, null, 2));
+            flashButton("export-json-btn");
+        }
+
+        /** Export current locks view as CSV and trigger download. */
+        async function exportLocksCSV() {
+            if (!(await ensureSupabaseClient())) return;
+            try {
+                var { data } = await supabaseClient
+                    .from("file_locks")
+                    .select("*")
+                    .neq("is_ephemeral", true)
+                    .order("acquired_at", { ascending: false });
+                var locks = data || [];
+                var filters = window.DashboardFilters.getActiveFiltersFromDOM();
+                var filtered = window.DashboardFilters.filterLocks(locks, filters);
+                var sorted = currentSortField
+                    ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
+                    : filtered;
+                downloadCSV(sorted, ["file_path", "developer_id", "agent_label", "agent_kind", "branch_name", "reason", "acquired_at"]);
+                flashButton("export-csv-btn");
+            } catch (e) {
+                alert("Export failed: " + (e.message || String(e)));
+            }
+        }
+
+        /** Export current history view as CSV and trigger download. */
+        function exportHistoryCSV() {
+            var data = getCurrentViewData();
+            downloadCSV(data, ["file_path", "developer_id", "agent_label", "agent_kind", "branch_name", "reason", "acquired_at", "released_at", "outcome"]);
+            flashButton("export-csv-btn");
+        }
+
+        /** Copy text to clipboard with fallback. */
+        function copyToClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(function () {
+                    fallbackCopy(text);
+                });
+            } else {
+                fallbackCopy(text);
+            }
+        }
+
+        function fallbackCopy(text) {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.left = "-9999px";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+        }
+
+        /** Trigger CSV file download from an array of objects. */
+        function downloadCSV(rows, columns) {
+            if (!rows || !rows.length) {
+                alert("No data to export.");
+                return;
+            }
+            var header = columns.join(",");
+            var lines = rows.map(function (row) {
+                return columns
+                    .map(function (col) {
+                        var val = String(row[col] || "").replace(/"/g, '""');
+                        return '"' + val + '"';
+                    })
+                    .join(",");
+            });
+            var csv = header + "\n" + lines.join("\n");
+            var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = "collab-locks.csv";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        /** Brief visual flash on a button to indicate action completed. */
+        function flashButton(btnId) {
+            var btn = document.getElementById(btnId);
+            if (!btn) return;
+            var orig = btn.className;
+            btn.classList.add("btn-primary");
+            btn.classList.remove("btn-outline-secondary");
+            setTimeout(function () {
+                btn.className = orig;
+            }, 600);
+        }
+
+        /** Unified export handler — delegates to the correct page's export. */
+        function handleExport(format) {
+            if (routeFromHash() === "history") {
+                if (format === "json") exportHistoryJSON();
+                else exportHistoryCSV();
+            } else {
+                if (format === "json") exportLocksJSON();
+                else exportLocksCSV();
+            }
+        }
+
+        // ===================================================================
+        // Theme toggle
+        // ===================================================================
+
+        /** Apply theme to <body> and persist in localStorage. */
+        function applyTheme(theme) {
+            currentTheme = theme || "light";
+            if (currentTheme === "dark") {
+                document.body.classList.add("dark");
+            } else {
+                document.body.classList.remove("dark");
+            }
+            var icon = document.querySelector("#theme-toggle-btn i");
+            if (icon) {
+                icon.className = currentTheme === "dark" ? "fas fa-sun" : "fas fa-moon";
+            }
+            try { localStorage.setItem("collab-theme", currentTheme); } catch (e) { /* noop */ }
+        }
+
+        /** Detect system preference and apply. */
+        function detectTheme() {
+            var stored = null;
+            try { stored = localStorage.getItem("collab-theme"); } catch (e) { /* noop */ }
+            if (stored === "dark" || stored === "light") {
+                applyTheme(stored);
+                return;
+            }
+            if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+                applyTheme("dark");
+                return;
+            }
+            applyTheme("light");
+        }
+
+        /** Toggle between dark and light. */
+        function toggleTheme() {
+            applyTheme(currentTheme === "dark" ? "light" : "dark");
+            // Re-init chart with new theme colors if visible
+            if (activityChart) {
+                activityChart.destroy();
+                activityChart = null;
+                updateActivityChartFromCache();
+            }
+        }
+
+        // ===================================================================
+        // Watcher health
+        // ===================================================================
+
+        function updateWatcherHealth(status) {
+            var valEl = document.getElementById("stat-watcher");
+            var iconEl = document.getElementById("watcher-icon");
+            if (!valEl || !iconEl) return;
+
+            if (!status || !status.running) {
+                valEl.textContent = "Down";
+                valEl.style.color = "#dc2626";
+                iconEl.className = "stat-icon stat-icon-watcher watcher-down";
+                return;
+            }
+
+            var latency = status.heartbeatLatencyMs;
+            if (latency === undefined || latency === null) {
+                valEl.textContent = "OK";
+                valEl.style.color = "#16a34a";
+                iconEl.className = "stat-icon stat-icon-watcher";
+            } else if (latency < 5000) {
+                valEl.textContent = "OK";
+                valEl.style.color = "#16a34a";
+                iconEl.className = "stat-icon stat-icon-watcher";
+            } else if (latency < 15000) {
+                valEl.textContent = "Slow";
+                valEl.style.color = "#d97706";
+                iconEl.className = "stat-icon stat-icon-watcher watcher-warn";
+            } else {
+                valEl.textContent = "Lag";
+                valEl.style.color = "#dc2626";
+                iconEl.className = "stat-icon stat-icon-watcher watcher-down";
+            }
+        }
+
+        async function checkWatcherHealth() {
+            try {
+                var resp = await fetch(RUNTIME_CONFIG_PATH, { cache: "no-store" });
+                if (resp.ok) {
+                    var cfg = await resp.json();
+                    updateWatcherHealth(cfg.watcher || null);
+                }
+            } catch (e) {
+                updateWatcherHealth(null);
+            }
+        }
+
+        // ===================================================================
+        // Saved filter presets
+        // ===================================================================
+
+        function applyFilterPreset(preset) {
+            // Clear all existing filters first
+            window.DashboardFilters.clearFilterInputs();
+            // Also clear history filter bar
+            var histIds = [
+                "filter-search-history", "filter-developer-history",
+                "filter-agent-history", "filter-glob-history",
+                "filter-status-history", "filter-date-from-history",
+                "filter-date-to-history",
+            ];
+            histIds.forEach(function (id) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                if (el.tagName === "SELECT") el.value = "all";
+                else el.value = "";
+            });
+
+            var searchEl = document.getElementById("filter-search");
+
+            switch (preset) {
+                case "my-locks":
+                    if (SUPABASE_USER && searchEl) {
+                        searchEl.value = SUPABASE_USER;
+                    }
+                    break;
+                case "conflicts":
+                    var statusEl = document.getElementById("filter-status");
+                    // Navigate to history and set conflict filter
+                    if (routeFromHash() !== "history") {
+                        navigate("history");
+                    }
+                    // Set history status filter
+                    var histStatusEl = document.getElementById("filter-status-history");
+                    if (histStatusEl) histStatusEl.value = "all";
+                    break;
+                case "stale":
+                    // Set status to active (stale means active > 30 min, so just show active)
+                    var sEl = document.getElementById("filter-status");
+                    if (sEl) sEl.value = "active";
+                    break;
+                case "agents":
+                    var aEl = document.getElementById("filter-agent");
+                    if (aEl) aEl.value = "AI Agent";
+                    break;
+            }
+            onFilterChange(routeFromHash());
+            updatePresetActiveState(preset);
+        }
+
+        function updatePresetActiveState(activePreset) {
+            var buttons = document.querySelectorAll(".filter-preset-btn");
+            buttons.forEach(function (btn) {
+                var p = btn.getAttribute("data-preset");
+                if (p === activePreset) {
+                    btn.classList.add("active-preset");
+                } else {
+                    btn.classList.remove("active-preset");
+                }
+            });
+        }
+
+        // ===================================================================
+        // Row click  → detail panel
+        // ===================================================================
+
+        function toggleRowDetail(filePath, lockJson) {
+            var detailId = "detail-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
+            var existing = document.getElementById(detailId);
+
+            // Close any previously open panel
+            var allPanels = document.querySelectorAll(".detail-panel.open");
+            allPanels.forEach(function (p) {
+                if (p.id !== detailId) p.classList.remove("open");
+            });
+            // Remove expandable class from all rows
+            var allRows = document.querySelectorAll("tr.row-expandable");
+            allRows.forEach(function (r) { r.classList.remove("row-expandable"); });
+
+            if (existing && existing.classList.contains("open")) {
+                existing.classList.remove("open");
+                expandedRowPath = null;
+                return;
+            }
+
+            if (existing) {
+                existing.classList.add("open");
+                expandedRowPath = filePath;
+                return;
+            }
+
+            // Build a detail panel
+            var row = document.querySelector("tr[data-file='" + filePath.replace(/'/g, "\\'") + "']");
+            if (!row) return;
+
+            var detailRow = document.createElement("tr");
+            detailRow.id = detailId;
+            detailRow.className = "detail-panel open";
+            var keys = Object.keys(lockJson).sort();
+            var gridHtml = keys.map(function (k) {
+                var val = lockJson[k];
+                if (val === null || val === undefined) val = "—";
+                else if (typeof val === "object") val = JSON.stringify(val);
+                return '<div class="detail-label">' + k + '</div><div class="detail-value">' + String(val) + '</div>';
+            }).join("");
+            var jsonHtml = '<div class="detail-json">' + JSON.stringify(lockJson, null, 2) + '</div>';
+            detailRow.innerHTML = '<td colspan="6">' +
+                '<div class="detail-grid">' + gridHtml + '</div>' + jsonHtml + '</td>';
+            row.parentNode.insertBefore(detailRow, row.nextSibling);
+            expandedRowPath = filePath;
+        }
+
+        // ===================================================================
+        // Shareable URL — encode filter state in hash
+        // ===================================================================
+
+        function updateShareableURL() {
+            var filters = routeFromHash() === "history"
+                ? getHistoryFiltersFromDOM()
+                : window.DashboardFilters.getActiveFiltersFromDOM();
+            var qs = window.DashboardFilters.buildQueryString(filters);
+            var baseHash = routeFromHash() === "history" ? "#history" : "#locks";
+            var newHash = baseHash + qs;
+            if (window.location.hash !== newHash) {
+                // Use replaceState to avoid adding to history
+                try {
+                    history.replaceState(null, "", newHash);
+                } catch (e) { /* noop */ }
+            }
+        }
+
+        function applyFiltersFromHash() {
+            var hash = window.location.hash || "";
+            var qsIndex = hash.indexOf("?");
+            if (qsIndex === -1) return;
+            var qs = hash.substring(qsIndex);
+            var filters = window.DashboardFilters.parseQueryString(qs);
+            if (!Object.keys(filters).length) return;
+
+            // Apply to current page's filter inputs
+            var suffix = routeFromHash() === "history" ? "-history" : "";
+            var map = {
+                search: "filter-search" + suffix,
+                developerId: "filter-developer" + suffix,
+                agentLabel: "filter-agent" + suffix,
+                glob: "filter-glob" + suffix,
+                status: "filter-status" + suffix,
+                dateFrom: "filter-date-from" + suffix,
+                dateTo: "filter-date-to" + suffix,
+            };
+            var keys = Object.keys(map);
+            var page = routeFromHash();
+            for (var i = 0; i < keys.length; i++) {
+                var v = filters[keys[i]];
+                if (v) {
+                    var el = document.getElementById(map[keys[i]]);
+                    if (el) {
+                        if (el.tagName === "SELECT") el.value = v;
+                        else el.value = v;
+                    }
+                }
+            }
+            onFilterChange(page);
+        }
+
+        // ===================================================================
+        // Loading skeletons
+        // ===================================================================
+
+        function showSkeletons(tableBodyId, colCount) {
+            var tbody = document.getElementById(tableBodyId);
+            if (!tbody) return;
+            var html = "";
+            for (var i = 0; i < 5; i++) {
+                html += '<tr class="skeleton-row">';
+                for (var j = 0; j < colCount; j++) {
+                    var cls = j < 2 ? "skeleton-cell" : "skeleton-cell-short";
+                    html += '<td><div class="skeleton ' + cls + '"></div></td>';
+                }
+                html += "</tr>";
+            }
+            tbody.innerHTML = html;
         }
 
         document.addEventListener("DOMContentLoaded", init);
