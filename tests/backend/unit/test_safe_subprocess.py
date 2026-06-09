@@ -18,6 +18,18 @@ def test_validate_git_argv_accepts_config():
     assert argv[1] == "config"
 
 
+@pytest.mark.parametrize(
+    "subcommand",
+    ["merge-base", "for-each-ref", "rev-list"],
+)
+def test_validate_git_argv_accepts_overlap_subcommands(subcommand):
+    argv = safe_subprocess.validate_argv(
+        ["git", subcommand, "HEAD", "origin/main"],
+        policy="git",
+    )
+    assert argv[1] == subcommand
+
+
 def test_validate_git_argv_rejects_unknown_subcommand():
     with pytest.raises(SubprocessSecurityError):
         safe_subprocess.validate_argv(["git", "reset", "--hard"], policy="git")
