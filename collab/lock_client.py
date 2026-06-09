@@ -333,6 +333,11 @@ _HEARTBEAT_STARTUP_GRACE_SECONDS = float(
 # is still alive but the heartbeat mtime is stale. Tolerates brief extension-
 # host hiccups (file-system delays, quick reloads) without shutting down.
 _HEARTBEAT_SOFT_EXTRA_SECONDS = 5.0
+# Dashboard watcher-health uses PID file mtime as a liveness signal; refresh it
+# periodically because the JSON metadata is written only once at startup.
+_PID_FILE_HEARTBEAT_INTERVAL_SECONDS = float(
+    os.getenv("COLLAB_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", "10.0")
+)
 
 # ---------------------------------------------------------------------------
 # Supabase client (lazy import)
@@ -2542,6 +2547,7 @@ class LockClient:
         last_modified: set = set()
         last_change_time = _safe_now()
         last_parent_check = _safe_now()
+        last_pid_heartbeat = time.time()
 
         # Initialize WMIC resolution failure streak counter for zombie process detection
         _parent_name_unknown_streak = 0
@@ -2586,6 +2592,14 @@ class LockClient:
         try:
             while True:
                 try:
+                    now_ts = time.time()
+                    if (
+                        now_ts - last_pid_heartbeat
+                        >= _PID_FILE_HEARTBEAT_INTERVAL_SECONDS
+                    ):
+                        last_pid_heartbeat = now_ts
+                        self._touch_pid_heartbeat()
+
                     # Parent process liveness check every 2 seconds
                     # (faster zombie detection)
                     if (_safe_now() - last_parent_check).total_seconds() > 2:
@@ -3913,6 +3927,15 @@ class LockClient:
                     f2.write(json.dumps(meta))
         except OSError as e:
             logger.warning("Could not write PID file: %s", e)
+
+    @staticmethod
+    def _touch_pid_heartbeat() -> None:
+        """Refresh PID file mtime so dashboard watcher-health can measure liveness."""
+        try:
+            if os.path.exists(PID_FILE):
+                os.utime(PID_FILE, None)
+        except OSError as exc:
+            logger.debug("Could not touch PID heartbeat: %s", exc)
 
     @staticmethod
     def _remove_pid() -> None:

@@ -1109,3 +1109,48 @@ def test_watch_heartbeat_stale_read_exception_and_parent_name_resolution(
     )
 
     assert "heartbeat_stale" in reasons
+
+
+def test_watch_touches_pid_heartbeat(monkeypatch, tmp_path):
+    """Watch() periodically refreshes PID file mtime for dashboard health."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    pid_file = tmp_path / "daemon.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    monkeypatch.setattr(mod, "_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
+    monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
+    monkeypatch.setattr(
+        mod.LockClient, "_write_pid", staticmethod(lambda *a, **k: None)
+    )
+
+    touch_calls: list[int] = []
+    real_touch = mod.LockClient._touch_pid_heartbeat
+
+    def track_touch():
+        touch_calls.append(1)
+        return real_touch()
+
+    monkeypatch.setattr(
+        mod.LockClient, "_touch_pid_heartbeat", staticmethod(track_touch)
+    )
+
+    loop_count = [0]
+
+    def mock_sleep(_interval):
+        loop_count[0] += 1
+        if loop_count[0] > 1:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", mock_sleep)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.watch(interval=1, timeout_mins=60)
+
+    assert len(touch_calls) >= 1

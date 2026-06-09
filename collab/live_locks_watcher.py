@@ -1421,6 +1421,20 @@ def _graceful_shutdown() -> None:
                 logger.warning("Could not remove PID file after 3 attempts: %s", _e)
 
 
+_PID_FILE_HEARTBEAT_INTERVAL_SECONDS = float(
+    os.getenv("COLLAB_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", "10.0")
+)
+
+
+def _touch_pid_file_heartbeat() -> None:
+    """Refresh PID file mtime so dashboard watcher-health can measure liveness."""
+    try:
+        if os.path.exists(PID_FILE):
+            os.utime(PID_FILE, None)
+    except OSError as exc:
+        logger.debug("Could not touch PID heartbeat: %s", exc)
+
+
 def _write_pid_file(pid: int, parent_pid: int | None = None) -> None:
     """Atomically write JSON metadata to the PID file for daemon-status checks.
 
@@ -1916,6 +1930,7 @@ def main() -> None:
     last_change_time = datetime.now()
     last_remote_scan = datetime.now()
     last_heartbeat = datetime.now()
+    last_pid_heartbeat = datetime.now()
     last_parent_check = datetime.now()
 
     # Initial remote lock scan
@@ -1943,6 +1958,12 @@ def main() -> None:
             if (now - last_heartbeat).total_seconds() > 60:
                 last_heartbeat = now
                 logger.debug("heartbeat pid=%d", os.getpid())
+
+            if (
+                now - last_pid_heartbeat
+            ).total_seconds() >= _PID_FILE_HEARTBEAT_INTERVAL_SECONDS:
+                last_pid_heartbeat = now
+                _touch_pid_file_heartbeat()
 
             # Parent process liveness check every 5 seconds (snappy termination)
             if parent_pid and (now - last_parent_check).total_seconds() > 5:
