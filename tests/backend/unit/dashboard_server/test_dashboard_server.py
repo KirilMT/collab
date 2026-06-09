@@ -421,6 +421,63 @@ def test_check_watcher_health_windows_ctypes_failure(monkeypatch, tmp_path):
     assert result["running"] is False
 
 
+def test_check_watcher_health_dead_pid_windows_forced(monkeypatch, tmp_path):
+    """Force Windows path on ANY platform — covers ctypes OpenProcess=0 branch."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("99999", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+
+    # Create mock ctypes.windll.kernel32 that returns 0 (dead process)
+    mock_kernel32 = mock.MagicMock()
+    mock_kernel32.OpenProcess.return_value = 0
+
+    mock_windll = mock.MagicMock()
+    mock_windll.kernel32 = mock_kernel32
+
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "windll", mock_windll, raising=False)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_windows_openprocess_success(monkeypatch, tmp_path):
+    """Force Windows, OpenProcess succeeds → covers if-handle branch + heartbeat."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+
+    mock_kernel32 = mock.MagicMock()
+    mock_kernel32.OpenProcess.return_value = 1  # valid handle
+    mock_windll = mock.MagicMock()
+    mock_windll.kernel32 = mock_kernel32
+
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "windll", mock_windll, raising=False)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
 def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
     """Simulate a dead PID on Windows."""
     state_dir = str(tmp_path / ".collab")
