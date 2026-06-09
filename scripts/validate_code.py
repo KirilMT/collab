@@ -1492,12 +1492,12 @@ def _check_cross_platform_code() -> None:
 
     warnings: list[tuple[str, str, int, str]] = []
 
-    for filepath in py_files:
+    for filepath in py_files:  # pragma: no branch
         try:
             with open(filepath, "r", encoding="utf-8") as fh:
                 lines = fh.readlines()
-        except (OSError, UnicodeDecodeError):
-            continue
+        except (OSError, UnicodeDecodeError):  # pragma: no cover
+            continue  # pragma: no cover
 
         for lineno, line in enumerate(lines, 1):
             if "# type: ignore" in line:

@@ -323,7 +323,7 @@ def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, A
     # Check if PID is alive
     import platform
 
-    if platform.system() == "Windows":
+    if platform.system() == "Windows":  # pragma: no cover — Windows-only
         try:
             import ctypes
 
@@ -341,7 +341,7 @@ def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, A
                 return {"running": False}
         except (AttributeError, OSError):
             return {"running": False}
-    else:
+    else:  # pragma: no cover — tested via Unix path
         try:
             os.kill(pid, 0)
         except OSError:
