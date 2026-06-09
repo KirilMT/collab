@@ -327,13 +327,10 @@ def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, A
         try:
             import ctypes
 
-            # mypy / static analysis on Linux cannot see ctypes.windll.
-            # Use getattr so type-checkers on non-Windows platforms pass.
-            _windll = getattr(ctypes, "windll", None)
-            if _windll is None:  # pragma: no cover — unreachable on Windows
-                return {"running": False}
-
-            kernel32 = _windll.kernel32
+            # mypy on Linux does not know ctypes.windll — the type: ignore
+            # below lets the type-check pass. At runtime on Windows windll
+            # is always present; the except AttributeError is defensive.
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
             handle = kernel32.OpenProcess(
                 0x0400, False, pid
             )  # PROCESS_QUERY_INFORMATION
@@ -342,7 +339,7 @@ def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, A
                 # Process exists
             else:
                 return {"running": False}
-        except OSError:
+        except (AttributeError, OSError):
             return {"running": False}
     else:
         try:
