@@ -65,6 +65,11 @@ def _configure_coverage_data_file() -> None:
     if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
         return
 
+    # Skip when running under pytest — pytest-cov manages its own coverage
+    # file and temp routing would corrupt the aggregated coverage data.
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+
     try:
         project_root = Path(__file__).resolve().parent.parent
         digest = hashlib.sha1(
@@ -1492,29 +1497,34 @@ def _check_cross_platform_code() -> None:
 
     warnings: list[tuple[str, str, int, str]] = []
 
-    for filepath in py_files:  # pragma: no branch
+    for filepath in py_files:
+        lines: list[str]
         try:
-            with open(filepath, "r", encoding="utf-8") as fh:
-                lines = fh.readlines()
-        except (OSError, UnicodeDecodeError):  # pragma: no cover
-            continue  # pragma: no cover
+            fh = open(filepath, "r", encoding="utf-8")
+            lines = fh.readlines()
+            fh.close()
+        except (OSError, UnicodeDecodeError):
+            continue
 
         for lineno, line in enumerate(lines, 1):
-            if "# type: ignore" in line:
-                continue  # already suppressed
-
-            for pattern, guidance in _CROSS_PLATFORM_PATTERNS:
-                if pattern not in line:
-                    continue
-
-                stripped = line.strip()
-                if stripped.startswith("#") or stripped.startswith('"""'):
-                    continue
-                if '"' + pattern + '"' in line and "getattr" in line:
-                    continue  # getattr pattern is safe-ish
-
-                warnings.append((filepath, guidance, lineno, stripped.strip()[:80]))
-                break  # one warning per line is enough
+            if "# type: ignore" not in line:
+                for pattern, guidance in _CROSS_PLATFORM_PATTERNS:
+                    if pattern in line:
+                        stripped = line.strip()
+                        if (
+                            not stripped.startswith("#")
+                            and not stripped.startswith('"""')
+                            and not ('"' + pattern + '"' in line and "getattr" in line)
+                        ):
+                            warnings.append(
+                                (
+                                    filepath,
+                                    guidance,
+                                    lineno,
+                                    stripped.strip()[:80],
+                                )
+                            )
+                            break
 
     if not warnings:
         return

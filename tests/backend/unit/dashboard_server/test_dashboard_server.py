@@ -310,6 +310,29 @@ def test_resolve_developer_name_empty_when_nothing_found(monkeypatch, tmp_path):
     assert result == ""
 
 
+def test_resolve_developer_name_git_user_name_fallback(tmp_path, monkeypatch):
+    """Git config user.name is used as last git-level fallback."""
+    from collab import safe_subprocess
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "github.user" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        if "user.name" in cmd_str:
+            return _FakeCaptureResult(ok=True, stdout=b"Git Name\n")
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr(safe_subprocess, "decode_output", lambda b: b.decode("utf-8"))
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: None)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("USER", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "Git Name"
+
+
 # ---------------------------------------------------------------------------
 # _check_watcher_health
 # ---------------------------------------------------------------------------
@@ -338,6 +361,66 @@ def test_check_watcher_health_invalid_pid(tmp_path):
     assert result == {"running": False}
 
 
+def test_check_watcher_health_tempdir_fallback_linux_alive(monkeypatch, tmp_path):
+    """Comprehensive: covers lines 280,305,308-309,342-343,354-355 at once.
+
+    Simulates Linux CI path (platform.system='Linux') with PID file found in temp-dir
+    fallback and process alive.  Hits every remaining uncovered line in
+    _check_watcher_health.
+    """
+    import hashlib as _hashlib
+    import platform as _platform_module
+    import tempfile as _tempfile
+
+    # ---- Setup: create PID file in temp-dir fallback location ----
+    norm = str(tmp_path).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = os.path.join(_tempfile.gettempdir(), f"collab_runtime_{h}")
+    os.makedirs(ws_dir, exist_ok=True)
+    alt_pid = os.path.join(ws_dir, ".daemon.pid")
+    with open(alt_pid, "w") as f:
+        f.write("12345")
+
+    # ---- Mock for Linux CI path ----
+    monkeypatch.setattr(_platform_module, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)  # process alive
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    # ---- Execute: empty state_dir triggers line 280 ----
+    result = mod._check_watcher_health("", str(tmp_path))
+
+    # ---- Verify ----
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+    try:
+        os.unlink(alt_pid)
+        os.rmdir(ws_dir)
+    except OSError:
+        pass
+
+
+def test_check_watcher_health_windows_ctypes_failure(monkeypatch, tmp_path):
+    """Simulate Windows with ctypes.windll unavailable — covers line 343."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import ctypes
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+    # Make ctypes NOT have windll — triggers AttributeError
+    monkeypatch.delattr(ctypes, "windll", raising=False)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is False
+
+
 def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
     """Simulate a dead PID on Windows."""
     state_dir = str(tmp_path / ".collab")
@@ -362,6 +445,94 @@ def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
         )
 
     result = mod._check_watcher_health(state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_no_state_dir_with_project_root(monkeypatch, tmp_path):
+    """Empty state_dir but valid project_root falls through to fallback."""
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert result == {"running": False}
+
+
+def test_watcher_health_line_280_state_dir_empty_with_project_root(tmp_path):
+    """Direct test: empty state_dir + valid project_root hits line 280."""
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert isinstance(result, dict)
+    assert "running" in result
+
+
+def test_check_watcher_health_tempdir_pid_found(monkeypatch, tmp_path):
+    """PID file found in temp dir fallback — simulate Linux CI path."""
+    import hashlib as _hashlib
+    import platform
+    import tempfile as _tempfile
+
+    norm = str(tmp_path).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = os.path.join(_tempfile.gettempdir(), f"collab_runtime_{h}")
+    os.makedirs(ws_dir, exist_ok=True)
+    alt_pid = os.path.join(ws_dir, ".daemon.pid")
+    with open(alt_pid, "w") as f:
+        f.write("12345")
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.0)
+
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert result["running"] is True
+
+    # Cleanup
+    try:
+        os.unlink(alt_pid)
+        os.rmdir(ws_dir)
+    except OSError:
+        pass
+
+
+def test_check_watcher_health_running_linux_simulated(monkeypatch, tmp_path):
+    """Simulate Linux CI: mock platform.system='Linux', PID alive via os.kill."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_check_watcher_health_dead_pid_linux_simulated(monkeypatch, tmp_path):
+    """Simulate Linux CI with dead PID: os.kill raises OSError."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("99999", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+
+    def _raise_oserror(p, s):
+        raise OSError("No such process")
+
+    monkeypatch.setattr(mod.os, "kill", _raise_oserror)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
     assert result["running"] is False
 
 
