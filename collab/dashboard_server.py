@@ -327,7 +327,13 @@ def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, A
         try:
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            # mypy / static analysis on Linux cannot see ctypes.windll.
+            # Use getattr so type-checkers on non-Windows platforms pass.
+            _windll = getattr(ctypes, "windll", None)
+            if _windll is None:  # pragma: no cover — unreachable on Windows
+                return {"running": False}
+
+            kernel32 = _windll.kernel32
             handle = kernel32.OpenProcess(
                 0x0400, False, pid
             )  # PROCESS_QUERY_INFORMATION

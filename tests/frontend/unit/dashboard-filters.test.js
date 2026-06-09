@@ -270,6 +270,55 @@ describe("matchesFilter", function () {
       }),
     ).toBe(false);
   });
+
+  // -- status: conflict -----------------------------------------------------
+
+  test("status conflict matches any lock with outcome=conflict", function () {
+    // History lock with conflict outcome
+    expect(
+      matchesFilter(makeHistoryLock({ outcome: "conflict" }), {
+        status: "conflict",
+      }),
+    ).toBe(true);
+    // History lock with normal release
+    expect(
+      matchesFilter(makeHistoryLock({ outcome: "released" }), {
+        status: "conflict",
+      }),
+    ).toBe(false);
+    // Active lock with conflict outcome also matches
+    expect(
+      matchesFilter(makeLock({ outcome: "conflict" }), { status: "conflict" }),
+    ).toBe(true);
+    // Active lock without conflict outcome does not match
+    expect(matchesFilter(makeLock(), { status: "conflict" })).toBe(false);
+  });
+
+  // -- role filter ----------------------------------------------------------
+
+  test("role agent matches locks with agent_id", function () {
+    expect(
+      matchesFilter(makeLock({ agent_id: "agent-1" }), { role: "agent" }),
+    ).toBe(true);
+  });
+
+  test("role agent rejects locks without agent_id", function () {
+    expect(matchesFilter(makeLock({ agent_id: null }), { role: "agent" })).toBe(
+      false,
+    );
+  });
+
+  test("role human matches locks without agent_id", function () {
+    expect(matchesFilter(makeLock({ agent_id: null }), { role: "human" })).toBe(
+      true,
+    );
+  });
+
+  test("role human rejects locks with agent_id", function () {
+    expect(
+      matchesFilter(makeLock({ agent_id: "agent-1" }), { role: "human" }),
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -379,6 +428,62 @@ describe("sortLocks", function () {
     var original = locks.slice();
     sortLocks(locks, "file_path", "desc");
     expect(locks).toEqual(original);
+  });
+
+  test("sorts by acquired_at date asc", function () {
+    var dated = [
+      makeLock({ file_path: "a.py", acquired_at: "2026-06-08T15:00:00Z" }),
+      makeLock({ file_path: "b.py", acquired_at: "2026-06-08T10:00:00Z" }),
+    ];
+    var result = sortLocks(dated, "acquired_at", "asc");
+    expect(result[0].file_path).toBe("b.py");
+    expect(result[1].file_path).toBe("a.py");
+  });
+
+  test("sorts by acquired_at date desc", function () {
+    var dated = [
+      makeLock({ file_path: "a.py", acquired_at: "2026-06-08T10:00:00Z" }),
+      makeLock({ file_path: "b.py", acquired_at: "2026-06-08T15:00:00Z" }),
+    ];
+    var result = sortLocks(dated, "acquired_at", "desc");
+    expect(result[0].file_path).toBe("b.py");
+    expect(result[1].file_path).toBe("a.py");
+  });
+
+  test("sorts by released_at date", function () {
+    var dated = [
+      makeHistoryLock({
+        file_path: "a.py",
+        released_at: "2026-06-08T15:00:00Z",
+      }),
+      makeHistoryLock({
+        file_path: "b.py",
+        released_at: "2026-06-08T10:00:00Z",
+      }),
+    ];
+    var result = sortLocks(dated, "released_at", "asc");
+    expect(result[0].file_path).toBe("b.py");
+    expect(result[1].file_path).toBe("a.py");
+  });
+
+  test("invalid dates sort to end", function () {
+    var dated = [
+      makeLock({ file_path: "a.py", acquired_at: "invalid" }),
+      makeLock({ file_path: "b.py", acquired_at: "2026-01-01T00:00:00Z" }),
+    ];
+    var result = sortLocks(dated, "acquired_at", "asc");
+    expect(result[0].file_path).toBe("b.py");
+    expect(result[1].file_path).toBe("a.py");
+  });
+
+  test("sorts numeric duration_minutes", function () {
+    var dur = [
+      makeHistoryLock({ file_path: "a.py", duration_minutes: 30 }),
+      makeHistoryLock({ file_path: "b.py", duration_minutes: 10 }),
+    ];
+    var result = sortLocks(dur, "duration_minutes", "asc");
+    expect(result[0].file_path).toBe("b.py");
+    expect(result[1].file_path).toBe("a.py");
   });
 });
 

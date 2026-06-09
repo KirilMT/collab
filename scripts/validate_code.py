@@ -518,7 +518,7 @@ def run_command(
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
+            check=check,
             env=ironclad_env,
         )
 
@@ -919,8 +919,11 @@ def validate_python_backend(
             except Exception as e:
                 msg = f"[WARN] Could not remove .mypy_cache: {e}"
                 print(f"{Colors.WARNING}{msg}{Colors.ENDC}")
+        # Match CI exactly: `mypy` with no args, relying on pyproject.toml
+        # [tool.mypy] section which already defines files = ["collab", "tests",
+        # "scripts"]. CI uses plain `mypy`; we add --no-incremental for safety.
         success, _ = run_command(
-            ["mypy", "--no-incremental"] + python_targets,
+            ["mypy", "--no-incremental"],
             "Type checking",
             force_all_apps=force_all_apps,
         )
@@ -1346,10 +1349,17 @@ def validate_javascript_frontend(
             success = "skipped"
         else:
             success, _ = run_command(
-                ["npm", "run", "test", "--", "--coverage"],
+                [
+                    "npm",
+                    "run",
+                    "test",
+                    "--",
+                    "--coverageReporters=text",
+                    "--coverageReporters=lcov",
+                ],
                 "Jest tests with coverage",
                 force_all_apps=force_all_apps,
-                check=False,
+                check=True,
             )
     checks.append(("Jest Tests", success))
 
