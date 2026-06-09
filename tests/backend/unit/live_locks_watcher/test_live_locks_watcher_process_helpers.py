@@ -52,6 +52,38 @@ def test_write_pid_file_and_get_developer_and_branch(monkeypatch, tmp_path):
     assert isinstance(branch, str)
 
 
+def test_touch_pid_file_heartbeat_updates_mtime(monkeypatch, tmp_path):
+    mod = load_watcher_module()
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text('{"pid": 1}', encoding="utf-8")
+    stale_mtime = 1_000_000.0
+    os.utime(pid_file, (stale_mtime, stale_mtime))
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+
+    mod._touch_pid_file_heartbeat()
+
+    assert os.path.getmtime(pid_file) > stale_mtime
+
+
+def test_touch_pid_file_heartbeat_missing_file_is_noop(monkeypatch, tmp_path):
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
+    mod._touch_pid_file_heartbeat()
+
+
+def test_touch_pid_file_heartbeat_oserror_is_swallowed(monkeypatch, tmp_path):
+    mod = load_watcher_module()
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text('{"pid": 1}', encoding="utf-8")
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+
+    def boom(_path, _times):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(mod.os, "utime", boom)
+    mod._touch_pid_file_heartbeat()
+
+
 def test_is_process_alive_current_pid():
     mod = load_watcher_module()
 

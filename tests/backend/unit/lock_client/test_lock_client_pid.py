@@ -1,4 +1,5 @@
 import json
+import os
 
 from ._helpers import load_lock_client_module
 
@@ -63,6 +64,35 @@ def test_write_pid_fallback_on_replace_failure(monkeypatch, tmp_path):
     assert pid_file.exists()
     data = json.loads(pid_file.read_text())
     assert data["pid"] == 12345
+
+
+def test_touch_pid_heartbeat_updates_mtime(monkeypatch, tmp_path):
+    pid_file = tmp_path / "daemon.pid"
+    pid_file.write_text('{"pid": 1}')
+    stale_mtime = 1_000_000.0
+    os.utime(pid_file, (stale_mtime, stale_mtime))
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+
+    mod.LockClient._touch_pid_heartbeat()
+
+    assert os.path.getmtime(pid_file) > stale_mtime
+
+
+def test_touch_pid_heartbeat_missing_file_is_noop(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
+    mod.LockClient._touch_pid_heartbeat()
+
+
+def test_touch_pid_heartbeat_oserror_is_swallowed(monkeypatch, tmp_path):
+    pid_file = tmp_path / "daemon.pid"
+    pid_file.write_text("1")
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+
+    def boom(_path, _times):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(mod.os, "utime", boom)
+    mod.LockClient._touch_pid_heartbeat()
 
 
 def test_remove_pid_notest_mode(monkeypatch, tmp_path):
