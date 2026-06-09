@@ -104,11 +104,20 @@
     // File path glob
     if (filters.glob && !matchesGlob(lock, filters.glob)) return false;
 
-    // Status ('active' means has no released_at; 'released' means has released_at)
+    // Status ('active' = no released_at; 'released' = has released_at; 'conflict' = outcome is conflict)
     if (filters.status) {
       var isReleased = !!lock.released_at;
       if (filters.status === "active" && isReleased) return false;
       if (filters.status === "released" && !isReleased) return false;
+      if (filters.status === "conflict" && lock.outcome !== "conflict")
+        return false;
+    }
+
+    // Role ('agent' = has agent_id, 'human' = no agent_id)
+    if (filters.role) {
+      var isAgent = !!lock.agent_id;
+      if (filters.role === "agent" && !isAgent) return false;
+      if (filters.role === "human" && isAgent) return false;
     }
 
     // Date range (applied to acquired_at for active locks, or released_at fallback)
@@ -313,6 +322,11 @@
       filters.status = statusEl.value;
     }
 
+    var roleEl = document.getElementById("filter-role");
+    if (roleEl && roleEl.value && roleEl.value !== "all") {
+      filters.role = roleEl.value;
+    }
+
     var dateFromEl = document.getElementById("filter-date-from");
     if (dateFromEl && dateFromEl.value) {
       filters.dateFrom = dateFromEl.value;
@@ -366,9 +380,6 @@
   function populateDeveloperFilter(locks, history) {
     if (typeof document === "undefined") return;
 
-    var devEl = document.getElementById("filter-developer");
-    if (!devEl) return;
-
     var seen = {};
     (locks || []).forEach(function (row) {
       if (row.developer_id) seen[row.developer_id] = true;
@@ -377,18 +388,23 @@
       if (row.developer_id) seen[row.developer_id] = true;
     });
 
-    var currentVal = devEl.value;
-    // Preserve the first option ("All Developers")
-    devEl.innerHTML = '<option value="all">All Developers</option>';
-    Object.keys(seen)
-      .sort()
-      .forEach(function (dev) {
-        var opt = document.createElement("option");
-        opt.value = dev;
-        opt.textContent = dev;
-        if (dev === currentVal) opt.selected = true;
-        devEl.appendChild(opt);
-      });
+    // Populate both locks-page and history-page developer dropdowns
+    var devIds = ["filter-developer", "filter-developer-history"];
+    devIds.forEach(function (devId) {
+      var devEl = document.getElementById(devId);
+      if (!devEl) return;
+      var currentVal = devEl.value;
+      devEl.innerHTML = '<option value="all">All Developers</option>';
+      Object.keys(seen)
+        .sort()
+        .forEach(function (dev) {
+          var opt = document.createElement("option");
+          opt.value = dev;
+          opt.textContent = dev;
+          if (dev === currentVal) opt.selected = true;
+          devEl.appendChild(opt);
+        });
+    });
   }
 
   // ---------------------------------------------------------------------------

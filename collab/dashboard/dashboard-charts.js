@@ -169,11 +169,15 @@
           mode: "index",
           intersect: false,
         },
+        hover: {
+          mode: "index",
+          intersect: false,
+        },
         plugins: {
           legend: {
             labels: {
               usePointStyle: true,
-              padding: 20,
+              padding: 8,
               color: CHART_COLORS.text,
               font: { size: 12, weight: "600" },
             },

@@ -333,7 +333,7 @@ def test_check_watcher_health_invalid_pid(tmp_path):
     """Returns down when PID file contains garbage."""
     state_dir = str(tmp_path / ".collab")
     os.makedirs(state_dir, exist_ok=True)
-    (tmp_path / ".collab" / "watcher.pid").write_text("not-a-number", encoding="utf-8")
+    (tmp_path / ".collab" / ".daemon.pid").write_text("not-a-number", encoding="utf-8")
     result = mod._check_watcher_health(state_dir)
     assert result == {"running": False}
 
@@ -342,7 +342,7 @@ def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
     """Simulate a dead PID on Windows."""
     state_dir = str(tmp_path / ".collab")
     os.makedirs(state_dir, exist_ok=True)
-    (tmp_path / ".collab" / "watcher.pid").write_text("99999", encoding="utf-8")
+    (tmp_path / ".collab" / ".daemon.pid").write_text("99999", encoding="utf-8")
 
     import platform
 
@@ -369,7 +369,7 @@ def test_check_watcher_health_running(tmp_path, monkeypatch):
     """Returns running=True with heartbeat latency when PID is alive."""
     state_dir = str(tmp_path / ".collab")
     os.makedirs(state_dir, exist_ok=True)
-    pid_file = tmp_path / ".collab" / "watcher.pid"
+    pid_file = tmp_path / ".collab" / ".daemon.pid"
     pid_file.write_text(str(os.getpid()), encoding="utf-8")
 
     result = mod._check_watcher_health(state_dir)

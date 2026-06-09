@@ -241,7 +241,7 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     agent_label = agent_identity.resolve_agent_label()
     agent_kind = agent_identity.resolve_agent_kind(agent_id=agent_id)
     project_name = resolve_project_display_name(project_root, file_vals)
-    watcher_status = _check_watcher_health(state_dir)
+    watcher_status = _check_watcher_health(state_dir, project_root)
     return {
         "url": url,
         "anonKey": anon,
@@ -255,24 +255,69 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
     }
 
 
-def _check_watcher_health(state_dir: str) -> dict[str, Any]:
+def _check_watcher_health(state_dir: str, project_root: str = "") -> dict[str, Any]:
     """Check if the collab watcher daemon is running and return health info.
 
     Returns a dict with ``running`` (bool) and optionally ``heartbeatLatencyMs`` (int)
     when available.
     """
     if not state_dir or not os.path.isdir(state_dir):
-        return {"running": False}
+        if not project_root:
+            return {"running": False}
+        # Skip to fallback below
+        state_dir = ""
 
-    pid_file = os.path.join(state_dir, "watcher.pid")
+    # Match the watcher's own PID file naming: .daemon.pid (or .daemon.<agent>.pid)
+    from .agent_identity import daemon_pid_basename
+
+    pid_file = os.path.join(state_dir, daemon_pid_basename(None))
     if not os.path.isfile(pid_file):
-        return {"running": False}
+        # Try agent-specific PID files
+        import glob as _glob
+
+        candidates = _glob.glob(os.path.join(state_dir, ".daemon.*.pid"))
+        if candidates:
+            pid_file = candidates[0]
+        else:
+            # Fallback: lock_client stores PID in tempdir/collab_runtime_<hash>/
+            if not project_root:
+                return {"running": False}
+            try:
+                import hashlib as _hashlib
+                import tempfile as _tempfile
+
+                norm = (
+                    os.path.abspath(project_root)
+                    .replace("/", "\\")
+                    .lower()
+                    .rstrip("\\")
+                )
+                h = _hashlib.sha1(
+                    norm.encode("utf-8"), usedforsecurity=False
+                ).hexdigest()[:8]
+                ws_dir = os.path.join(_tempfile.gettempdir(), f"collab_runtime_{h}")
+                alt_pid = os.path.join(ws_dir, daemon_pid_basename(None))
+                if os.path.isfile(alt_pid):
+                    pid_file = alt_pid
+                else:
+                    alt_glob = _glob.glob(os.path.join(ws_dir, ".daemon.*.pid"))
+                    if alt_glob:
+                        pid_file = alt_glob[0]
+                    else:
+                        return {"running": False}
+            except Exception:
+                return {"running": False}
 
     try:
         with open(pid_file, "r", encoding="utf-8") as fh:
-            pid_str = fh.read().strip()
-        pid = int(pid_str)
-    except (OSError, ValueError):
+            raw = fh.read().strip()
+        # PID file may be plain int or a JSON object with "pid" key
+        if raw.startswith("{"):
+            data = json.loads(raw)
+            pid = int(data["pid"])
+        else:
+            pid = int(raw)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return {"running": False}
 
     # Check if PID is alive

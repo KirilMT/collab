@@ -46,6 +46,7 @@
             display: flex;
             flex-direction: column;
             -webkit-font-smoothing: antialiased;
+            transition: background 0.25s ease, color 0.25s ease;
         }
 
         .app-nav {
@@ -129,7 +130,7 @@
         .app-main {
             height: calc(100vh - var(--nav-h));
             min-height: 0;
-            padding: 1rem 1.15rem;
+            padding: 0.5rem 0.8rem;
         }
 
         .page-view {
@@ -138,7 +139,7 @@
             min-height: 0;
             display: none;
             flex-direction: column;
-            gap: 0.7rem;
+            gap: 0.3rem;
             overflow-y: auto;
         }
 
@@ -225,15 +226,15 @@
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            font-size: 0.72rem;
+            font-size: 0.68rem;
             font-weight: 700;
             white-space: nowrap;
-            padding: 0.88rem 0.75rem;
+            padding: 0.45rem 0.55rem;
         }
 
         .table tbody td {
-            font-size: 0.84rem;
-            padding: 0.9rem 0.75rem;
+            font-size: 0.8rem;
+            padding: 0.4rem 0.55rem;
             vertical-align: middle;
             border-color: var(--border-color);
         }
@@ -244,38 +245,33 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-            gap: 0.7rem;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.35rem;
         }
 
         .stat-card {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: var(--radius);
-            padding: 1.35rem;
+            border-radius: 0.5rem;
+            padding: 0.45rem 0.6rem;
             box-shadow: var(--shadow-sm);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
         }
 
         .stat-shell {
             display: flex;
             align-items: center;
-            gap: 0.9rem;
+            gap: 0.45rem;
         }
 
         .stat-icon {
-            width: 44px;
-            height: 44px;
-            border-radius: 10px;
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.1rem;
+            font-size: 0.75rem;
+            flex-shrink: 0;
         }
 
         .stat-icon-lock {
@@ -320,17 +316,17 @@
 
         .stat-label {
             margin: 0;
-            font-size: 0.74rem;
+            font-size: 0.6rem;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
+            letter-spacing: 0.05em;
             color: var(--text-muted);
         }
 
         .stat-value {
-            margin: 0.15rem 0 0;
-            font-size: 2.08rem;
-            line-height: 1;
+            margin: 0;
+            font-size: 1.25rem;
+            line-height: 1.1;
             font-weight: 800;
             color: #0f172a;
         }
@@ -579,9 +575,9 @@
         .filter-bar {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.35rem;
             flex-wrap: wrap;
-            padding: 0.65rem 0.85rem;
+            padding: 0.35rem 0.6rem;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: var(--radius);
@@ -590,11 +586,11 @@
 
         .filter-bar input,
         .filter-bar select {
-            height: 2.15rem;
-            font-size: 0.8rem;
+            height: 1.75rem;
+            font-size: 0.75rem;
             border: 1px solid var(--border-color);
-            border-radius: 0.45rem;
-            padding: 0 0.55rem;
+            border-radius: 0.4rem;
+            padding: 0 0.45rem;
             background: #fff;
             color: var(--text-main);
             min-width: 0;
@@ -642,11 +638,11 @@
         }
 
         .filter-bar .btn-filter-clear {
-            height: 2.15rem;
-            font-size: 0.78rem;
+            height: 1.75rem;
+            font-size: 0.7rem;
             font-weight: 700;
-            border-radius: 0.45rem;
-            padding: 0 0.7rem;
+            border-radius: 0.4rem;
+            padding: 0 0.55rem;
             white-space: nowrap;
             border: 1px solid var(--border-color);
             background: #f8fafc;
@@ -665,15 +661,15 @@
         /* ---- Saved filter presets ---------------------------------------- */
         .filter-presets {
             display: flex;
-            gap: 0.3rem;
+            gap: 0.25rem;
             flex-wrap: wrap;
-            padding: 0.35rem 0.85rem 0;
+            flex-shrink: 0;
         }
 
         .filter-preset-btn {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             font-weight: 700;
-            padding: 0.18rem 0.6rem;
+            padding: 0.08rem 0.5rem;
             border: 1px solid var(--border-color);
             border-radius: 999px;
             background: #fff;
@@ -681,6 +677,11 @@
             cursor: pointer;
             transition: all 0.15s ease;
             white-space: nowrap;
+            flex-shrink: 0;
+            height: 1.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
         }
 
         .filter-preset-btn:hover {
@@ -693,19 +694,6 @@
             background: var(--primary);
             border-color: var(--primary);
             color: #fff;
-        }
-
-        .filter-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.25rem;
-            padding: 0.08rem 0.45rem;
-            border-radius: 999px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            background: var(--primary-soft);
-            color: var(--primary);
-            margin-left: 0.35rem;
         }
 
         /* ---- Column sorting ----------------------------------------------- */
@@ -750,11 +738,11 @@
             background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: var(--radius);
-            padding: 0.85rem 1rem 0.5rem;
+            padding: 0.35rem 0.7rem 0.3rem;
             box-shadow: var(--shadow-sm);
             display: flex;
             flex-direction: column;
-            gap: 0.45rem;
+            gap: 0.15rem;
         }
 
         .chart-header {
@@ -762,12 +750,12 @@
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
-            gap: 0.45rem;
+            gap: 0.3rem;
         }
 
         .chart-title {
             margin: 0;
-            font-size: 0.85rem;
+            font-size: 0.7rem;
             font-weight: 800;
             color: var(--text-main);
         }
@@ -778,9 +766,9 @@
         }
 
         .chart-range-btn {
-            font-size: 0.72rem;
+            font-size: 0.65rem;
             font-weight: 700;
-            padding: 0.2rem 0.65rem;
+            padding: 0.1rem 0.5rem;
             border: 1px solid var(--border-color);
             border-radius: 999px;
             background: #fff;
@@ -814,55 +802,51 @@
 
         /* ---- Developer summary cards ------------------------------------- */
         .dev-summary-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 0.65rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
         }
 
         .dev-summary-card {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 0.6rem;
-            padding: 0.7rem 0.9rem;
-            display: flex;
+            border-radius: 0.4rem;
+            padding: 0.2rem 0.5rem;
+            display: inline-flex;
             align-items: center;
-            justify-content: space-between;
+            gap: 0.4rem;
             box-shadow: var(--shadow-sm);
-            transition: box-shadow 0.15s ease;
-        }
-
-        .dev-summary-card:hover {
-            box-shadow: var(--shadow-md);
         }
 
         .dev-summary-name {
-            font-size: 0.82rem;
+            font-size: 0.7rem;
             font-weight: 700;
             color: var(--text-main);
             display: flex;
             align-items: center;
-            gap: 0.4rem;
+            gap: 0.25rem;
         }
 
         .dev-summary-name i {
             color: var(--primary);
-            font-size: 0.75rem;
+            font-size: 0.65rem;
         }
 
         .dev-summary-count {
-            font-size: 1.25rem;
+            font-size: 0.9rem;
             font-weight: 800;
             color: var(--primary);
             background: var(--primary-soft);
-            border-radius: 0.4rem;
-            padding: 0.1rem 0.55rem;
-            min-width: 2rem;
+            border-radius: 0.3rem;
+            padding: 0 0.4rem;
+            min-width: 1.5rem;
             text-align: center;
+            line-height: 1.4;
         }
 
         /* ---- Dark / light theme ------------------------------------------ */
         :root {
-            --theme-transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+            --theme-transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
         }
 
         body.dark {
@@ -876,27 +860,77 @@
             --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
             --shadow-md: 0 10px 22px -14px rgb(0 0 0 / 0.5);
             --shadow-lg: 0 26px 48px -28px rgb(0 0 0 / 0.6);
+            color-scheme: dark;
+        }
+
+        /* --- Core surfaces --- */
+        body.dark .app-nav {
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(14px);
+        }
+
+        body.dark .stat-value {
+            color: #e2e8f0;
+        }
+
+        body.dark .stat-value-success {
+            color: #4ade80;
+        }
+
+        body.dark .stat-value-info {
+            color: #22d3ee;
         }
 
         body.dark .table thead th {
             background: #1e293b;
         }
 
+        body.dark .table tbody td {
+            border-color: #334155;
+        }
+
         body.dark .table tbody tr:hover {
             background: #1e293b;
         }
 
+        body.dark .table tbody tr.row-expandable:hover {
+            background: #1e1b4b;
+        }
+
+        /* --- Code blocks --- */
         body.dark code {
+            color: #a5b4fc;
             background: #1e293b;
             border-color: #334155;
         }
 
+        /* --- Filter bar --- */
         body.dark .filter-bar input,
         body.dark .filter-bar select {
             background: #1e293b;
             color: var(--text-main);
+            color-scheme: dark;
         }
 
+        body.dark .filter-bar input::placeholder {
+            color: #64748b;
+        }
+
+        body.dark .filter-search-wrap .fa-magnifying-glass {
+            color: #64748b;
+        }
+
+        body.dark .filter-bar .btn-filter-clear {
+            background: #1e293b;
+        }
+
+        body.dark .filter-bar .btn-filter-clear:hover {
+            background: #7f1d1d;
+            border-color: #dc2626;
+            color: #fca5a5;
+        }
+
+        /* --- Chart --- */
         body.dark .chart-range-btn {
             background: #1e293b;
         }
@@ -905,37 +939,215 @@
             background: #334155;
         }
 
+        /* --- Filter presets --- */
         body.dark .filter-preset-btn {
             background: #1e293b;
         }
 
+        body.dark .filter-preset-btn:hover {
+            background: #1e1b4b;
+            border-color: #6366f1;
+        }
+
+        /* --- Nav buttons --- */
         body.dark .nav-right .btn.btn-outline-secondary {
             background: #1e293b;
             color: #94a3b8;
         }
 
-        body.dark .filter-bar .btn-filter-clear {
+        body.dark .nav-right .btn.btn-outline-primary {
             background: #1e293b;
+            border-color: #6366f1;
+            color: #a5b4fc;
         }
 
+        /* --- Dev summary --- */
         body.dark .dev-summary-card {
             background: #1e293b;
         }
 
+        /* --- Chips & badges --- */
+        body.dark .chip {
+            background: #1e293b;
+            color: #cbd5e1;
+            border-color: #334155;
+        }
+
+        body.dark .chip.text-muted {
+            color: #94a3b8 !important;
+        }
+
+        body.dark .dev-tag {
+            background: #1e293b;
+            color: #cbd5e1;
+        }
+
+        body.dark .actor-chip.user-chip {
+            background: #1e293b;
+            color: #94a3b8;
+            border-color: #334155;
+        }
+
+        body.dark .agent-badge {
+            background: #1e1b4b;
+            color: #a5b4fc;
+            border-color: #4338ca;
+        }
+
+        body.dark .agent-chip-owner,
+        body.dark .agent-badge-owner {
+            background: #312e81;
+            color: #c7d2fe;
+            border-color: #6366f1;
+        }
+
+        /* --- Setup view --- */
+        body.dark .setup-view {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark .setup-view pre {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #e2e8f0;
+        }
+
+        /* --- Release modal --- */
+        body.dark .release-modal .modal-content {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark .release-modal .modal-header,
+        body.dark .release-modal .modal-footer {
+            border-color: #334155;
+        }
+
+        body.dark .release-file-box {
+            background: #0f172a;
+            border-color: #334155;
+        }
+
+        body.dark .release-file-path {
+            color: #e2e8f0;
+        }
+
+        body.dark .release-help {
+            color: #cbd5e1;
+        }
+
+        body.dark .release-modal .btn-cancel {
+            background: #334155;
+            border-color: #475569;
+            color: #cbd5e1;
+        }
+
+        body.dark .release-modal .btn-cancel:hover {
+            background: #475569;
+            color: #e2e8f0;
+        }
+
+        /* --- Detail panel --- */
+        body.dark .detail-panel {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark .detail-value {
+            color: #e2e8f0;
+        }
+
+        /* --- Skeleton loaders --- */
+        body.dark .skeleton {
+            background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
+            background-size: 200% 100%;
+        }
+
+        /* --- Theme toggle button --- */
+        body.dark .theme-toggle-btn {
+            background: #1e293b;
+            border-color: #475569;
+            color: #fbbf24;
+        }
+
+        body.dark .theme-toggle-btn:hover {
+            background: #312e81;
+            border-color: #6366f1;
+            color: #fbbf24;
+        }
+
+        /* --- Table shell --- */
+        body.dark .table-shell {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark .table {
+            --bs-table-bg: #1e293b;
+            --bs-table-color: #e2e8f0;
+            --bs-table-border-color: #334155;
+            --bs-table-hover-bg: #1e293b;
+            --bs-table-striped-bg: #1e293b;
+            background-color: #1e293b;
+            color: #e2e8f0;
+        }
+
+        body.dark .table tbody,
+        body.dark .table tbody tr,
+        body.dark .table tbody td {
+            background-color: #1e293b;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+
+        /* Override Bootstrap .text-muted inside table cells in dark mode */
+        body.dark .table tbody td.text-muted {
+            color: #94a3b8 !important;
+        }
+
+        body.dark .table tbody tr:hover {
+            background-color: #1e1b4b;
+        }
+
+        body.dark .table tbody tr.row-expandable:hover {
+            background-color: #1e1b4b;
+        }
+
+        /* --- Action buttons (Force Release) in dark mode --- */
+        body.dark .table .btn-outline-danger {
+            border-color: #7f1d1d;
+            color: #fca5a5;
+            background: #1e293b;
+        }
+
+        body.dark .table .btn-outline-danger:hover {
+            background: #7f1d1d;
+            border-color: #dc2626;
+            color: #fecaca;
+        }
+
+        body.dark .table .text-muted.small {
+            color: #94a3b8 !important;
+        }
+
         .theme-toggle-btn {
-            background: none;
             border: 1px solid var(--border-color);
             border-radius: 999px;
-            width: 2rem;
-            height: 2rem;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            background: #fff;
+            color: var(--text-muted);
+            box-shadow: var(--shadow-sm);
             cursor: pointer;
-            font-size: 0.85rem;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-muted);
             transition: all 0.15s ease;
             flex-shrink: 0;
+            width: auto;
+            height: auto;
         }
 
         .theme-toggle-btn:hover {
@@ -949,11 +1161,6 @@
             background-size: 200% 100%;
             animation: skeleton-shimmer 1.5s ease-in-out infinite;
             border-radius: 0.35rem;
-        }
-
-        body.dark .skeleton {
-            background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
-            background-size: 200% 100%;
         }
 
         @keyframes skeleton-shimmer {
@@ -1039,35 +1246,167 @@
         /* ---- Responsive tweaks -------------------------------------------- */
         @media (max-width: 768px) {
             .app-nav {
-                padding: 0 0.75rem;
+                padding: 0 0.5rem;
+                gap: 0.4rem;
+                flex-wrap: wrap;
+                height: auto;
+                min-height: var(--nav-h);
+                padding-top: 0.35rem;
+                padding-bottom: 0.35rem;
+                justify-content: flex-end;
+            }
+
+            .brand {
+                margin-right: auto;
+            }
+
+            .brand span {
+                font-size: 0.85rem;
+            }
+
+            .chip {
+                font-size: 0.7rem;
+                padding: 0.25rem 0.5rem;
+            }
+
+            .nav-right .btn {
+                font-size: 0.7rem;
+                padding: 0.2rem 0.55rem;
             }
 
             .app-main {
-                padding: 0.75rem;
+                padding: 0.4rem;
             }
 
             .stats-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 0.25rem;
+            }
+
+            .stat-card {
+                padding: 0.35rem 0.45rem;
             }
 
             .stat-value {
-                font-size: 1.7rem;
+                font-size: 1.1rem;
             }
 
-            .table thead th,
-            .table tbody td {
-                padding: 0.62rem;
+            .stat-label {
+                font-size: 0.55rem;
+            }
+
+            .chart-title {
+                font-size: 0.65rem;
+            }
+
+            .chart-range-btn {
+                font-size: 0.6rem;
+                padding: 0.08rem 0.4rem;
+            }
+
+            .dev-summary-grid {
+                gap: 0.2rem;
+            }
+
+            .dev-summary-card {
+                padding: 0.15rem 0.4rem;
+            }
+
+            .dev-summary-name {
+                font-size: 0.65rem;
+            }
+
+            .dev-summary-count {
+                font-size: 0.8rem;
+            }
+
+            .page-title {
+                font-size: 0.85rem;
             }
 
             .filter-bar {
                 flex-direction: column;
                 align-items: stretch;
+                gap: 0.3rem;
+                padding: 0.35rem 0.5rem;
             }
 
             .filter-bar .filter-select,
             .filter-bar .filter-date {
                 max-width: none;
                 width: 100%;
+            }
+
+            .filter-search-wrap {
+                flex: none;
+                width: 100%;
+            }
+
+            .filter-presets {
+                flex-wrap: wrap;
+            }
+
+            .filter-preset-btn {
+                font-size: 0.6rem;
+                padding: 0.06rem 0.4rem;
+            }
+
+            .table thead th,
+            .table tbody td {
+                padding: 0.35rem 0.4rem;
+                font-size: 0.7rem;
+            }
+
+            .table-shell {
+                min-height: 250px;
+                flex: 1 1 auto;
+                overflow: hidden;
+            }
+
+            .table-scroll {
+                overflow: auto;
+                -webkit-overflow-scrolling: touch;
+                height: 100%;
+            }
+
+            .table {
+                min-width: 650px;
+                width: 100%;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .brand i {
+                display: none;
+            }
+
+            .chip {
+                display: none;
+            }
+
+            .chip#last-update {
+                display: inline-flex;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-shell {
+                display: none;
+            }
+
+            .dev-summary-grid {
+                display: none;
+            }
+
+            .filter-presets {
+                gap: 0.2rem;
+            }
+
+            .nav-right .btn {
+                font-size: 0.65rem;
+                padding: 0.15rem 0.45rem;
             }
         }
         </style>
@@ -1105,8 +1444,8 @@
                                font-weight:700;
                                border-radius:999px"
                         data-testid="refresh-interval">
-                    <option value="0" selected>Auto: Off</option>
-                    <option value="5">5s</option>
+                    <option value="0">Auto: Off</option>
+                    <option value="5" selected>5s</option>
                     <option value="15">15s</option>
                     <option value="30">30s</option>
                     <option value="60">60s</option>
@@ -1148,9 +1487,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-lock"></i>Active Locks
-                        <span id="filter-count-badge-locks"
-                              class="filter-badge hidden"
-                              data-testid="filter-count-badge-locks">0</span>
                     </h2>
                 </div>
                 <div class="stats-grid"
@@ -1234,6 +1570,18 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     <!-- Populated dynamically -->
                 </div>
                 <div class="filter-bar" id="filter-bar-locks" data-testid="filter-bar">
+                    <span class="filter-presets" data-testid="filter-presets">
+                        <button class="filter-preset-btn"
+                                data-preset="my-locks"
+                                data-testid="preset-my-locks">
+                            <i class="fas fa-user"></i>My
+                        </button>
+                        <button class="filter-preset-btn"
+                                data-preset="agents"
+                                data-testid="preset-agents">
+                            <i class="fas fa-robot"></i>AI
+                        </button>
+                    </span>
                     <span class="filter-search-wrap">
                         <i class="fas fa-magnifying-glass"></i>
                         <input type="text"
@@ -1256,10 +1604,10 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                            class="filter-select"
                            placeholder="Glob: src/**/*.py"
                            data-testid="filter-glob">
-                    <select id="filter-status" class="filter-select" data-testid="filter-status">
-                        <option value="all">All Status</option>
-                        <option value="active">Active</option>
-                        <option value="released">Released</option>
+                    <select id="filter-role" class="filter-select" data-testid="filter-role">
+                        <option value="all">All Roles</option>
+                        <option value="human">Human</option>
+                        <option value="agent">AI Agent</option>
                     </select>
                     <input type="date"
                            id="filter-date-from"
@@ -1277,28 +1625,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                             data-testid="filter-clear-btn"
                             title="Clear all filters">
                         <i class="fas fa-times me-1"></i>Clear
-                    </button>
-                </div>
-                <div class="filter-presets" data-testid="filter-presets">
-                    <button class="filter-preset-btn"
-                            data-preset="my-locks"
-                            data-testid="preset-my-locks">
-                        <i class="fas fa-user me-1"></i>My Locks
-                    </button>
-                    <button class="filter-preset-btn"
-                            data-preset="conflicts"
-                            data-testid="preset-conflicts">
-                        <i class="fas fa-triangle-exclamation me-1"></i>Conflicts Only
-                    </button>
-                    <button class="filter-preset-btn"
-                            data-preset="stale"
-                            data-testid="preset-stale">
-                        <i class="fas fa-clock me-1"></i>Stale (&gt;30m)
-                    </button>
-                    <button class="filter-preset-btn"
-                            data-preset="agents"
-                            data-testid="preset-agents">
-                        <i class="fas fa-robot me-1"></i>AI Agents
                     </button>
                 </div>
                 <div class="table-shell">
@@ -1346,14 +1672,28 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 <div class="page-head">
                     <h2 class="page-title">
                         <i class="fas fa-clock-rotate-left"></i>Lock History
-                        <span id="filter-count-badge-history"
-                              class="filter-badge hidden"
-                              data-testid="filter-count-badge-history">0</span>
                     </h2>
                 </div>
                 <div class="filter-bar"
                      id="filter-bar-history"
                      data-testid="filter-bar-history">
+                    <span class="filter-presets" data-testid="filter-presets-history">
+                        <button class="filter-preset-btn"
+                                data-preset="my-locks"
+                                data-testid="preset-history-my-locks">
+                            <i class="fas fa-user"></i>My
+                        </button>
+                        <button class="filter-preset-btn"
+                                data-preset="conflicts"
+                                data-testid="preset-history-conflicts">
+                            <i class="fas fa-triangle-exclamation"></i>Conflicts
+                        </button>
+                        <button class="filter-preset-btn"
+                                data-preset="agents"
+                                data-testid="preset-history-agents">
+                            <i class="fas fa-robot"></i>AI
+                        </button>
+                    </span>
                     <span class="filter-search-wrap">
                         <i class="fas fa-magnifying-glass"></i>
                         <input type="text"
@@ -1380,8 +1720,15 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                             class="filter-select"
                             data-testid="filter-status-history">
                         <option value="all">All Status</option>
-                        <option value="active">Active</option>
                         <option value="released">Released</option>
+                        <option value="conflict">Conflict</option>
+                    </select>
+                    <select id="filter-role-history"
+                            class="filter-select"
+                            data-testid="filter-role-history">
+                        <option value="all">All Roles</option>
+                        <option value="human">Human</option>
+                        <option value="agent">AI Agent</option>
                     </select>
                     <input type="date"
                            id="filter-date-from-history"
@@ -1528,31 +1875,31 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
 
         // --- Auto-refresh state ---
         let refreshIntervalId = null;
-        let refreshIntervalSec = 0;
+        let refreshIntervalSec = 5;
 
         // --- Theme state ---
         let currentTheme = "light";
 
         // --- Row detail state ---
         let expandedRowPath = null;
+        let lockDetailCache = {}; // file_path -> full lock data for detail panel
 
         function setNavActive(page) {
             const locksBtn = document.getElementById("nav-locks");
             const historyBtn = document.getElementById("nav-history");
+            // Only show the button for the OTHER page, always primary style
+            locksBtn.classList.add("btn-primary");
+            locksBtn.classList.remove("btn-outline-primary");
+            historyBtn.classList.add("btn-primary");
+            historyBtn.classList.remove("btn-outline-primary");
             if (page === "history") {
-                locksBtn.classList.remove("btn-primary");
-                locksBtn.classList.add("btn-outline-primary");
+                locksBtn.style.display = "";
                 locksBtn.disabled = false;
-                historyBtn.classList.add("btn-primary");
-                historyBtn.classList.remove("btn-outline-primary");
-                historyBtn.disabled = true;
+                historyBtn.style.display = "none";
             } else {
-                historyBtn.classList.remove("btn-primary");
-                historyBtn.classList.add("btn-outline-primary");
+                historyBtn.style.display = "";
                 historyBtn.disabled = false;
-                locksBtn.classList.add("btn-primary");
-                locksBtn.classList.remove("btn-outline-primary");
-                locksBtn.disabled = true;
+                locksBtn.style.display = "none";
             }
         }
 
@@ -1579,6 +1926,9 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             const page = routeFromHash();
             const locksPage = document.getElementById("locks-page");
             const historyPage = document.getElementById("history-page");
+
+            // Deactivate any active preset when switching pages
+            updatePresetActiveState(null);
 
             if (page === "history") {
                 locksPage.classList.remove("active");
@@ -1878,7 +2228,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 }
                 const { data: historyData, error: historyError } = await supabaseClient
                     .from("file_locks_history")
-                    .select("acquired_at,released_at")
+                    .select("acquired_at,released_at,outcome")
                     .neq("is_ephemeral", true)
                     .order("id", { ascending: false })
                     .limit(250);
@@ -2044,9 +2394,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
                 : filtered;
 
-            // --- Update filter count badge ---
-            updateFilterCount("locks");
-
             if (!sorted.length) {
                 const hasFilters = window.DashboardFilters.hasActiveFilters(filters);
                 tbody.innerHTML =
@@ -2059,6 +2406,11 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
 
             // Update developer summary with the full unfiltered lock set
             updateDevSummary(locks);
+
+            // Populate detail cache for row-click panel
+            (locks || []).forEach(function (l) {
+                lockDetailCache[l.file_path] = l;
+            });
 
             const now = new Date();
             tbody.innerHTML = sorted
@@ -2166,9 +2518,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 ? window.DashboardFilters.sortLocks(filtered, currentSortField, currentSortDir)
                 : filtered;
 
-            // --- Update filter count badge ---
-            updateFilterCount("history");
-
             if (!sorted.length) {
                 const hasFilters = window.DashboardFilters.hasActiveFilters(filters);
                 tbody.innerHTML =
@@ -2207,8 +2556,12 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 .join("");
 
             tbody.innerHTML = html;
-        }
 
+            // Populate detail cache for row-click panel
+            sorted.forEach(function (h) {
+                lockDetailCache[h.file_path] = h;
+            });
+        }
         /**
          * Read history-specific filter inputs (they have "-history" suffix IDs).
          */
@@ -2221,6 +2574,8 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 "filter-agent-history": "agentLabel",
                 "filter-glob-history": "glob",
                 "filter-status-history": "status",
+                "filter-role": "role",
+                "filter-role-history": "role",
                 "filter-date-from-history": "dateFrom",
                 "filter-date-to-history": "dateTo",
             };
@@ -2369,12 +2724,9 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 }
                 var filePath = row.getAttribute("data-file");
                 if (filePath) {
-                    toggleRowDetail(filePath, { file_path: filePath });
+                    var data = lockDetailCache[filePath] || { file_path: filePath };
+                    toggleRowDetail(filePath, data);
                 }
-            });
-            // --- Shareable URL: update on filter change & hash change ---
-            window.addEventListener("hashchange", function () {
-                applyFiltersFromHash();
             });
         }
 
@@ -2392,6 +2744,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             var selectIds = [
                 "filter-developer" + suffix,
                 "filter-status" + suffix,
+                "filter-role" + suffix,
                 "filter-date-from" + suffix,
                 "filter-date-to" + suffix,
             ];
@@ -2418,22 +2771,8 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             var clearBtn = document.getElementById("filter-clear-btn" + suffix);
             if (clearBtn) {
                 clearBtn.addEventListener("click", function () {
-                    window.DashboardFilters.clearFilterInputs();
-                    // Also clear history-specific fields when clearing on history page
-                    if (page === "history") {
-                        var histIds = [
-                            "filter-search-history", "filter-developer-history",
-                            "filter-agent-history", "filter-glob-history",
-                            "filter-status-history", "filter-date-from-history",
-                            "filter-date-to-history",
-                        ];
-                        histIds.forEach(function (hid) {
-                            var hel = document.getElementById(hid);
-                            if (!hel) return;
-                            if (hel.tagName === "SELECT") hel.value = "all";
-                            else hel.value = "";
-                        });
-                    }
+                    clearAllFilters();
+                    updatePresetActiveState(null);
                     onFilterChange(page);
                 });
             }
@@ -2452,7 +2791,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
 
         /** Called whenever a filter value changes. */
         function onFilterChange(page) {
-            updateShareableURL();
             if (page === "history") {
                 renderHistoryFromCache();
             } else {
@@ -2522,29 +2860,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             });
         }
 
-        /**
-         * Update the filter count badge next to the page title.
-         * @param {string} page  "locks" or "history"
-         */
-        function updateFilterCount(page) {
-            var badgeEl = document.getElementById("filter-count-badge-" + page);
-            if (!badgeEl) return;
 
-            var filters;
-            if (page === "history") {
-                filters = getHistoryFiltersFromDOM();
-            } else {
-                filters = window.DashboardFilters.getActiveFiltersFromDOM();
-            }
-
-            var count = window.DashboardFilters.countActiveFilters(filters);
-            if (count > 0) {
-                badgeEl.textContent = String(count);
-                badgeEl.classList.remove("hidden");
-            } else {
-                badgeEl.classList.add("hidden");
-            }
-        }
 
         async function init() {
             releaseModal = new bootstrap.Modal(document.getElementById("releaseModal"));
@@ -2572,8 +2888,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 onRefreshIntervalChange();
                 // Check watcher health once on init
                 checkWatcherHealth();
-                // Apply filters from shareable URL hash
-                applyFiltersFromHash();
             } catch (e) {
                 console.error("Initialization failed", e);
                 showLocksError("Initialization failed. Check configuration.");
@@ -2850,52 +3164,52 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
         // ===================================================================
 
         function applyFilterPreset(preset) {
-            // Clear all existing filters first
-            window.DashboardFilters.clearFilterInputs();
-            // Also clear history filter bar
-            var histIds = [
-                "filter-search-history", "filter-developer-history",
-                "filter-agent-history", "filter-glob-history",
-                "filter-status-history", "filter-date-from-history",
-                "filter-date-to-history",
-            ];
-            histIds.forEach(function (id) {
-                var el = document.getElementById(id);
-                if (!el) return;
-                if (el.tagName === "SELECT") el.value = "all";
-                else el.value = "";
-            });
+            // Toggle: if this preset is already active, deactivate (clear all)
+            var activeBtn = document.querySelector(".filter-preset-btn.active-preset");
+            if (activeBtn && activeBtn.getAttribute("data-preset") === preset) {
+                clearAllFilters();
+                updatePresetActiveState(null);
+                onFilterChange(routeFromHash());
+                return;
+            }
 
-            var searchEl = document.getElementById("filter-search");
+            // Clear everything first, then apply the preset
+            clearAllFilters();
+
+            // Use page-specific filter IDs (locks page has no suffix, history has "-history")
+            var suffix = routeFromHash() === "history" ? "-history" : "";
 
             switch (preset) {
                 case "my-locks":
-                    if (SUPABASE_USER && searchEl) {
-                        searchEl.value = SUPABASE_USER;
+                    var devEl = document.getElementById("filter-developer" + suffix);
+                    if (SUPABASE_USER && devEl) {
+                        devEl.value = SUPABASE_USER;
                     }
                     break;
                 case "conflicts":
-                    var statusEl = document.getElementById("filter-status");
-                    // Navigate to history and set conflict filter
+                    // Conflicts only exist in history — navigate there if needed
                     if (routeFromHash() !== "history") {
                         navigate("history");
+                        suffix = "-history";
                     }
-                    // Set history status filter
                     var histStatusEl = document.getElementById("filter-status-history");
-                    if (histStatusEl) histStatusEl.value = "all";
-                    break;
-                case "stale":
-                    // Set status to active (stale means active > 30 min, so just show active)
-                    var sEl = document.getElementById("filter-status");
-                    if (sEl) sEl.value = "active";
+                    if (histStatusEl) histStatusEl.value = "conflict";
                     break;
                 case "agents":
-                    var aEl = document.getElementById("filter-agent");
-                    if (aEl) aEl.value = "AI Agent";
+                    var roleEl = document.getElementById("filter-role" + suffix);
+                    if (roleEl) roleEl.value = "agent";
                     break;
             }
             onFilterChange(routeFromHash());
             updatePresetActiveState(preset);
+        }
+
+        function clearAllFilters() {
+            window.DashboardFilters.clearFilterInputs();
+            clearHistoryFilterInputs();
+            // Also clear role filter
+            var roleEl = document.getElementById("filter-role");
+            if (roleEl) roleEl.value = "all";
         }
 
         function updatePresetActiveState(activePreset) {
@@ -2907,6 +3221,21 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 } else {
                     btn.classList.remove("active-preset");
                 }
+            });
+        }
+
+        function clearHistoryFilterInputs() {
+            var histIds = [
+                "filter-search-history", "filter-developer-history",
+                "filter-agent-history", "filter-glob-history",
+                "filter-status-history", "filter-role-history",
+                "filter-date-from-history", "filter-date-to-history",
+            ];
+            histIds.forEach(function (id) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                if (el.tagName === "SELECT") el.value = "all";
+                else el.value = "";
             });
         }
 
@@ -2958,59 +3287,6 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 '<div class="detail-grid">' + gridHtml + '</div>' + jsonHtml + '</td>';
             row.parentNode.insertBefore(detailRow, row.nextSibling);
             expandedRowPath = filePath;
-        }
-
-        // ===================================================================
-        // Shareable URL — encode filter state in hash
-        // ===================================================================
-
-        function updateShareableURL() {
-            var filters = routeFromHash() === "history"
-                ? getHistoryFiltersFromDOM()
-                : window.DashboardFilters.getActiveFiltersFromDOM();
-            var qs = window.DashboardFilters.buildQueryString(filters);
-            var baseHash = routeFromHash() === "history" ? "#history" : "#locks";
-            var newHash = baseHash + qs;
-            if (window.location.hash !== newHash) {
-                // Use replaceState to avoid adding to history
-                try {
-                    history.replaceState(null, "", newHash);
-                } catch (e) { /* noop */ }
-            }
-        }
-
-        function applyFiltersFromHash() {
-            var hash = window.location.hash || "";
-            var qsIndex = hash.indexOf("?");
-            if (qsIndex === -1) return;
-            var qs = hash.substring(qsIndex);
-            var filters = window.DashboardFilters.parseQueryString(qs);
-            if (!Object.keys(filters).length) return;
-
-            // Apply to current page's filter inputs
-            var suffix = routeFromHash() === "history" ? "-history" : "";
-            var map = {
-                search: "filter-search" + suffix,
-                developerId: "filter-developer" + suffix,
-                agentLabel: "filter-agent" + suffix,
-                glob: "filter-glob" + suffix,
-                status: "filter-status" + suffix,
-                dateFrom: "filter-date-from" + suffix,
-                dateTo: "filter-date-to" + suffix,
-            };
-            var keys = Object.keys(map);
-            var page = routeFromHash();
-            for (var i = 0; i < keys.length; i++) {
-                var v = filters[keys[i]];
-                if (v) {
-                    var el = document.getElementById(map[keys[i]]);
-                    if (el) {
-                        if (el.tagName === "SELECT") el.value = v;
-                        else el.value = v;
-                    }
-                }
-            }
-            onFilterChange(page);
         }
 
         // ===================================================================
