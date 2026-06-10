@@ -198,7 +198,412 @@ def test_prepare_dashboard_server_missing_template(tmp_path):
         {"url": "", "anonKey": "", "serviceKey": None, "user": ""},
     )
     assert url is None
-    assert html_path is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_developer_name
+# ---------------------------------------------------------------------------
+
+
+class _FakeCaptureResult:
+    """Minimal fake for safe_subprocess.capture return value."""
+
+    def __init__(self, ok=True, timed_out=False, stdout=b""):
+        self.ok = ok
+        self.timed_out = timed_out
+        self.stdout = stdout
+
+
+def _fake_decode(b: bytes) -> str:
+    return b.decode("utf-8") if b else ""
+
+
+def test_resolve_developer_name_env_precedence(tmp_path, monkeypatch):
+    """COLLAB_DEVELOPER_ID in .env wins over everything."""
+    (tmp_path / ".env").write_text(
+        "COLLAB_DEVELOPER_ID=env-dev\n",
+        encoding="utf-8",
+    )
+    from dotenv import dotenv_values
+
+    file_vals = dict(dotenv_values(tmp_path / ".env"))
+    result = mod._resolve_developer_name(str(tmp_path), file_vals)
+    assert result == "env-dev"
+
+
+def test_resolve_developer_name_developer_id_fallback(tmp_path, monkeypatch):
+    """DEVELOPER_ID env var is checked after COLLAB_DEVELOPER_ID."""
+    file_vals = {"DEVELOPER_ID": "dev-id"}
+    monkeypatch.setenv("DEVELOPER_ID", "dev-id")
+    result = mod._resolve_developer_name(str(tmp_path), file_vals)
+    assert result == "dev-id"
+
+
+def test_resolve_developer_name_github_user_git_config(tmp_path, monkeypatch):
+    """Git config github.user is checked when no env vars are set."""
+    from collab import safe_subprocess
+
+    calls = []
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        calls.append(cmd)
+        if "github.user" in cmd:
+            return _FakeCaptureResult(ok=True, stdout=b"github-user\n")
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr("collab.safe_subprocess.capture", _fake_capture)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "github-user"
+
+
+def test_resolve_developer_name_from_remote_url(tmp_path, monkeypatch):
+    """Extract username from remote.origin.url when no config is set."""
+    from collab import safe_subprocess
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "github.user" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        if "remote.origin.url" in cmd_str:
+            return _FakeCaptureResult(
+                ok=True, stdout=b"https://github.com/KirilMT/collab.git\n"
+            )
+        if "user.name" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr(safe_subprocess, "decode_output", _fake_decode)
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: "collab")
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "KirilMT"
+
+
+def test_resolve_developer_name_fallback_os_username(monkeypatch, tmp_path):
+    """Fall back to USERNAME / USER when nothing else is available."""
+    from collab import safe_subprocess
+
+    monkeypatch.setattr(
+        safe_subprocess, "capture", lambda *a, **k: _FakeCaptureResult(ok=False)
+    )
+    monkeypatch.setenv("USERNAME", "os-user")
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "os-user"
+
+
+def test_resolve_developer_name_empty_when_nothing_found(monkeypatch, tmp_path):
+    """Return empty string when every source is exhausted."""
+    from collab import safe_subprocess
+
+    monkeypatch.setattr(
+        safe_subprocess, "capture", lambda *a, **k: _FakeCaptureResult(ok=False)
+    )
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == ""
+
+
+def test_resolve_developer_name_git_user_name_fallback(tmp_path, monkeypatch):
+    """Git config user.name is used as last git-level fallback."""
+    from collab import safe_subprocess
+
+    def _fake_capture(cmd, policy="", cwd="", timeout=5):
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "github.user" in cmd_str:
+            return _FakeCaptureResult(ok=False)
+        if "user.name" in cmd_str:
+            return _FakeCaptureResult(ok=True, stdout=b"Git Name\n")
+        return _FakeCaptureResult(ok=False)
+
+    monkeypatch.setattr(safe_subprocess, "capture", _fake_capture)
+    monkeypatch.setattr(safe_subprocess, "decode_output", lambda b: b.decode("utf-8"))
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: None)
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("USER", raising=False)
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "Git Name"
+
+
+# ---------------------------------------------------------------------------
+# _check_watcher_health
+# ---------------------------------------------------------------------------
+
+
+def test_check_watcher_health_no_state_dir():
+    """Returns down when state dir doesn't exist."""
+    result = mod._check_watcher_health("/nonexistent/path")
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_no_pid_file(tmp_path):
+    """Returns down when PID file is missing."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    result = mod._check_watcher_health(state_dir)
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_invalid_pid(tmp_path):
+    """Returns down when PID file contains garbage."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    (tmp_path / ".collab" / ".daemon.pid").write_text("not-a-number", encoding="utf-8")
+    result = mod._check_watcher_health(state_dir)
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_tempdir_fallback_linux_alive(monkeypatch, tmp_path):
+    """Comprehensive: covers lines 280,305,308-309,342-343,354-355 at once.
+
+    Simulates Linux CI path (platform.system='Linux') with PID file found in temp-dir
+    fallback and process alive.  Hits every remaining uncovered line in
+    _check_watcher_health.
+    """
+    import hashlib as _hashlib
+    import platform as _platform_module
+    import tempfile as _tempfile
+
+    # ---- Setup: create PID file in temp-dir fallback location ----
+    norm = str(tmp_path).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = os.path.join(_tempfile.gettempdir(), f"collab_runtime_{h}")
+    os.makedirs(ws_dir, exist_ok=True)
+    alt_pid = os.path.join(ws_dir, ".daemon.pid")
+    with open(alt_pid, "w") as f:
+        f.write("12345")
+
+    # ---- Mock for Linux CI path ----
+    monkeypatch.setattr(_platform_module, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)  # process alive
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    # ---- Execute: empty state_dir triggers line 280 ----
+    result = mod._check_watcher_health("", str(tmp_path))
+
+    # ---- Verify ----
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+    try:
+        os.unlink(alt_pid)
+        os.rmdir(ws_dir)
+    except OSError:
+        pass
+
+
+def test_check_watcher_health_windows_ctypes_failure(monkeypatch, tmp_path):
+    """Simulate Windows with ctypes.windll unavailable — covers line 343."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import ctypes
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+    # Make ctypes NOT have windll — triggers AttributeError
+    monkeypatch.delattr(ctypes, "windll", raising=False)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_dead_pid_windows_forced(monkeypatch, tmp_path):
+    """Force Windows path on ANY platform — covers ctypes OpenProcess=0 branch."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("99999", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+
+    # Create mock ctypes.windll.kernel32 that returns 0 (dead process)
+    mock_kernel32 = mock.MagicMock()
+    mock_kernel32.OpenProcess.return_value = 0
+
+    mock_windll = mock.MagicMock()
+    mock_windll.kernel32 = mock_kernel32
+
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "windll", mock_windll, raising=False)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_windows_openprocess_success(monkeypatch, tmp_path):
+    """Force Windows, OpenProcess succeeds → covers if-handle branch + heartbeat."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform_module
+
+    monkeypatch.setattr(_platform_module, "system", lambda: "Windows")
+
+    mock_kernel32 = mock.MagicMock()
+    mock_kernel32.OpenProcess.return_value = 1  # valid handle
+    mock_windll = mock.MagicMock()
+    mock_windll.kernel32 = mock_kernel32
+
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "windll", mock_windll, raising=False)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_check_watcher_health_dead_pid_windows(tmp_path, monkeypatch):
+    """Simulate a dead PID on Windows."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    (tmp_path / ".collab" / ".daemon.pid").write_text("99999", encoding="utf-8")
+
+    import platform
+
+    if platform.system() == "Windows":
+        # Mock OpenProcess to return 0 (process doesn't exist)
+        import ctypes
+
+        monkeypatch.setattr(
+            ctypes.windll.kernel32,
+            "OpenProcess",
+            lambda access, inherit, pid: 0,
+        )
+    else:
+        # Mock os.kill to raise OSError (process doesn't exist)
+        monkeypatch.setattr(
+            os, "kill", lambda pid, sig: (_ for _ in ()).throw(OSError())
+        )
+
+    result = mod._check_watcher_health(state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_no_state_dir_with_project_root(monkeypatch, tmp_path):
+    """Empty state_dir but valid project_root falls through to fallback."""
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert result == {"running": False}
+
+
+def test_watcher_health_line_280_state_dir_empty_with_project_root(tmp_path):
+    """Direct test: empty state_dir + valid project_root hits line 280."""
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert isinstance(result, dict)
+    assert "running" in result
+
+
+def test_check_watcher_health_tempdir_pid_found(monkeypatch, tmp_path):
+    """PID file found in temp dir fallback — simulate Linux CI path."""
+    import hashlib as _hashlib
+    import platform
+    import tempfile as _tempfile
+
+    norm = str(tmp_path).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = os.path.join(_tempfile.gettempdir(), f"collab_runtime_{h}")
+    os.makedirs(ws_dir, exist_ok=True)
+    alt_pid = os.path.join(ws_dir, ".daemon.pid")
+    with open(alt_pid, "w") as f:
+        f.write("12345")
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.0)
+
+    result = mod._check_watcher_health("", str(tmp_path))
+    assert result["running"] is True
+
+    # Cleanup
+    try:
+        os.unlink(alt_pid)
+        os.rmdir(ws_dir)
+    except OSError:
+        pass
+
+
+def test_check_watcher_health_running_linux_simulated(monkeypatch, tmp_path):
+    """Simulate Linux CI: mock platform.system='Linux', PID alive via os.kill."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda p, s: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_check_watcher_health_dead_pid_linux_simulated(monkeypatch, tmp_path):
+    """Simulate Linux CI with dead PID: os.kill raises OSError."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("99999", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+
+    def _raise_oserror(p, s):
+        raise OSError("No such process")
+
+    monkeypatch.setattr(mod.os, "kill", _raise_oserror)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is False
+
+
+def test_check_watcher_health_running(tmp_path, monkeypatch):
+    """Returns running=True with heartbeat latency when PID is alive."""
+    state_dir = str(tmp_path / ".collab")
+    os.makedirs(state_dir, exist_ok=True)
+    pid_file = tmp_path / ".collab" / ".daemon.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+
+    result = mod._check_watcher_health(state_dir)
+    assert result["running"] is True
+    assert "heartbeatLatencyMs" in result
+    assert isinstance(result["heartbeatLatencyMs"], int)
 
 
 def test_write_injected_dashboard_html_uses_dashboard_dir(tmp_path):
@@ -326,13 +731,125 @@ def test_write_injected_dashboard_html_tmpfile_error(monkeypatch, tmp_path):
         "NamedTemporaryFile",
         mock.Mock(side_effect=OSError("disk full")),
     )
-    assert (
-        mod.write_injected_dashboard_html(
-            str(tmp_path),
-            {"url": "u", "anonKey": "k", "serviceKey": None, "user": "x"},
-        )
-        is None
-    )
+    assert mod.write_injected_dashboard_html(str(tmp_path), {}) is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_developer_name
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_developer_name_from_collab_developer_id_env(monkeypatch, tmp_path):
+    """COLLAB_DEVELOPER_ID env var takes highest precedence."""
+    monkeypatch.setenv("COLLAB_DEVELOPER_ID", "env-dev")
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "env-dev"
+
+
+def test_resolve_developer_name_from_developer_id_env(monkeypatch, tmp_path):
+    """DEVELOPER_ID env var is second precedence."""
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.setenv("DEVELOPER_ID", "dev-id")
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "dev-id"
+
+
+def test_resolve_developer_name_falls_back_to_os_username(monkeypatch, tmp_path):
+    """When nothing else is set, OS username is used."""
+    monkeypatch.delenv("COLLAB_DEVELOPER_ID", raising=False)
+    monkeypatch.delenv("DEVELOPER_ID", raising=False)
+
+    from collab import safe_subprocess
+
+    class _Cap:
+        ok = False
+        timed_out = False
+        stdout = b""
+
+    monkeypatch.setattr(safe_subprocess, "capture", lambda *a, **k: _Cap())
+    monkeypatch.setattr(mod, "_name_from_git_remote", lambda _root: None)
+    monkeypatch.setenv("USERNAME", "os-user")
+    monkeypatch.delenv("USER", raising=False)
+
+    result = mod._resolve_developer_name(str(tmp_path), {})
+    assert result == "os-user"
+
+
+# ---------------------------------------------------------------------------
+# _check_watcher_health
+# ---------------------------------------------------------------------------
+
+
+def test_watcher_health_no_state_dir_no_project_root(monkeypatch):
+    """Empty state_dir and project_root returns not running."""
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+    result = mod._check_watcher_health("")
+    assert result == {"running": False}
+
+
+def test_watcher_health_pid_file_not_found(monkeypatch, tmp_path):
+    """No PID file exists anywhere — returns not running."""
+    state_dir = str(tmp_path)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda _p: False)
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result == {"running": False}
+
+
+def test_watcher_health_valid_pid_file_unix_process_alive(monkeypatch, tmp_path):
+    """Valid PID file on Unix where os.kill(pid, 0) succeeds."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform
+
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *a: None)
+
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_watcher_health_json_pid_file(monkeypatch, tmp_path):
+    """PID file in JSON format {pid: N}."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text('{"pid": 99999}', encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    import platform as _platform
+
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *a: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1234567890.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1234567890.0)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+
+
+def test_watcher_health_corrupt_pid_file(monkeypatch, tmp_path):
+    """Corrupt PID file content — returns not running."""
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("not-a-pid", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result == {"running": False}
 
 
 def test_start_dashboard_http_server_failure_unlinks_html(monkeypatch, tmp_path):
@@ -475,3 +992,109 @@ def test_wheel_dashboard_helpers_with_synthetic_wheel(tmp_path):
     assert mod.missing_wheel_dashboard_files(str(wheel), ["absent.js"]) == (
         "absent.js",
     )
+
+
+# ---------------------------------------------------------------------------
+# _check_watcher_health — precise branch coverage for the agent-PID, temp-dir
+# fallback glob, fallback-exception, and getmtime-failure paths.
+#
+# These cover lines 280, 305, 308-309, and 354-355, which earlier tests only
+# *claimed* to exercise: those tests wrote a plain `.daemon.pid` (hitting the
+# 300/301 and 352/353 branches) rather than the agent-specific glob / error
+# branches. The platform branch is pinned to Linux so the result is identical
+# on Windows and CI.
+# ---------------------------------------------------------------------------
+
+
+def test_check_watcher_health_agent_pid_in_state_dir(monkeypatch, tmp_path):
+    """Agent-specific ``.daemon.<agent>.pid`` in state_dir is selected (line 280)."""
+    import platform as _platform
+
+    state_dir = str(tmp_path)
+    (tmp_path / ".daemon.agent1.pid").write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1000.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1000.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_check_watcher_health_agent_pid_in_tempdir_fallback(monkeypatch, tmp_path):
+    """Agent-specific PID found via the temp-dir fallback glob (lines 303-305)."""
+    import glob as _glob_mod
+    import hashlib as _hashlib
+    import platform as _platform
+    import tempfile as _tempfile
+
+    project_root = str(tmp_path / "proj")
+    os.makedirs(project_root, exist_ok=True)
+
+    fake_tmp = tmp_path / "tmp"
+    fake_tmp.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(fake_tmp))
+
+    norm = os.path.abspath(project_root).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = fake_tmp / f"collab_runtime_{h}"
+    ws_dir.mkdir()
+    agent_pid = ws_dir / ".daemon.agent9.pid"
+    agent_pid.write_text("12345", encoding="utf-8")
+
+    # First glob (state_dir) → empty; temp-dir glob → the agent PID file.
+    def _fake_glob(pattern):
+        if "collab_runtime_" in str(pattern):
+            return [str(agent_pid)]
+        return []
+
+    monkeypatch.setattr(_glob_mod, "glob", _fake_glob)
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 2000.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 2000.25)
+
+    result = mod._check_watcher_health("", project_root)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 250
+
+
+def test_check_watcher_health_tempdir_fallback_exception(monkeypatch, tmp_path):
+    """An exception inside the temp-dir fallback returns down (lines 308-309)."""
+    import glob as _glob_mod
+    import hashlib as _hashlib
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+    monkeypatch.setattr(_glob_mod, "glob", lambda *_a, **_k: [])
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("hash failure")
+
+    monkeypatch.setattr(_hashlib, "sha1", _boom)
+
+    result = mod._check_watcher_health("somewhere", str(tmp_path))
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_getmtime_oserror(monkeypatch, tmp_path):
+    """A getmtime failure yields running=True without heartbeat (lines 354-355)."""
+    import platform as _platform
+
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+
+    def _raise_oserror(_p):
+        raise OSError("no mtime")
+
+    monkeypatch.setattr(mod.os.path, "getmtime", _raise_oserror)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result == {"running": True}

@@ -221,6 +221,10 @@ test.describe("Collaborative Lock Dashboard — populated (seeded data)", () => 
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
+    // Flush any pending timers / rAF callbacks induced by Chart.js
+    // initialization so the page is stable before interactions.
+    await page.clock.fastForward(0);
+
     // Wait until the dashboard has rendered the seeded data (deterministic).
     await expect(page.getByTestId("stat-active")).toHaveText(
       EXPECTED_STATS.active,
@@ -246,10 +250,9 @@ test.describe("Collaborative Lock Dashboard — populated (seeded data)", () => 
     );
     await expect(page.getByTestId("stat-avg")).toHaveText(EXPECTED_STATS.avg);
 
-    // On the locks view the active tab (Active Locks) is disabled by design;
-    // History + Sync remain interactive.
-    await expect(page.getByTestId("nav-locks")).toBeDisabled();
-    await expect(page.getByTestId("nav-history")).toBeEnabled();
+    // Only the non-active nav button is visible (primary style)
+    await expect(page.getByTestId("nav-locks")).toBeHidden();
+    await expect(page.getByTestId("nav-history")).toBeVisible();
     await expect(page.getByTestId("sync-btn")).toBeEnabled();
   });
 

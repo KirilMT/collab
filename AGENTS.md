@@ -405,6 +405,39 @@ stands.
 - Verify through tools before asking user.
 - Ask only when genuinely blocked by missing requirements or lock conflicts.
 
+### CI Parity (CRITICAL — Never "Push and Hope")
+
+- **Never push code expecting CI to catch what local validation missed.**
+  If CI runs on Linux, simulate Linux locally via `platform.system` mocking.
+  If CI runs on Ubuntu, simulate Ubuntu. The local environment MUST match CI
+  exactly — no exceptions.
+- **diff-cover MUST use `--compare-branch=origin/main`**, not HEAD or HEAD~1.
+  This is what CI uses. Comparing against HEAD will always report "no coverage
+  information" and hide real gaps.
+- **Fix ALL missing lines at once.** Do not target one line at a time.
+  Run diff-cover first, read the full list of missing lines, then write
+  comprehensive tests covering every line in a single iteration.
+- **Never use `# pragma: no cover` or any bypass annotation.** Write proper
+  tests that exercise the code path. If a branch is "Windows-only" and CI
+  runs on Linux, mock `platform.system` → `"Windows"` and mock the
+  platform-specific APIs (e.g. `ctypes.windll` via `MagicMock`).
+- **Coverage data corruption:** The `_configure_coverage_data_file()` call
+  in `scripts/validate_code.py` routes `.coverage` to a temp directory
+  during test collection, corrupting aggregated coverage data. Always set
+  `$env:CI = "1"` and `$env:COVERAGE_FILE = "$PWD\.coverage"` before
+  running full-suite coverage. The `PYTEST_CURRENT_TEST` guard now
+  prevents this in most cases, but explicit env vars are safest.
+
+### Pre-Commit/Push Workflow (MUST follow this order)
+
+1. Run targeted tests: `pytest tests/backend/unit/<changed>/ -q`
+2. Generate full coverage: `$env:CI="1"; $env:COVERAGE_FILE="$PWD\.coverage"; pytest tests/backend/ --cov=collab --cov=scripts --cov-report=xml -q`
+3. Check diff-cover: `diff-cover coverage.xml --compare-branch=origin/main --fail-under=95`
+4. If diff-cover fails: **fix ALL missing lines**, re-run from step 1
+5. Format: `python scripts/format_code.py`
+6. Full validation: `python scripts/validate_code.py --quick`
+7. If all pass → stage, commit, push
+
 ### File Locking Protocol
 
 Before editing:
@@ -454,5 +487,5 @@ Workflow procedures are in `.agents/skills/`:
 
 ## Version
 
-**Version:** 0.3.2
-**Last Updated:** May 31, 2026
+**Version:** 0.3.3
+**Last Updated:** June 2, 2026

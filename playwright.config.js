@@ -82,8 +82,12 @@ module.exports = defineConfig({
   expect: {
     timeout: 10_000,
     toHaveScreenshot: {
+      // Cross-platform tolerant thresholds: Windows generates baselines,
+      // CI (Linux) verifies them. Font rendering differs ~3-4% pixel ratio
+      // and ~10% per-pixel color between OSes. These thresholds catch real
+      // layout breaks while ignoring cross-platform text rendering diffs.
       maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      threshold: 0.12,
       animations: "disabled",
     },
   },

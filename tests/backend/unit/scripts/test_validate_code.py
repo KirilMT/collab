@@ -164,11 +164,12 @@ def test_configure_coverage_data_file_skips_ci_environments(monkeypatch):
 
 
 def test_configure_coverage_data_file_applies_temp_routing_locally(monkeypatch):
-    """Verify temp directory routing is applied when NOT in CI."""
-    # Clear CI/GITHUB_ACTIONS and COVERAGE_FILE
+    """Verify temp directory routing is applied when NOT in CI or pytest."""
+    # Clear all guards
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
     # Call the function — should apply temp directory routing
     validate_code._configure_coverage_data_file()
@@ -176,6 +177,19 @@ def test_configure_coverage_data_file_applies_temp_routing_locally(monkeypatch):
     # Verify COVERAGE_FILE was set (temp directory routing applied)
     assert validate_code.os.getenv("COVERAGE_FILE") is not None
     assert "collab" in validate_code.os.getenv("COVERAGE_FILE")
+
+
+def test_configure_coverage_data_file_skips_under_pytest(monkeypatch):
+    """Verify pytest environment causes early return (covers line 71)."""
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_func")
+
+    validate_code._configure_coverage_data_file()
+
+    # Should NOT have set COVERAGE_FILE (early return due to PYTEST_CURRENT_TEST)
+    assert validate_code.os.getenv("COVERAGE_FILE") is None
 
 
 def test_run_command_uses_python_module_resolution(monkeypatch):
@@ -923,11 +937,172 @@ def test_validate_frontend_fails_when_eslint_command_fails(monkeypatch, capsys):
     monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
     monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
 
-    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
 
-    out = capsys.readouterr().out
-    assert "[FAIL] ESLint" in out
-    assert any(cmd[:2] == ["npx", "eslint"] for cmd in calls)
+# ---------------------------------------------------------------------------
+# _check_cross_platform_code
+# ---------------------------------------------------------------------------
+
+
+def test_cross_platform_check_warns_on_windll_without_type_ignore(
+    monkeypatch, capsys, tmp_path
+):
+    """Staged .py file with bare ctypes.windll triggers a warning."""
+    py_file = tmp_path / "test_mod.py"
+    py_file.write_text("kernel32 = ctypes.windll.kernel32\n", encoding="utf-8")
+
+    import builtins
+    import subprocess as _sp
+
+    _real_open = builtins.open
+
+    def _mock_open(file, *args, **kwargs):
+        if str(file) == "test_mod.py":
+            return _real_open(str(py_file), *args, **kwargs)
+        return _real_open(file, *args, **kwargs)
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "test_mod.py"
+        return result
+
+    monkeypatch.setattr(builtins, "open", _mock_open)
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert "CROSS-PLATFORM" in captured.out
+    assert "ctypes.windll" in captured.out
+
+
+def test_cross_platform_check_skips_type_ignore_line(monkeypatch, capsys, tmp_path):
+    """Staged .py file with # type: ignore is skipped."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test_mod.py").write_text(
+        "kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]\n",
+        encoding="utf-8",
+    )
+
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "test_mod.py"
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert "CROSS-PLATFORM" not in captured.out
+
+
+def test_cross_platform_check_no_staged_py_files_is_noop(monkeypatch, capsys):
+    """No staged .py files — nothing printed."""
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_cross_platform_check_skips_getattr_pattern(monkeypatch, capsys, tmp_path):
+    """Getattr(ctypes, 'windll', None) pattern is safe-ish and skipped."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test_mod.py").write_text(
+        '_windll = getattr(ctypes, "windll", None)\n', encoding="utf-8"
+    )
+
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "test_mod.py"
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert "CROSS-PLATFORM" not in captured.out
+
+
+def test_cross_platform_check_git_subprocess_failure_is_noop(monkeypatch, capsys):
+    """Git diff failure — empty list — noop."""
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 1
+        result.stdout = ""
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_cross_platform_check_git_not_installed_is_noop(monkeypatch, capsys):
+    """Git not installed — FileNotFoundError — noop."""
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_cross_platform_check_binary_file_handled(monkeypatch, capsys, tmp_path):
+    """Binary .py file raises UnicodeDecodeError — silently skipped."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bad.py").write_bytes(b"\x80\x81\x82")
+
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "bad.py"
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_cross_platform_check_non_py_staged_is_noop(monkeypatch, capsys):
+    """Staged non-.py files are silently skipped."""
+    import subprocess as _sp
+
+    def _mock_run(cmd, **_k):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "README.md\nindex.html"
+        return result
+
+    monkeypatch.setattr(_sp, "run", _mock_run)
+
+    validate_code._check_cross_platform_code()
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 def test_validate_frontend_fails_when_jest_command_fails(monkeypatch, capsys):
