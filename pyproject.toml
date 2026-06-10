@@ -104,16 +104,31 @@ select = ["E", "F", "W"]
 [tool.coverage.run]
 source = ["collab", "scripts"]
 data_file = "${COVERAGE_FILE-.coverage}"
+# Never measure the project virtualenv or any installed copy of the package.
+# Tests run against the in-tree sources; an installed copy under site-packages
+# would otherwise be double-counted as a separate, near-0% set of files.
 omit = [
   "*/tests/*",
   "*/venv/*",
   "*/.venv/*",
+  "*/site-packages/*",
 ]
 
 [tool.coverage.report]
 precision = 2
 show_missing = true
 skip_covered = false
+# `coverage report` honors [report] omit (NOT [run] omit). Mirror the run-level
+# excludes here so the CI threshold check ignores the virtualenv / installed
+# duplicate even if a subprocess records it into the data file (e.g. a git hook
+# subprocess that imports the installed package). This is double-measurement
+# hygiene, not a coverage-threshold bypass.
+omit = [
+  "*/tests/*",
+  "*/venv/*",
+  "*/.venv/*",
+  "*/site-packages/*",
+]
 
 [tool.coverage.html]
 directory = "htmlcov"
