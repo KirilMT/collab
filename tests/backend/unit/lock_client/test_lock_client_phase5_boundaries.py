@@ -146,7 +146,7 @@ def test_discover_running_watchers_survives_tasklist_failure(monkeypatch):
     assert client._discover_running_watchers() == []
 
 
-def test_cleanup_orphaned_processes_survives_tasklist_failure(monkeypatch):
+def test_cleanup_orphaned_processes_survives_tasklist_failure(monkeypatch, capsys):
     monkeypatch.setattr(mod.sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
 
@@ -154,28 +154,58 @@ def test_cleanup_orphaned_processes_survives_tasklist_failure(monkeypatch):
         raise RuntimeError("tasklist failed")
 
     monkeypatch.setattr(mod.platform_probe, "iter_tasklist_python_pids", _boom)
+
+    # Record any kill attempts so we can assert the failure path kills nothing.
+    killed: list = []
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "taskkill_force",
+        lambda pid, **_k: killed.append(pid),
+    )
+
     client = mod.LockClient(local_only=True)
     client.cleanup_orphaned_processes()
+
+    # The tasklist failure must be swallowed; no orphan can be discovered or
+    # killed, so the "no orphans" branch is taken.
+    assert killed == []
+    assert "No orphaned lock_client processes found." in capsys.readouterr().out
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows taskkill path")
 def test_terminate_process_swallows_taskkill_security_error(monkeypatch):
-    def _blocked(*_a, **_k):
+    calls: list = []
+
+    def _blocked(argv, *_a, **_k):
+        calls.append(list(argv))
         raise SubprocessSecurityError("taskkill blocked")
 
     monkeypatch.setattr(mod.safe_subprocess, "run", _blocked)
     client = mod.LockClient(local_only=True)
+
+    # Must not raise even though taskkill is rejected.
     client._terminate_process(4242)
+
+    assert len(calls) == 1
+    assert calls[0] == ["taskkill", "/F", "/PID", "4242"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows taskkill path")
 def test_terminate_process_swallows_taskkill_runtime_error(monkeypatch):
-    def _boom(*_a, **_k):
+    calls: list = []
+
+    def _boom(argv, *_a, **_k):
+        calls.append(list(argv))
         raise RuntimeError("taskkill failed")
 
     monkeypatch.setattr(mod.safe_subprocess, "run", _boom)
     client = mod.LockClient(local_only=True)
+
+    # Must not raise even though taskkill explodes.
     client._terminate_process(4242)
+
+    assert len(calls) == 1
+    assert calls[0] == ["taskkill", "/F", "/PID", "4242"]
 
 
 def test_lock_service_hostname_empty_and_invalid(monkeypatch):
@@ -218,13 +248,18 @@ def test_ensure_lock_service_reachable_socket_failure(monkeypatch):
         mod._ensure_lock_service_reachable()
 
 
-def test_is_lock_service_error_typed_and_token_match(monkeypatch):
+def test_is_lock_service_error_typed_and_is_same_machine_token(monkeypatch):
+    """Covers both ``_is_lock_service_error`` typing and ``_is_same_machine_token``."""
     assert mod._is_lock_service_error(LockServiceUnavailableError("down"))
     assert mod._is_lock_service_error(RuntimeError("connection refused"))
+    assert not mod._is_lock_service_error(ValueError("unrelated failure"))
 
     client = mod.LockClient(developer_id="alice", local_only=True)
     token = client._get_session_token()
+    # A token freshly minted for this client/machine must be recognised as local.
     assert client._is_same_machine_token(token)
+    # A token that was never generated on this machine must be rejected.
+    assert not client._is_same_machine_token("definitely-not-a-real-token")
 
     monkeypatch.setattr(
         mod.safe_subprocess,

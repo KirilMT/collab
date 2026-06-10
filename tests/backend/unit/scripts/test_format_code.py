@@ -122,23 +122,32 @@ def test_format_python_invokes_five_steps(monkeypatch):
     assert "Final linting (flake8)" in seen
 
 
-def test_check_prettier_and_filter_targets(monkeypatch, tmp_path):
+def test_check_prettier_missing_plugin_returns_false(monkeypatch, tmp_path, capsys):
     formatter = format_code.CodeFormatter()
     monkeypatch.setattr(formatter, "root_dir", tmp_path)
-    (tmp_path / "a.js").write_text("x", encoding="utf-8")
 
     call_index = {"n": 0}
 
     def _run(*_a, **_k):
         call_index["n"] += 1
-        # prettier installed, plugin missing
+        # prettier installed (first probe), prettier-plugin-yaml missing (second).
         if call_index["n"] == 1:
             return _mock_completed(0)
         return _mock_completed(1)
 
     monkeypatch.setattr(format_code.subprocess, "run", _run)
     assert formatter._check_prettier() is False
+    # Both the prettier probe and the plugin probe must run before failing.
+    assert call_index["n"] == 2
+    assert "prettier-plugin-yaml not installed" in capsys.readouterr().out
 
+
+def test_filter_glob_targets_drops_empty_patterns(monkeypatch, tmp_path):
+    formatter = format_code.CodeFormatter()
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
+
+    # Only patterns that actually match files on disk are retained.
     assert formatter._filter_glob_targets(["*.js", "*.css"]) == ["*.js"]
 
 
@@ -176,7 +185,7 @@ def test_format_yaml_with_files(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("djlint_version_ok", [False, True])
-def test_format_templates_paths(monkeypatch, djlint_version_ok):
+def test_format_templates_paths(monkeypatch, capsys, djlint_version_ok):
     formatter = format_code.CodeFormatter(files=["collab/dashboard/index.html"])
 
     exec_calls = {"n": 0}
@@ -191,6 +200,18 @@ def test_format_templates_paths(monkeypatch, djlint_version_ok):
 
     monkeypatch.setattr(formatter, "_exec", _exec)
     assert formatter.format_templates() is True
+
+    out = capsys.readouterr().out
+    if djlint_version_ok:
+        # djlint present: version probe + reformat both execute, formatting runs.
+        assert exec_calls["n"] >= 2
+        assert "JINJA2 TEMPLATE FORMATTING" in out
+        assert "Jinja2 templates (djlint) - SUCCESS" in out
+        assert "djlint not installed" not in out
+    else:
+        # djlint missing: only the version probe runs and formatting is skipped.
+        assert exec_calls["n"] == 1
+        assert "djlint not installed - skipping template formatting" in out
 
 
 def test_format_templates_check_failure(monkeypatch):
@@ -376,19 +397,41 @@ def test_prettier_and_target_early_returns(monkeypatch):
     assert formatter.format_yaml() is True
 
 
-def test_dunder_main_path(monkeypatch):
+def test_main_default_argv_all_sections(monkeypatch):
+    # Default argv (no --backend/--frontend/--docs flags) must run every
+    # formatting section in order, plus the always-on YAML pass.
     monkeypatch.setattr(format_code, "clean_caches", lambda dry_run=False: 0)
+
+    sections: list[str] = []
+
+    def _record(name):
+        def _section(self):
+            sections.append(name)
+            return True
+
+        return _section
+
     monkeypatch.setattr(
-        format_code.CodeFormatter, "normalize_whitespace", lambda self: True
+        format_code.CodeFormatter, "normalize_whitespace", _record("whitespace")
     )
-    monkeypatch.setattr(format_code.CodeFormatter, "format_python", lambda self: True)
-    monkeypatch.setattr(format_code.CodeFormatter, "format_frontend", lambda self: True)
+    monkeypatch.setattr(format_code.CodeFormatter, "format_python", _record("python"))
     monkeypatch.setattr(
-        format_code.CodeFormatter, "format_templates", lambda self: True
+        format_code.CodeFormatter, "format_frontend", _record("frontend")
     )
-    monkeypatch.setattr(format_code.CodeFormatter, "format_docs", lambda self: True)
-    monkeypatch.setattr(format_code.CodeFormatter, "format_yaml", lambda self: True)
+    monkeypatch.setattr(
+        format_code.CodeFormatter, "format_templates", _record("templates")
+    )
+    monkeypatch.setattr(format_code.CodeFormatter, "format_docs", _record("docs"))
+    monkeypatch.setattr(format_code.CodeFormatter, "format_yaml", _record("yaml"))
     monkeypatch.setattr(format_code.CodeFormatter, "print_summary", lambda self: None)
     monkeypatch.setattr(sys, "argv", ["format_code.py"])
 
     assert format_code.main() == 0
+    assert sections == [
+        "whitespace",
+        "python",
+        "frontend",
+        "templates",
+        "docs",
+        "yaml",
+    ]

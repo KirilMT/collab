@@ -733,6 +733,9 @@ def test_watch_adoption_detected_shutdown(monkeypatch, tmp_path):
     lc._initial_ppid = 1000
     lc.watch(interval=1, timeout_mins=60, daemon_mode=True, parent_pid=4242)
 
+    # Adoption by a different parent PID must trigger graceful shutdown.
+    assert shutdown_called[0] is True
+
 
 def test_watch_skips_release_when_git_status_fails(monkeypatch, tmp_path, caplog):
     """Watch loop preserves locks when git status snapshot fails.

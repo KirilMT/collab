@@ -277,7 +277,8 @@ def test_register_signal_handlers_non_win32(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     lc._register_signal_handlers()
-    assert mod.signal.SIGINT in signals_set or len(signals_set) >= 1
+    assert mod.signal.SIGINT in signals_set
+    assert mod.signal.SIGTERM in signals_set
 
 
 def test_register_signal_handlers_test_mode_skips_atexit(monkeypatch, tmp_path):

@@ -39,24 +39,29 @@ def test_reconcile_stale_locks(monkeypatch, tmp_path):
     assert "src/new.py" in result
 
 
-def test_reconcile_git_error(monkeypatch, tmp_path):
-    """Test _reconcile handles git status errors."""
+def test_reconcile_git_error_preserves_current_locks(monkeypatch, tmp_path):
+    """A failure computing modified files must NOT release locks.
+
+    When ``_get_modified_and_unpushed_files`` raises, returning an empty set would make
+    reconcile release everything. Instead _reconcile must degrade to a no-op by
+    returning the locks this developer currently holds.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    def error_git_status():
+    def _boom(self):
         raise RuntimeError("Git broken")
 
-    monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(error_git_status)
-    )
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
+    monkeypatch.setattr(mod.LockClient, "_get_modified_and_unpushed_files", _boom)
+
+    locks_data = [{"file_path": "src/held.py", "developer_id": "test_user"}]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="test_user")
     result = lc._reconcile()
-    assert isinstance(result, set)
+    # Safety: degradation keeps the held lock rather than releasing everything.
+    assert result == {"src/held.py"}
 
 
 def test_reconcile_supabase_error(monkeypatch, tmp_path):

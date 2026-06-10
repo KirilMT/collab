@@ -24,6 +24,9 @@ def test_history_all_files(monkeypatch):
     lc = mod.LockClient(developer_id="test_user")
     history = lc.history()
     assert isinstance(history, list)
+    assert len(history) == 2
+    assert [rec["action"] for rec in history] == ["acquired", "released"]
+    assert all(rec["file_path"] == "collab/app.py" for rec in history)
 
 
 def test_history_specific_file(monkeypatch):
@@ -40,6 +43,9 @@ def test_history_specific_file(monkeypatch):
     lc = mod.LockClient(developer_id="test_user")
     history = lc.history(file_path="collab/app.py", limit=10)
     assert isinstance(history, list)
+    assert len(history) == 1
+    assert history[0]["file_path"] == "collab/app.py"
+    assert history[0]["action"] == "acquired"
 
 
 def test_history_exception(monkeypatch):
@@ -306,8 +312,8 @@ def test_prune_history_fallback_exception_path(monkeypatch):
 # ============================================================================
 
 
-def test_history_fallback_exception_logs_warning(monkeypatch, caplog):
-    """History() basename fallback logs debug message on failure, not silent pass."""
+def test_history_fallback_exception_logs_debug(monkeypatch, caplog):
+    """History() basename fallback logs a DEBUG message on failure, not silent pass."""
     import logging
 
     monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "admin_key")

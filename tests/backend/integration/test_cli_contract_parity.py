@@ -125,14 +125,17 @@ class TestCLICommandAvailability:
         assert "collab-runtime" in stdout
 
     def test_restart_command_available(self) -> None:
-        """Verify 'restart' command is available."""
-        exit_code, stdout, _ = run_collab_cli(
+        """Verify 'restart' command is registered and exits cleanly."""
+        exit_code, _, stderr = run_collab_cli(
             "restart",
             expect_success=False,
         )
-        # restart may fail in isolated env (no Supabase), but should not crash
+        # restart may fail in isolated env (no Supabase), but must be a
+        # recognized command (argparse must not reject it as an unknown choice)
+        # and must not crash with an unhandled traceback.
         assert exit_code in (0, 1)
-        assert len(stdout) > 0 or len(stdout) == 0  # daemon-stop may emit nothing
+        assert "invalid choice" not in stderr.lower()
+        assert "traceback (most recent call last)" not in stderr.lower()
 
     def test_ping_command_available(self) -> None:
         """Verify 'ping' command is available."""
@@ -219,9 +222,15 @@ class TestCLICommandVariants:
             "nonexistent-command",
             expect_success=False,
         )
-        # Should fail (non-zero exit) with error output
+        # Should fail (non-zero exit) with a meaningful argparse error on stderr
         assert exit_code != 0
-        assert len(stderr) > 0 or len(stderr) == 0  # Either way is OK
+        assert stderr.strip(), "expected an error message on stderr"
+        lowered = stderr.lower()
+        assert (
+            "invalid choice" in lowered
+            or "usage" in lowered
+            or "nonexistent-command" in lowered
+        )
 
 
 class TestCLIDashboardAssetIntegrity:

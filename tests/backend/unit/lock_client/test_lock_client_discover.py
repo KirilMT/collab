@@ -117,7 +117,9 @@ def test_is_process_alive_win32_access_denied(monkeypatch):
 
 def test_is_process_alive_win32_tasklist_fallback(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # Force ImportError on every ``import psutil`` so the psutil fast paths are
+    # skipped and we genuinely reach the tasklist fallback.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     class FailKernel32:
         def OpenProcess(self, a, b, c):
@@ -134,12 +136,15 @@ def test_is_process_alive_win32_tasklist_fallback(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
 
-    def fake_check_output(cmd, **kw):
-        if "tasklist" in str(cmd):
-            return f"python.exe  {os.getpid()} Console 1 12345 KB"
-        return b""
+    # The real fallback (platform_probe.is_pid_alive_tasklist) runs the tasklist
+    # query through safe_subprocess/platform_probe -> subprocess_bridge.run.
+    def fake_run(cmd, **kw):
+        return types.SimpleNamespace(
+            stdout=f"python.exe {os.getpid()} Console 1 12,345 K\n",
+            returncode=0,
+        )
 
-    patch_subprocess(monkeypatch, check_output=fake_check_output)
+    patch_subprocess(monkeypatch, run=fake_run)
 
     result = mod.LockClient._is_process_alive(os.getpid())
     assert result is True
@@ -165,47 +170,47 @@ def test_is_process_alive_unix_dead(monkeypatch):
 
 def test_discover_running_watchers_no_psutil_win32(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # Force ImportError on ``import psutil`` so the psutil fast path is skipped
+    # and discovery falls back to the Windows tasklist enumeration branch.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
-    def fake_subprocess_run(cmd, **kw):
-        if "python.exe" in str(cmd):
-            return types.SimpleNamespace(
-                stdout='"python.exe","%d","Console","1","12345 K"\n' % os.getpid(),
-                returncode=0,
-            )
-        return types.SimpleNamespace(stdout="", returncode=0)
-
-    patch_subprocess(monkeypatch, run=fake_subprocess_run)
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_get_cmdline_for_pid",
-        lambda self, pid: "python lock_client.py",
-    )
-    monkeypatch.setattr(
-        mod.LockClient, "_cmdline_matches_watcher", staticmethod(lambda cmd: True)
-    )
+    # The tasklist branch yields a candidate PID that is NOT the current process
+    # (os.getpid() candidates are filtered out as self).
+    monkeypatch.setattr(mod.platform_probe, "iter_tasklist_python_pids", lambda: [555])
 
     client = mod.LockClient(local_only=True)
+    # A real watcher cmdline: matches the watcher heuristic (collab + watch),
+    # references the workspace (.collab) and carries the current --pid-file tag.
+    cmdline = (
+        "python -m collab.lock_client watch .collab " f'--pid-file "{mod.PID_FILE}"'
+    )
+    monkeypatch.setattr(client, "_get_cmdline_for_pid", lambda pid: cmdline)
+
     result = client._discover_running_watchers()
-    assert isinstance(result, list)
+    assert result == [555]
 
 
 def test_discover_running_watchers_unix_no_psutil(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # Force ImportError on ``import psutil`` so discovery uses the ps fallback.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
-    def fake_run(cmd, **kw):
-        stdout = "12345 python /path/.collab/core/lock_client.py watch\n"
-        return types.SimpleNamespace(stdout=stdout, returncode=0)
-
-    patch_subprocess(monkeypatch, run=fake_run)
     monkeypatch.setattr(
-        mod.LockClient, "_cmdline_matches_watcher", staticmethod(lambda cmd: True)
+        mod.platform_probe,
+        "ps_pid_cmd_csv",
+        lambda: "12345 python /path/.collab/core/lock_client.py watch\n",
     )
 
     client = mod.LockClient(local_only=True)
+    # In COLLAB_TEST_MODE a cmdline WITHOUT --pid-file is rejected, so the
+    # discovered watcher must carry the current --pid-file namespace tag.
+    cmdline = (
+        "python /path/.collab/core/lock_client.py watch " f'--pid-file "{mod.PID_FILE}"'
+    )
+    monkeypatch.setattr(client, "_get_cmdline_for_pid", lambda pid: cmdline)
+
     result = client._discover_running_watchers()
-    assert isinstance(result, list)
+    assert 12345 in result
 
 
 def test_get_process_info_local_non_windows(monkeypatch):

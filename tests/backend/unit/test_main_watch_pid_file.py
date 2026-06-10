@@ -33,6 +33,11 @@ def test_run_cli_watch_pid_file_sets_namespace(monkeypatch):
     monkeypatch.setattr(lc, "_quiet_console_loggers", lambda: None)
     monkeypatch.setattr(lc, "_COLLAB_ROOT", ".collab")
 
+    # _run_cli mutates module-level lc.PID_FILE for the --pid-file namespace.
+    # Register the current value with monkeypatch so it is restored on teardown
+    # and the mutation does not leak into other tests.
+    monkeypatch.setattr(lc, "PID_FILE", lc.PID_FILE)
+
     import collab.logging_config as logging_config
 
     monkeypatch.setattr(logging_config, "setup_collab_logging", lambda **_k: None)

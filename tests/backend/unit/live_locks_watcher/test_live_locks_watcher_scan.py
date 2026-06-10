@@ -160,8 +160,14 @@ def test_scan_remote_locks_client_exception(monkeypatch):
     mod._known_remote_locks.clear()
     mod._scan_remote_locks(fake)
 
+    # The scan aborts on the backend error before recording any remote state.
+    assert mod._known_remote_locks == set()
+    assert mod._warned_remote_locks == set()
 
-def test_scan_remote_locks_warns_for_other_owner(monkeypatch):
+
+def test_scan_remote_locks_warns_for_other_owner(monkeypatch, caplog):
+    import logging
+
     mod = load_watcher_module()
     fake_data = [
         {
@@ -181,14 +187,21 @@ def test_scan_remote_locks_warns_for_other_owner(monkeypatch):
             "execute": lambda self: type("R", (), {"data": self._data})(),
         },
     )()
-    mod.DEVELOPER_ID = "me"
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "me")
+    monkeypatch.setattr(mod, "_notify", lambda *a, **k: None)
     mod._warned_remote_locks.clear()
     mod._known_remote_locks.clear()
-    mod._scan_remote_locks(fake)
+
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        mod._scan_remote_locks(fake)
+
     assert "collab/locked.txt" in mod._warned_remote_locks
+    # A lock owned by another developer surfaces a REMOTE LOCK warning.
+    assert any("REMOTE LOCK" in r.message for r in caplog.records)
+    mod._warned_remote_locks.clear()
 
 
-def test_scan_remote_locks_same_owner_updates_known():
+def test_scan_remote_locks_same_owner_updates_known(monkeypatch):
     mod = load_watcher_module()
     fake_data = [
         {
@@ -216,7 +229,7 @@ def test_scan_remote_locks_same_owner_updates_known():
             return R()
 
     fake = FakeClient3(fake_data)
-    mod.DEVELOPER_ID = "me"
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "me")
     mod._known_remote_locks.clear()
     mod._warned_remote_locks.clear()
     mod._scan_remote_locks(fake)
@@ -256,7 +269,7 @@ def test_scan_remote_locks_skips_local_owned(monkeypatch):
             return R()
 
     fake = FakeClientLocal(data=fake_data)
-    mod.DEVELOPER_ID = "me"
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "me")
     mod._local_owned_locks.clear()
     mod._local_owned_locks.add("collab/owned.txt")
     mod._warned_remote_locks.clear()

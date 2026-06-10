@@ -1190,16 +1190,25 @@ def test_get_parent_ide_pid_vscode_pid(monkeypatch):
     assert method == "vscode_pid"
 
 
-def test_get_parent_ide_pid_vscode_pid_dead(monkeypatch):
+def test_get_parent_ide_pid_skips_dead_vscode_pid(monkeypatch):
+    """A dead VSCODE_PID must never be reported as the IDE parent."""
     monkeypatch.setenv("VSCODE_PID", "99999")
+    monkeypatch.delenv("PYCHARM_HOSTED", raising=False)
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: pid != 99999)
     )
     monkeypatch.setattr(
-        mod.LockClient,
-        "_get_process_info_local",
-        staticmethod(lambda self, pid: (None, None)),
+        mod.LockClient, "_get_process_info_local", lambda self, pid: (None, None)
     )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_process_name_via_tasklist", lambda self, pid: None
+    )
+
+    lc = mod.LockClient(local_only=True)
+    pid, method = lc._get_parent_ide_pid()
+
+    assert method != "vscode_pid"
+    assert pid != 99999
 
 
 # =============================================================================
@@ -2110,7 +2119,7 @@ def test_assign_to_job_object_windows_set_info_fails(monkeypatch):
     assert len(closed) == 1
 
 
-def test_get_process_info_local_wmic_fails_then_tasklist(monkeypatch):
+def test_get_process_name_via_tasklist_parses_csv(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
     monkeypatch.setattr(

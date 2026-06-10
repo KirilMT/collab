@@ -29,8 +29,9 @@ def test_acquire_multiple_success(monkeypatch, tmp_path):
 
     lc = mod.LockClient(developer_id="test_user")
     ok, failed, msg = lc.acquire_multiple([str(file1), str(file2)])
-    assert isinstance(ok, bool)
-    assert isinstance(failed, list)
+    assert ok is True
+    assert failed == []
+    assert msg == "Success"
 
 
 # RESTORED: test_acquire_and_release_ephemeral (migrated from additional)

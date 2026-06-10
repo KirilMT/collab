@@ -5,26 +5,29 @@ from __future__ import annotations
 from ._helpers import load_watcher_module
 
 
-def test_graceful_shutdown_functionality(monkeypatch):
+def test_graceful_shutdown_functionality(monkeypatch, tmp_path):
+    """Graceful shutdown removes the PID file when invoked."""
     mod = load_watcher_module()
-    """Test graceful shutdown cleans up resources."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setenv("DEVELOPER_ID", "test_dev")
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
+    monkeypatch.setattr(mod, "_shutdown_done", False)
+    monkeypatch.setattr(mod, "DEVELOPER_ID", None)
 
-    if hasattr(mod, "_graceful_shutdown"):
-        try:
-            mod._graceful_shutdown()
-        except Exception:
-            pass
+    pid_file = tmp_path / "watcher.pid"
+    pid_file.write_text("12345")
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+
+    mod._graceful_shutdown()
+
+    assert not pid_file.exists()
 
 
 def test_graceful_shutdown_with_valid_dev_id(monkeypatch, tmp_path):
+    """_graceful_shutdown releases locks for clean files and removes the PID file."""
     mod = load_watcher_module()
-    """Test _graceful_shutdown releases locks for clean files and removes PID file."""
     monkeypatch.setattr(mod, "DEVELOPER_ID", "test_dev")
     monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_shutdown_done", False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     pid_file = tmp_path / "watcher.pid"
@@ -33,18 +36,30 @@ def test_graceful_shutdown_with_valid_dev_id(monkeypatch, tmp_path):
 
     # Mock git status returning empty (all files clean  all locks released)
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
+    monkeypatch.setattr(mod, "_local_owned_locks", {"collab/clean.py"})
+
+    deleted_paths = []
 
     class FakeTable:
+        def __init__(self):
+            self._file_path = None
+            self._is_delete = False
+
         def delete(self):
+            self._is_delete = True
             return self
 
         def select(self, *args):
             return self
 
-        def eq(self, *args):
+        def eq(self, field, value):
+            if field == "file_path" and self._is_delete:
+                self._file_path = value
             return self
 
         def execute(self):
+            if self._file_path and self._is_delete:
+                deleted_paths.append(self._file_path)
             return type("R", (), {"data": []})()
 
     class FakeSupaClient:
@@ -54,15 +69,22 @@ def test_graceful_shutdown_with_valid_dev_id(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "create_client", lambda url, key: FakeSupaClient())
 
     mod._graceful_shutdown()
+
+    assert "collab/clean.py" in deleted_paths
     assert not pid_file.exists()
 
 
-def test_graceful_shutdown_with_error(monkeypatch, tmp_path):
+def test_graceful_shutdown_create_client_failure_still_removes_pid(
+    monkeypatch, tmp_path, caplog
+):
+    """A client-construction failure is logged but the PID file is still removed."""
+    import logging
+
     mod = load_watcher_module()
-    """Test _graceful_shutdown handles errors during lock release."""
     monkeypatch.setattr(mod, "DEVELOPER_ID", "test_dev")
     monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_shutdown_done", False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     pid_file = tmp_path / "watcher.pid"
@@ -74,7 +96,10 @@ def test_graceful_shutdown_with_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mod, "create_client", exploding_client)
 
-    mod._graceful_shutdown()
+    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+        mod._graceful_shutdown()
+
+    assert "Error releasing locks during shutdown" in caplog.text
     assert not pid_file.exists()
 
 
@@ -93,20 +118,25 @@ def test_graceful_shutdown_no_dev_id(monkeypatch, tmp_path):
 
 
 def test_graceful_shutdown_pid_file_missing(monkeypatch, tmp_path):
-    mod = load_watcher_module()
     """Test _graceful_shutdown when PID file doesn't exist."""
+    mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", None)
+    monkeypatch.setattr(mod, "_shutdown_done", False)
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
 
     mod._graceful_shutdown()  # Should not raise
+    assert mod._shutdown_done is True
 
 
 def test_graceful_shutdown_pid_oserror(monkeypatch, tmp_path):
-    mod = load_watcher_module()
     """Test _graceful_shutdown handles OSError when removing PID file."""
     import os
 
+    mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", None)
+    monkeypatch.setattr(mod, "_shutdown_done", False)
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     # Create a PID file path that will fail on os.remove
     pid_file = tmp_path / "locked.pid"
@@ -121,8 +151,12 @@ def test_graceful_shutdown_pid_oserror(monkeypatch, tmp_path):
         return original_remove(path)
 
     monkeypatch.setattr(os, "remove", failing_remove)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
 
     mod._graceful_shutdown()  # Should not raise
+
+    # All three remove attempts fail, so the file remains on disk.
+    assert pid_file.exists()
 
 
 def test_graceful_shutdown_guard_prevents_double_run(monkeypatch, tmp_path):
@@ -260,7 +294,7 @@ def test_graceful_shutdown_keeps_dirty_locks(monkeypatch, tmp_path):
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
-    # Simulate: src/dirty.py is still dirty, src/clean.py is clean
+    # Simulate: collab/dirty.py is still dirty, collab/clean.py is clean
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/dirty.py"})
     # Pre-populate _local_owned_locks with both files
     mod._local_owned_locks.clear()
@@ -298,7 +332,7 @@ def test_graceful_shutdown_keeps_dirty_locks(monkeypatch, tmp_path):
 
     mod._graceful_shutdown()
 
-    # src/clean.py should have been released; src/dirty.py should NOT
+    # collab/clean.py should have been released; collab/dirty.py should NOT
     assert "collab/clean.py" in deleted_files
     assert "collab/dirty.py" not in deleted_files
     assert not pid_file.exists()
@@ -315,10 +349,12 @@ def test_graceful_shutdown_local_empty_query_exception(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
     monkeypatch.setattr(mod, "_shutdown_done", False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "watcher.pid"))
+    pid_file = tmp_path / "watcher.pid"
+    pid_file.write_text("12345")
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
 
-    mod._local_owned_locks.clear()
+    monkeypatch.setattr(mod, "_local_owned_locks", set())
 
     class _BrokenTable:
         def select(self, *args):
@@ -336,6 +372,9 @@ def test_graceful_shutdown_local_empty_query_exception(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mod, "create_client", lambda url, key: _Client())
     mod._graceful_shutdown()  # should not raise
+
+    assert not pid_file.exists()
+    assert mod._local_owned_locks == set()
 
 
 def test_graceful_shutdown_git_failure_preserves_all(monkeypatch, tmp_path):
@@ -397,10 +436,10 @@ def test_graceful_shutdown_git_failure_preserves_all(monkeypatch, tmp_path):
     assert not pid_file.exists()
 
 
-def test_graceful_shutdown_release_exception_and_db_query_exception(
-    monkeypatch, tmp_path
-):
-    """Cover per-file release exception and fallback DB-query exception branches."""
+def test_graceful_shutdown_per_file_release_exception(monkeypatch, tmp_path, caplog):
+    """A per-file release error is logged and the lock is retained locally."""
+    import logging
+
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "test_dev")
     monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
@@ -413,22 +452,16 @@ def test_graceful_shutdown_release_exception_and_db_query_exception(
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
-    mod._local_owned_locks.clear()
-    mod._local_owned_locks.add("collab/will_fail.py")
+    monkeypatch.setattr(mod, "_local_owned_locks", {"collab/will_fail.py"})
 
     class FakeClient:
-        def __init__(self):
-            self._mode = None
-
         def table(self, name):
             return self
 
         def delete(self):
-            self._mode = "delete"
             return self
 
         def select(self, *args):
-            self._mode = "select"
             return self
 
         def eq(self, *args):
@@ -438,12 +471,22 @@ def test_graceful_shutdown_release_exception_and_db_query_exception(
             raise RuntimeError("backend down")
 
     monkeypatch.setattr(mod, "create_client", lambda url, key: FakeClient())
-    mod._graceful_shutdown()
+
+    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+        mod._graceful_shutdown()
+
+    # The failing file's lock is preserved (never discarded) and the error logged.
+    assert "collab/will_fail.py" in mod._local_owned_locks
+    assert (
+        "Failed to release lock for collab/will_fail.py during shutdown" in caplog.text
+    )
     assert not pid_file.exists()
 
 
-def test_graceful_shutdown_pid_remove_retries_then_warns(monkeypatch, tmp_path):
-    """PID removal should retry and warn after three OSError attempts."""
+def test_graceful_shutdown_pid_remove_retries_then_warns(monkeypatch, tmp_path, caplog):
+    """PID removal should retry twice and warn after three OSError attempts."""
+    import logging
+
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "_shutdown_done", False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
@@ -453,11 +496,17 @@ def test_graceful_shutdown_pid_remove_retries_then_warns(monkeypatch, tmp_path):
     pid_file.write_text("12345")
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
 
+    sleep_calls = []
     monkeypatch.setattr(mod.os.path, "exists", lambda p: True)
-    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleep_calls.append(s))
     monkeypatch.setattr(
         mod.os, "remove", lambda p: (_ for _ in ()).throw(OSError("locked"))
     )
 
-    # no raise expected after retry loop
-    mod._graceful_shutdown()
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        mod._graceful_shutdown()  # no raise expected after retry loop
+
+    assert "Could not remove PID file after 3 attempts" in caplog.text
+    # Two retries (after the 1st and 2nd failures) before the final warning.
+    assert len(sleep_calls) == 2
+    assert pid_file.exists()

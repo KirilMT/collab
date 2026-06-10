@@ -1201,7 +1201,8 @@ def test_cli_logs_read_error(monkeypatch, capsys, tmp_path):
     assert "Cannot read log file" in out
 
 
-def test_cli_history_partial_match_output(monkeypatch, capsys):
+def test_history_partial_match_fallback(monkeypatch, capsys):
+    """History() falls back to a partial (ilike) match when the exact query is empty."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
@@ -1253,21 +1254,23 @@ def test_cli_history_partial_match_output(monkeypatch, capsys):
     assert result == fallback_records
     assert call_count[0] == 2
 
-    # RESTORED: test_validate_credentials_missing_url
-    def test_validate_credentials_missing_url(monkeypatch):
-        monkeypatch.setattr(mod, "SUPABASE_URL", "")
-        monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
 
-        with pytest.raises(SystemExit):
-            mod._validate_credentials()
+def test_validate_credentials_missing_url(monkeypatch):
+    """_validate_credentials exits when only SUPABASE_URL is missing."""
+    monkeypatch.setattr(mod, "SUPABASE_URL", "")
+    monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
 
-    # RESTORED: test_validate_credentials_missing_key
-    def test_validate_credentials_missing_key(monkeypatch):
-        monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
-        monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "")
+    with pytest.raises(SystemExit):
+        mod._validate_credentials()
 
-        with pytest.raises(SystemExit):
-            mod._validate_credentials()
+
+def test_validate_credentials_missing_key(monkeypatch):
+    """_validate_credentials exits when only SUPABASE_ANON_KEY is missing."""
+    monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "")
+
+    with pytest.raises(SystemExit):
+        mod._validate_credentials()
 
 
 def test_cli_dashboard(monkeypatch, capsys):
@@ -1316,7 +1319,20 @@ def test_cli_watch(monkeypatch, tmp_path, capsys):
     )
     monkeypatch.setattr(sys, "argv", ["lock_client.py", "watch"])
 
+    # Spy on the real watch() so we can confirm the CLI dispatched to it while
+    # still exercising the genuine watch startup path.
+    called = {"watch": False}
+    real_watch = mod.LockClient.watch
+
+    def _spy_watch(self, *a, **k):
+        called["watch"] = True
+        return real_watch(self, *a, **k)
+
+    monkeypatch.setattr(mod.LockClient, "watch", _spy_watch)
+
     mod._run_cli()
+
+    assert called["watch"] is True
 
 
 def test_cli_no_command(monkeypatch, capsys):

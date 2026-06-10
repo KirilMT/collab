@@ -24,11 +24,11 @@ def test_reconcile_readopts_dirty_locked_file(monkeypatch):
     mod._local_owned_locks.clear()
     mod._active_conflicts.clear()
 
-    # Mock git status: src/app.py is dirty
+    # Mock git status: collab/app.py is dirty
     monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"collab/app.py"})
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
 
-    # Existing lock for src/app.py with matching SESSION_TOKEN
+    # Existing lock for collab/app.py with matching SESSION_TOKEN
     current_token = mod.SESSION_TOKEN
 
     class FakeResponse:
@@ -89,7 +89,7 @@ def test_reconcile_releases_stale_clean_lock(monkeypatch):
     monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: set())
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
 
-    # Existing lock for src/old.py (stale)
+    # Existing lock for collab/old.py (stale)
     class FakeSelectResponse:
         data = [
             {
@@ -130,7 +130,7 @@ def test_reconcile_releases_stale_clean_lock(monkeypatch):
     client = FakeClient()
     mod._reconcile_on_startup(client)
 
-    # src/old.py should have been released
+    # collab/old.py should have been released
     assert "collab/old.py" in deleted_files
     # Should NOT be in _local_owned_locks
     assert "collab/old.py" not in mod._local_owned_locks
@@ -151,7 +151,7 @@ def test_reconcile_acquires_lock_for_new_dirty_file(monkeypatch):
     mod._local_owned_locks.clear()
     mod._active_conflicts.clear()
 
-    # Mock git status: src/new.py is dirty
+    # Mock git status: collab/new.py is dirty
     monkeypatch.setattr(watcher, "_run_git_status_porcelain", lambda: {"collab/new.py"})
     monkeypatch.setattr(watcher, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(watcher, "_should_ignore_path", lambda p: False)
@@ -189,7 +189,7 @@ def test_reconcile_acquires_lock_for_new_dirty_file(monkeypatch):
     client = FakeClient()
     mod._reconcile_on_startup(client)
 
-    # acquire_lock RPC should have been called for src/new.py
+    # acquire_lock RPC should have been called for collab/new.py
     assert len(rpc_calls) == 1
     assert rpc_calls[0]["name"] == "acquire_lock"
     assert rpc_calls[0]["params"]["p_file_path"] == "collab/new.py"
@@ -213,7 +213,7 @@ def test_reconcile_post_restart_conflict_non_interactive(monkeypatch):
     mod._local_owned_locks.clear()
     mod._active_conflicts.clear()
 
-    # Mock git status: src/shared.py is dirty
+    # Mock git status: collab/shared.py is dirty
     monkeypatch.setattr(
         watcher, "_run_git_status_porcelain", lambda: {"collab/shared.py"}
     )
@@ -280,7 +280,7 @@ def test_reconcile_multi_session_different_token_non_interactive(monkeypatch):
     mod._local_owned_locks.clear()
     mod._active_conflicts.clear()
 
-    # Mock git status: src/multi.py is dirty
+    # Mock git status: collab/multi.py is dirty
     monkeypatch.setattr(
         watcher, "_run_git_status_porcelain", lambda: {"collab/multi.py"}
     )
@@ -331,14 +331,18 @@ def test_reconcile_multi_session_different_token_non_interactive(monkeypatch):
 watcher = load_watcher_module()
 
 
-def test_reconcile_stale_release_exception_and_acquire_exception(monkeypatch):
-    """Reconcile should continue when stale-release or acquire raises exceptions."""
+def test_reconcile_stale_release_exception_and_acquire_exception(monkeypatch, caplog):
+    """Reconcile continues and logs when stale-release and acquire both raise."""
+    import logging
+
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda d: False)
     monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
     monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: {"collab/new.py"})
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    monkeypatch.setattr(mod, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_local_owned_locks", set())
 
     # Existing stale lock is clean (not in dirty set), and unlocking it raises.
     existing = [{"file_path": "collab/stale.py", "lock_token": "x"}]
@@ -373,8 +377,17 @@ def test_reconcile_stale_release_exception_and_acquire_exception(monkeypatch):
         def rpc(self, *args, **kwargs):
             return self
 
-    # Should swallow both stale-release and acquire exceptions.
-    mod._reconcile_on_startup(FakeClient())
+    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+        # Should swallow both stale-release and acquire exceptions.
+        mod._reconcile_on_startup(FakeClient())
+
+    # Neither file ends up owned locally because both operations failed.
+    assert "collab/stale.py" not in mod._local_owned_locks
+    assert "collab/new.py" not in mod._local_owned_locks
+    assert "Failed to release stale lock for collab/stale.py" in caplog.text
+    assert (
+        "Failed to acquire lock for collab/new.py during reconciliation" in caplog.text
+    )
 
 
 def test_reconcile_skips_ignored_unlocked_dirty_files(monkeypatch):
@@ -506,13 +519,18 @@ def test_resolve_lock_diff_base_ref_origin_branch(monkeypatch):
 
 
 def test_reconcile_on_startup_git_status_exception(monkeypatch):
-    """_reconcile_on_startup exits cleanly when git status fails."""
+    """_reconcile_on_startup exits cleanly (no acquire) when git status fails."""
     mod = load_watcher_module()
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
+    monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda d: False)
+    monkeypatch.setattr(mod, "_local_owned_locks", set())
     monkeypatch.setattr(
         mod,
         "_run_git_status_porcelain",
         lambda: (_ for _ in ()).throw(RuntimeError("git fail")),
     )
+
+    rpc_calls = []
 
     class _Client:
         def table(self, _name):
@@ -527,7 +545,15 @@ def test_reconcile_on_startup_git_status_exception(monkeypatch):
         def execute(self):
             return type("R", (), {"data": []})()
 
+        def rpc(self, *a, **k):
+            rpc_calls.append((a, k))
+            return self
+
     mod._reconcile_on_startup(_Client())  # should not raise
+
+    # git status failure short-circuits before any acquire RPC.
+    assert rpc_calls == []
+    assert mod._local_owned_locks == set()
 
 
 def test_reconcile_ephemeral_developer_short_circuit(monkeypatch):

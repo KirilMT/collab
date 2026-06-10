@@ -8,23 +8,31 @@ from __future__ import annotations
 
 
 def test_lock_client_import() -> None:
-    """Verify LockClient module can be imported."""
-    from collab.lock_client import LockClient  # noqa: F401
+    """Verify LockClient is importable and callable."""
+    from collab.lock_client import LockClient
+
+    assert callable(LockClient)
 
 
 def test_main_module_import() -> None:
-    """Verify main module can be imported."""
-    from collab import main  # noqa: F401
+    """Verify the main module exposes a callable ``main`` entry point."""
+    from collab import main
+
+    assert hasattr(main, "main") and callable(main.main)
 
 
 def test_live_locks_watcher_import() -> None:
-    """Verify live_locks_watcher module can be imported."""
-    from collab import live_locks_watcher  # noqa: F401
+    """Verify live_locks_watcher exposes its PID_FILE constant."""
+    from collab import live_locks_watcher
+
+    assert hasattr(live_locks_watcher, "PID_FILE")
 
 
 def test_logging_config_import() -> None:
-    """Verify logging_config module can be imported."""
-    from collab import logging_config  # noqa: F401
+    """Verify logging_config exposes setup_collab_logging."""
+    from collab import logging_config
+
+    assert hasattr(logging_config, "setup_collab_logging")
 
 
 def test_lock_client_instantiation() -> None:

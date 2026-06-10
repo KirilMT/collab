@@ -22,22 +22,23 @@ def test_notify_uses_desktop_notify_if_available(monkeypatch, caplog):
 
 
 def test_notify_with_title_and_message(monkeypatch):
+    """_notify forwards the title and message to the real desktop_notify backend."""
     mod = load_watcher_module()
-    notify_called = []
+    received = {}
 
-    def mock_notify(title, message, app_name=None):
-        notify_called.append((title, message, app_name))
+    class FakeDesktop:
+        def notify(self, title=None, message=None, app_name=None, timeout=None):
+            received["title"] = title
+            received["message"] = message
+            received["app_name"] = app_name
 
-    monkeypatch.setattr(mod, "_desktop_notify", mock_notify, raising=False)
+    monkeypatch.setattr(mod, "desktop_notify", FakeDesktop())
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
-    try:
-        mod._notify("Test Title", "Test Message")
-    except Exception:
-        pass
+    mod._notify("Test Title", "Test Message")
 
-    if notify_called:
-        assert notify_called[0][0] == "Test Title"
-        assert notify_called[0][1] == "Test Message"
+    assert received["title"] == "Test Title"
+    assert received["message"] == "Test Message"
 
 
 def test_notify_fallback_no_desktop_notify(monkeypatch, caplog):

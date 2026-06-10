@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import runpy
 import sys
+from pathlib import Path
 
 import pytest
 
 from tests.backend.unit.scripts._helpers import load_script_module
 
 gen = load_script_module("generate_tests.py", "generate_tests_under_test")
+
+# tests/backend/unit/scripts/test_generate_tests.py -> repository root.
+REPO_ROOT = Path(__file__).resolve().parents[4]
+GENERATE_TESTS_SCRIPT = REPO_ROOT / "scripts" / "generate_tests.py"
 
 
 class TestCodeAnalyzer:
@@ -199,10 +204,22 @@ class TestDiscovery:
 
 class TestMain:
     def test_scan_mode(self, monkeypatch, capsys):
+        # Mock discovery so the exact bullet output is deterministic. The empty
+        # ("All modules have tests") case is covered by the sibling test
+        # test_scan_mode_all_modules_have_tests_branch.
+        monkeypatch.setattr(
+            gen.TestDiscovery,
+            "find_untested",
+            lambda self, src_dir=None: ["collab/alpha.py", "scripts/beta.py"],
+        )
         monkeypatch.setattr(sys, "argv", ["generate_tests.py", "--scan"])
         gen.main()
         out = capsys.readouterr().out
-        assert "Untested modules" in out or "All modules have tests" in out
+        assert "Untested modules in repository" in out
+        assert "  • collab/alpha.py" in out
+        assert "  • scripts/beta.py" in out
+        assert "Run: python scripts/generate_tests.py" in out
+        assert "All modules have tests" not in out
 
     def test_no_source_file_prints_help(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["generate_tests.py"])
@@ -300,8 +317,16 @@ class TestMain:
         assert "File exists" in capsys.readouterr().out
 
 
-def test_generate_tests_dunder_main(monkeypatch, tmp_path):
+def test_generate_tests_dunder_main(monkeypatch, tmp_path, capsys):
+    # Exercise the ``if __name__ == "__main__": main()`` guard via an absolute,
+    # CWD-independent path and assert the dry-run output main() actually prints.
     src = tmp_path / "sample_mod.py"
     src.write_text("def hello():\n    return 1\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["generate_tests.py", str(src), "--dry-run"])
-    runpy.run_path("scripts/generate_tests.py", run_name="__main__")
+
+    runpy.run_path(str(GENERATE_TESTS_SCRIPT), run_name="__main__")
+
+    out = capsys.readouterr().out
+    assert "Found 1 testable entities" in out
+    assert "Generated test template" in out
+    assert "Preview mode - no files created" in out

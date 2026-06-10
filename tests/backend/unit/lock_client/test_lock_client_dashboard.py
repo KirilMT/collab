@@ -64,8 +64,15 @@ def test_dashboard_no_url(monkeypatch):
 
     monkeypatch.setattr(mod.LockClient, "_prepare_dashboard_server", mock_prepare)
 
+    opened: list = []
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+
     lc = mod.LockClient(developer_id="test_user")
-    lc.dashboard()  # Should return early without error
+    lc.dashboard()  # Should return early without opening a browser
+
+    assert opened == []
 
 
 def test_dashboard_browser_exception(monkeypatch, capsys):
@@ -126,12 +133,36 @@ def test_prepare_dashboard_server_success(monkeypatch, tmp_path):
         mod, "_get_create_client", lambda: make_create_client(FakeResponse())
     )
 
+    import http.server as _http
+
+    class FakeServer:
+        def __init__(self, addr, handler):
+            self.server_address = ("127.0.0.1", 54321)
+
+        def serve_forever(self):
+            return None
+
+        def shutdown(self):
+            return None
+
+    monkeypatch.setattr(_http, "ThreadingHTTPServer", FakeServer)
+
+    class DummyConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: DummyConn())
+
     lc = mod.LockClient(developer_id="test_user")
     url, tmp_file = lc._prepare_dashboard_server()
 
-    # Should return a valid URL
-    if url:
-        assert "http://127.0.0.1" in url
+    # With the server and probe fully mocked the server must start unconditionally.
+    assert url is not None
+    assert tmp_file is not None
+    assert "http://127.0.0.1" in url
     # Clean up temp file if created
     if tmp_file and os.path.exists(tmp_file):
         os.unlink(tmp_file)
@@ -241,18 +272,24 @@ def test_prepare_dashboard_server_socket_probe_failure(monkeypatch, tmp_path):
     )
 
     import http.server
-    import socket as _socket
 
-    # Create a real-ish server mock that binds but returns a port
-    # where sockets will initially fail then succeed
+    from collab import dashboard_server as _dsrv
+
+    # Probe fails twice, then succeeds — fully mocked so no real socket is opened.
     probe_count = [0]
-    original_create_connection = _socket.create_connection
+
+    class DummyConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
     def flaky_connection(addr, timeout=None):
         probe_count[0] += 1
         if probe_count[0] <= 2:
             raise ConnectionRefusedError("not ready yet")
-        return original_create_connection(addr, timeout=timeout)
+        return DummyConn()
 
     class FakeServerForProbe:
         def __init__(self, addr, handler):
@@ -265,15 +302,16 @@ def test_prepare_dashboard_server_socket_probe_failure(monkeypatch, tmp_path):
             pass
 
     monkeypatch.setattr(http.server, "ThreadingHTTPServer", FakeServerForProbe)
-    monkeypatch.setattr(_socket, "create_connection", flaky_connection)
-    monkeypatch.setattr(mod.time, "sleep", lambda x: None)
+    monkeypatch.setattr(socket, "create_connection", flaky_connection)
+    monkeypatch.setattr(_dsrv.time, "sleep", lambda x: None)
 
     lc = mod.LockClient(developer_id="test_user")
     url, tmp_file = lc._prepare_dashboard_server()
 
-    # Should succeed after retries
-    if url:
-        assert "http://127.0.0.1" in url
+    # Server must start, and the probe must have retried past the failures.
+    assert url is not None
+    assert "http://127.0.0.1" in url
+    assert probe_count[0] >= 3
     if tmp_file and os.path.exists(tmp_file):
         os.unlink(tmp_file)
 

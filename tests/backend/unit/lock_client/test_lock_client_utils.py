@@ -2,7 +2,6 @@ import os
 import sys
 import types
 from datetime import datetime as _real_datetime
-from pathlib import Path
 
 from ._helpers import FakeClient, FakeResponse, load_lock_client_module
 
@@ -280,20 +279,27 @@ def test_parse_response_success_and_error_and_dict():
     assert status3 == 200 and data3 == [{"file": "test"}]
 
 
-def test_mark_missing_lines_coverage_helper():
-    base = Path(__file__).resolve().parents[4]
-    # Keep this lightweight helper deterministic across environments by
-    # asserting the migrated runtime modules exist in the repository.
-    assert (base / "collab" / "lock_client.py").exists()
-    assert (base / "collab" / "live_locks_watcher.py").exists()
-
-
-def test_safe_now_returns_datetime(monkeypatch):
+def test_safe_now_returns_datetime():
     from datetime import datetime as dt
 
-    now = dt(2026, 4, 27, 12, 0, 0)
-    monkeypatch.setattr(mod, "_safe_now", lambda: now)
-    assert mod._safe_now() == now
+    # Call the real helper (do not patch it) so we verify it actually returns a
+    # datetime via the module's (possibly patched) ``datetime`` symbol.
+    result = mod._safe_now()
+    assert isinstance(result, dt)
+
+
+def test_safe_now_falls_back_on_typeerror(monkeypatch):
+    """_safe_now falls back to the real datetime when the patched now() misbehaves."""
+    from datetime import datetime as dt
+
+    class _BadDateTime:
+        @staticmethod
+        def now():
+            raise TypeError("bad now binding")
+
+    monkeypatch.setattr(mod, "datetime", _BadDateTime)
+    result = mod._safe_now()
+    assert isinstance(result, dt)
 
 
 def test_state_path(monkeypatch, tmp_path):

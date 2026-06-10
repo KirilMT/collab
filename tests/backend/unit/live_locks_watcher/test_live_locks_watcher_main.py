@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -286,9 +287,14 @@ def test_main_writes_pid_file(monkeypatch, tmp_path):
     patch_subprocess(monkeypatch, check_output=mock_check_output)
 
     sleep_count = [0]
+    pid_present_during_loop = [False]
 
     def mock_sleep(seconds):
         sleep_count[0] += 1
+        if sleep_count[0] == 1:
+            # Capture existence mid-run: startup writes the PID file before the
+            # first sleep, but shutdown may remove it afterwards.
+            pid_present_during_loop[0] = pid_file.exists()
         if sleep_count[0] > 1:
             raise KeyboardInterrupt()
 
@@ -299,7 +305,7 @@ def test_main_writes_pid_file(monkeypatch, tmp_path):
     except (KeyboardInterrupt, SystemExit):
         pass
 
-    # PID file should have been written (might be cleaned on shutdown)
+    assert pid_present_during_loop[0] is True
 
 
 # ============================================================================
@@ -479,11 +485,11 @@ def test_main_release_lock_exception(monkeypatch, tmp_path):
 
 
 def test_main_does_not_exit_on_parent_death(monkeypatch, tmp_path):
-    """Test that main does NOT exit when parent process dies.
+    """Test that main keeps running in persistent mode (no IDE owner).
 
-    The parent PID check was removed — PyCharm manages the process lifecycle via its
-    stop button / IDE close.  The watcher should keep running until explicitly stopped
-    (KeyboardInterrupt / signal).
+    When no parent IDE PID is identified, the watcher runs in persistent mode and keeps
+    looping until explicitly stopped (KeyboardInterrupt / signal); it must not exit
+    early even though ``_is_process_alive`` reports dead processes.
     """
     mod = load_watcher_module()
     monkeypatch.setattr(watcher, "SUPABASE_URL", "https://test.supabase.co")
@@ -493,6 +499,11 @@ def test_main_does_not_exit_on_parent_death(monkeypatch, tmp_path):
     pid_file = tmp_path / "mod.pid"
     monkeypatch.setattr(watcher, "PID_FILE", str(pid_file))
     monkeypatch.setattr(watcher, "desktop_notify", None)
+
+    # Force persistent mode: no IDE owner discovered from the live process tree.
+    # Without this, parent-PID discovery is nondeterministic across environments and
+    # the parent-liveness branch could shut the watcher down early (flaky).
+    monkeypatch.setattr(watcher, "_get_parent_ide_pid_local", lambda: None)
 
     class FakeSupaClient:
         def table(self, name):
@@ -545,75 +556,29 @@ def test_main_does_not_exit_on_parent_death(monkeypatch, tmp_path):
 # ============================================================================
 
 
-def test_main_conflict_cleared_on_revert(monkeypatch, tmp_path):
-    """Test that conflicts are cleared when file reverts."""
+def test_process_releases_clears_active_conflict(caplog):
+    """A released file that was in conflict is cleared from _active_conflicts.
+
+    Conflict clearing happens in ``_process_releases`` (extracted from the main loop for
+    testability): a released path already tracked as a conflict must be discarded and
+    reported as cleared — without issuing a DB delete.
+    """
     mod = load_watcher_module()
-    monkeypatch.setattr(watcher, "SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setattr(watcher, "SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setattr(sys, "argv", ["live_locks_mod.py"])
-
-    pid_file = tmp_path / "mod.pid"
-    monkeypatch.setattr(watcher, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(watcher, "desktop_notify", None)
-
-    # Pre-populate _active_conflicts
     mod._active_conflicts.clear()
     mod._active_conflicts.add("collab/conflict_file.py")
 
-    class FakeOKResult:
-        data = [{"status": "ok"}]
-
-    class FakeSupaClient:
-        def table(self, name):
-            return self
-
-        def delete(self):
-            return self
-
-        def eq(self, *args):
-            return self
-
-        def execute(self):
-            return None
-
-        def rpc(self, name, params):
-            return type("Chain", (), {"execute": lambda self: FakeOKResult()})()
-
-    monkeypatch.setattr(watcher, "create_client", lambda url, key: FakeSupaClient())
-
-    git_call_count = [0]
-
-    def mock_check_output(cmd, *args, **kwargs):
-        git_call_count[0] += 1
-        if "user.name" in cmd:
-            return b"test_user\n"
-        if "branch" in cmd:
-            return b"main\n"
-        if "status" in cmd:
-            # First: file present (matches _active_conflicts), then: empty
-            if git_call_count[0] <= 4:
-                return b" M src/conflict_file.py\n"
-            return b""
-        return b""
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    sleep_count = [0]
-
-    def mock_sleep(seconds):
-        sleep_count[0] += 1
-        if sleep_count[0] > 3:
-            raise KeyboardInterrupt()
-
-    monkeypatch.setattr("time.sleep", mock_sleep)
+    class _Client:
+        def table(self, *a, **k):  # pragma: no cover - must not be reached
+            raise AssertionError("conflict files must not trigger a DB delete")
 
     try:
-        mod.main()
-    except (KeyboardInterrupt, SystemExit):
-        pass
+        with caplog.at_level(logging.INFO):
+            mod._process_releases(_Client(), {"collab/conflict_file.py"})
 
-    # Clean up
-    mod._active_conflicts.clear()
+        assert "collab/conflict_file.py" not in mod._active_conflicts
+        assert "Conflict cleared" in caplog.text
+    finally:
+        mod._active_conflicts.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1286,8 +1251,8 @@ def test_main_parent_pid_from_cli_arg(monkeypatch, tmp_path):
         pass
 
 
-def test_main_no_parent_pid_detected(monkeypatch, tmp_path):
-    """When no parent found, logs 'No IDE owner identified'."""
+def test_main_no_parent_pid_detected(monkeypatch, tmp_path, caplog):
+    """When no parent IDE PID is found, main() runs in persistent mode."""
     mod = load_watcher_module()
     _setup_common(monkeypatch, mod)
     _stub_supabase(monkeypatch, mod)
@@ -1309,10 +1274,13 @@ def test_main_no_parent_pid_detected(monkeypatch, tmp_path):
 
     patch_subprocess(monkeypatch, check_output=mock_check_output)
 
-    try:
-        mod.main()
-    except (SystemExit, KeyboardInterrupt):
-        pass
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        try:
+            mod.main()
+        except (SystemExit, KeyboardInterrupt):
+            pass
+
+    assert "No IDE owner identified" in caplog.text
 
 
 # ---------------------------------------------------------------------------

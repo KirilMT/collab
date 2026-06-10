@@ -79,9 +79,9 @@ def test_reload_watcher_with_colorama_and_plyer(monkeypatch):
         monkeypatch.setattr(_importlib.util, "find_spec", orig_find_spec)
 
 
-def test_color_without_colorama():
+def test_color_without_colorama(monkeypatch):
     mod = load_watcher_module()
-    mod._HAS_COLORAMA = False
+    monkeypatch.setattr(mod, "_HAS_COLORAMA", False)
     out = mod._color("hello", "X")
     assert out == "hello"
 

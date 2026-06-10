@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import types
@@ -67,8 +68,11 @@ def test_touch_pid_file_heartbeat_updates_mtime(monkeypatch, tmp_path):
 
 def test_touch_pid_file_heartbeat_missing_file_is_noop(monkeypatch, tmp_path):
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
+    missing = tmp_path / "missing.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(missing))
     mod._touch_pid_file_heartbeat()
+    # No-op: a heartbeat touch must not create a PID file that does not exist.
+    assert not missing.exists()
 
 
 def test_touch_pid_file_heartbeat_oserror_is_swallowed(monkeypatch, tmp_path):
@@ -149,23 +153,30 @@ def test_live_locks_watcher_get_parent_ide_pid_traversal_gap(monkeypatch):
 
 
 def test_live_locks_watcher_process_helpers_error_gaps(monkeypatch):
+    """Cover the Windows exception branches in process helpers deterministically."""
     mod = load_watcher_module()
-    """Cover various exception branches in process helpers."""
-    # _get_process_info_local exception
-    with mock.patch("subprocess.check_output", side_effect=Exception("cmd fail")):
-        assert mod._get_process_info_local(123) == (None, None)
+    # Force the Windows code paths so the assertions exercise the real
+    # exception branches on every host (not the non-win32 early-return guard).
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
-    # Simulate psutil failures
+    # _get_process_info_local: the wmic probe raising -> (None, None).
+    def _wmic_boom(_pid):
+        raise Exception("wmic fail")
+
+    monkeypatch.setattr(mod.platform_probe, "wmic_process_name_and_ppid", _wmic_boom)
+    assert mod._get_process_info_local(123) == (None, None)
+
+    # _is_process_alive: psutil present but reports the pid as not existing.
     mock_psutil = mock.MagicMock()
     mock_psutil.pid_exists.return_value = False
     mock_psutil.Process.side_effect = Exception("psutil fail")
-
     with mock.patch.dict(sys.modules, {"psutil": mock_psutil}):
         assert mod._is_process_alive(123) is False
 
-    # _get_cmdline_for_pid_local error path
+    # _get_cmdline_for_pid_local: psutil.Process raises and the platform
+    # fallback yields nothing -> None.
+    monkeypatch.setattr(mod.platform_probe, "get_cmdline", lambda _pid: None)
     with mock.patch.dict(sys.modules, {"psutil": mock_psutil}):
-        mock_psutil.Process.side_effect = Exception("psutil fail")
         assert mod._get_cmdline_for_pid_local(123) is None
 
 
@@ -482,22 +493,38 @@ def test_existing_watcher_running_handles_cmdline_probe_exception(
 
 
 def test_existing_watcher_running_stale_pid_with_dead_parent_details(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, caplog
 ):
-    """Stale watcher PID with stored parent should emit dead-parent diagnostics path."""
+    """Stale watcher PID with a stored dead parent emits root-cause diagnostics."""
     mod = load_watcher_module()
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text(
-        json.dumps({"pid": 4321, "entrypoint": "not-watcher"}), encoding="utf-8"
+        json.dumps(
+            {
+                "pid": 4321,
+                "entrypoint": "not-watcher",
+                "parent_pid": 9876,
+                "started_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
     )
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
     # cmdline probe must not match a watcher, so we don't short-circuit
     monkeypatch.setattr(mod, "_get_cmdline_for_pid_local", lambda pid: None)
+    # Both the watcher PID and the stored parent PID are dead.
     monkeypatch.setattr(mod, "_is_process_alive", lambda _p: False)
 
-    running, pid, cmdline, entry = mod._existing_watcher_running()
+    with caplog.at_level(logging.INFO):
+        running, pid, cmdline, entry = mod._existing_watcher_running()
+
     assert running is False
     assert pid == 4321
+    # The dead-parent diagnostics path must actually run and log the root cause.
+    assert "parent_pid=9876" in caplog.text
+    assert "Root cause" in caplog.text
+    # Stale PID file should have been cleaned up.
+    assert not pid_file.exists()
 
 
 # ============================================================================

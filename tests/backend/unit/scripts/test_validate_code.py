@@ -905,6 +905,12 @@ def test_validate_frontend_fails_when_eslint_command_fails(monkeypatch, capsys):
     monkeypatch.setattr(validate_code, "_load_package_json_scripts", lambda: {})
     monkeypatch.setattr(validate_code, "_has_playwright_test_files", lambda: False)
 
+    assert validate_code.validate_javascript_frontend(quick=False, files=None) is False
+
+    out = capsys.readouterr().out
+    assert "[FAIL] ESLint" in out
+    assert any(cmd[:2] == ["npx", "eslint"] for cmd in calls)
+
 
 # ---------------------------------------------------------------------------
 # _check_cross_platform_code
@@ -915,18 +921,12 @@ def test_cross_platform_check_warns_on_windll_without_type_ignore(
     monkeypatch, capsys, tmp_path
 ):
     """Staged .py file with bare ctypes.windll triggers a warning."""
-    py_file = tmp_path / "test_mod.py"
-    py_file.write_text("kernel32 = ctypes.windll.kernel32\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "test_mod.py").write_text(
+        "kernel32 = ctypes.windll.kernel32\n", encoding="utf-8"
+    )
 
-    import builtins
     import subprocess as _sp
-
-    _real_open = builtins.open
-
-    def _mock_open(file, *args, **kwargs):
-        if str(file) == "test_mod.py":
-            return _real_open(str(py_file), *args, **kwargs)
-        return _real_open(file, *args, **kwargs)
 
     def _mock_run(cmd, **_k):
         result = MagicMock()
@@ -934,7 +934,6 @@ def test_cross_platform_check_warns_on_windll_without_type_ignore(
         result.stdout = "test_mod.py"
         return result
 
-    monkeypatch.setattr(builtins, "open", _mock_open)
     monkeypatch.setattr(_sp, "run", _mock_run)
 
     validate_code._check_cross_platform_code()

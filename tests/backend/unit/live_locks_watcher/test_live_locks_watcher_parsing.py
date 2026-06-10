@@ -115,16 +115,17 @@ def test_should_ignore_path_valid_files():
 
 def test_should_ignore_path_edge_cases():
     mod = load_watcher_module()
-    result_empty = mod._should_ignore_path("")
-    assert isinstance(result_empty, bool)
-    result_slash = mod._should_ignore_path("/")
-    assert isinstance(result_slash, bool)
+    # Empty string and bare root are not git/instance artifacts -> not ignored.
+    assert mod._should_ignore_path("") is False
+    assert mod._should_ignore_path("/") is False
 
 
 def test_should_ignore_path_with_mixed_case():
     mod = load_watcher_module()
-    result = mod._should_ignore_path(".GIT/config")
-    assert isinstance(result, bool)
+    # The .git match is case-sensitive: ".GIT/" must NOT be treated as ".git/".
+    assert mod._should_ignore_path(".GIT/config") is False
+    # Sanity check the lowercase form IS ignored, proving case sensitivity.
+    assert mod._should_ignore_path(".git/config") is True
 
 
 def test_parse_git_status_path_and_normalize_migrated(tmp_path, monkeypatch):

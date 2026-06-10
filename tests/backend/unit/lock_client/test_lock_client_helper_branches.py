@@ -993,22 +993,38 @@ def test_get_lock_status_exception_and_error_branches(monkeypatch):
 
 
 def test_release_no_lock_released_branch(monkeypatch):
-    """Release() returns False when status not in (200, 204) and data is None."""
+    """Release() returns the 'no lock released' message on a non-2xx empty DELETE.
+
+    The owner pre-check SELECT must succeed (row owned by this developer) so we reach
+    the DELETE, whose defensive branch fires when the response has no rows, no error and
+    a status outside (200, 204).
+    """
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
 
     class _Q:
-        def delete(self):
-            return self
+        def __init__(self):
+            self._mode = None
 
         def select(self, *a, **k):
+            self._mode = "select"
+            return self
+
+        def delete(self):
+            self._mode = "delete"
             return self
 
         def eq(self, *a, **k):
             return self
 
         def execute(self):
-            return types.SimpleNamespace(data=None, status_code=404, error=None)
+            if self._mode == "select":
+                # Pre-check: a lock owned by this developer exists.
+                return types.SimpleNamespace(
+                    data=[{"developer_id": "alice"}], status_code=200, error=None
+                )
+            # DELETE: defensive non-2xx, empty, error-free response.
+            return types.SimpleNamespace(data=None, status_code=500, error=None)
 
     class _TC:
         def table(self, _n):
@@ -1017,7 +1033,7 @@ def test_release_no_lock_released_branch(monkeypatch):
     c._client = _TC()
     ok, msg = c.release("collab/foo.py")
     assert not ok
-    assert "not owner" in msg.lower() or "no lock" in msg.lower()
+    assert "no lock released" in msg.lower()
 
 
 def test_graceful_shutdown_flush_handlers_exceptions(monkeypatch, tmp_path):
@@ -1214,7 +1230,9 @@ def test_get_create_client_spec_getattr_exception(monkeypatch):
     # Reset cached client so it re-runs the loader
     monkeypatch.setattr(mod, "_supabase_create_client", None)
     fn = mod._get_create_client()
-    assert fn is not None or fn is None  # just ensures no exception propagates
+    # Despite the __spec__.origin access raising, the loader must still return
+    # the module's create_client callable.
+    assert callable(fn)
 
 
 def test_quiet_console_loggers_restore_exception(monkeypatch):
@@ -1344,27 +1362,29 @@ def test_assign_to_job_object_get_set_info_failure(monkeypatch):
     mod.LockClient._assign_to_job_object()
 
 
-def test_get_modified_supabase_exception_returns_git_modified(monkeypatch, tmp_path):
-    """_get_modified_and_unpushed_files outer exception returns git_modified list."""
+def test_get_modified_returns_git_modified_files(monkeypatch, tmp_path):
+    """_get_modified_and_unpushed_files returns dirty files from git status.
+
+    The function is git-only (it never queries Supabase), so we drive it via a stubbed
+    ``_run_git_status`` and disable the in-progress diff step so the result is exactly
+    the parsed dirty files.
+    """
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
 
-    # Make git status return something
     monkeypatch.setattr(
         mod.LockClient,
         "_run_git_status",
         staticmethod(lambda: ("M  src/foo.py\n", True)),
     )
+    # Skip the committed-but-unpushed diff step (no real git in tmp).
+    monkeypatch.setattr(
+        mod.LockClient, "_resolve_lock_diff_base_ref", lambda self: None
+    )
 
-    # Make client raise to hit the outer exception branch (2699-2701)
-    class _FailClient:
-        def table(self, _n):
-            raise RuntimeError("db fail")
-
-    c._client = _FailClient()
-
-    result, _git_ok = c._get_modified_and_unpushed_files()
-    assert isinstance(result, list)
+    result, git_ok = c._get_modified_and_unpushed_files()
+    assert result == ["src/foo.py"]
+    assert git_ok is True
 
 
 def test_watch_parent_method_vscode_and_pycharm_branches(monkeypatch, tmp_path):
@@ -1700,28 +1720,6 @@ def test_graceful_shutdown_stdout_flush_exception(monkeypatch):
     c._graceful_shutdown()  # Should not raise
 
 
-def test_graceful_shutdown_root_logger_block_exception(monkeypatch):
-    """Cover lines 2647-2648: outer except when root logger handlers property raises."""
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    c = mod.LockClient(developer_id="test_sd4")
-    monkeypatch.setattr(c, "active", lambda: [])
-    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
-
-    # Patch only mod.logging.getLogger to intercept the root logger request
-    # Only override within the function scope using direct assignment + restore
-    _real_get_logger = mod.logging.getLogger
-
-    class _BadRootLogger:
-        @property
-        def handlers(self):
-            raise RuntimeError("root handlers broken")
-
-    def _patched(name=None):
-        if name is None or name == "":
-            return _BadRootLogger()
-        return _real_get_logger(name)
-
-
 def test_reconcile_active_supabase_exception(monkeypatch):
     """Cover lines 2699-2701.
 
@@ -1742,58 +1740,43 @@ def test_reconcile_active_supabase_exception(monkeypatch):
     assert "file.py" in result
 
 
-def test_get_process_info_local_exception_in_watch(monkeypatch):
-    """Cover lines 2070-2071.
+def test_get_process_info_local_returns_none_for_missing_process(monkeypatch):
+    """_get_process_info_local returns (None, None) when psutil reports no process.
 
-    _get_process_info_local raises during parent name resolution.
+    This is the real branch that keeps the watch loop's ``parent_name`` at "unknown"
+    when the parent cannot be resolved.
     """
     c = mod.LockClient(developer_id="dev1")
-    c._parent_pid = 12345
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
-    monkeypatch.setattr(
-        c,
-        "_get_process_info_local",
-        lambda pid: (_ for _ in ()).throw(RuntimeError("no proc")),
+    class _NoSuchProcess(Exception):
+        pass
+
+    def _raise_nosuch(_pid):
+        raise _NoSuchProcess()
+
+    fake_psutil = types.SimpleNamespace(
+        Process=_raise_nosuch, NoSuchProcess=_NoSuchProcess
     )
-    # Access the name resolution code directly
-    parent_name = "unknown"
-    try:
-        name, _ = c._get_process_info_local(c._parent_pid)
-        if name:
-            parent_name = name
-    except Exception:
-        pass  # This covers 2070-2071
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
 
-    assert parent_name == "unknown"
+    assert c._get_process_info_local(12345) == (None, None)
 
 
-def test_heartbeat_check_exception_in_watch(monkeypatch, tmp_path):
-    """Cover lines 2053-2055: heartbeat check exception handler."""
-    # Fake heartbeat file that raises OSError on stat
+def test_heartbeat_should_shutdown_when_file_missing(monkeypatch, tmp_path):
+    """_heartbeat_should_shutdown returns 'heartbeat_missing' past startup grace.
+
+    Exercises the real extracted heartbeat policy method rather than replicating its
+    logic inline.
+    """
     c = mod.LockClient(developer_id="dev1")
-    c._heartbeat_file = str(tmp_path / "heartbeat")
+    c._heartbeat_file = str(tmp_path / "heartbeat")  # intentionally absent
     c._heartbeat_grace_seconds = 5
 
-    # Make os.path.exists raise to trigger the exception
-    monkeypatch.setattr(
-        mod.os.path,
-        "exists",
-        lambda p: (
-            (_ for _ in ()).throw(OSError("disk error"))
-            if "heartbeat" in str(p)
-            else True
-        ),
-    )
-    # The heartbeat check code (within watch) catches Exception:
-    caught = False
-    try:
-        # Replicate the logic from the watch heartbeat check
-        if c._heartbeat_file and mod.os.path.exists(c._heartbeat_file):
-            pass
-    except Exception:
-        caught = True
+    # Pin "now" far past the startup grace window so a missing file is fatal.
+    monkeypatch.setattr(mod.time, "time", lambda: 10_000.0)
 
-    assert caught
+    assert c._heartbeat_should_shutdown(startup_time=0.0) == "heartbeat_missing"
 
 
 def test_emit_log_resilient_stderr_write_exception_swallowed(monkeypatch):

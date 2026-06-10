@@ -291,8 +291,23 @@ def test_main_command_dispatch(monkeypatch):
 
 
 def test_collab_git_hook_dunder_main(monkeypatch):
+    # Execute the real ``if __name__ == "__main__": raise SystemExit(main())``
+    # guard via an absolute, CWD-independent path. ``runpy`` runs a *fresh*
+    # module, so patching ``hook.acquire_staged`` would not take effect there.
+    # Instead, force "no staged files" by patching the shared ``subprocess``
+    # module (the fresh module imports the same cached object), which drives
+    # acquire_staged() down its zero-staged-files path -> exit code 0 without
+    # touching git or the real LockClient.
+    root = Path(__file__).resolve().parents[4]
+    script = root / "scripts" / "collab_git_hook.py"
+
+    monkeypatch.setattr(
+        hook.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
     monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "acquire-staged"])
-    monkeypatch.setattr(hook, "acquire_staged", lambda: 0)
+
     with pytest.raises(SystemExit) as exc:
-        runpy.run_path("scripts/collab_git_hook.py", run_name="__main__")
+        runpy.run_path(str(script), run_name="__main__")
     assert exc.value.code == 0
