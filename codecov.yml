@@ -4,7 +4,7 @@
 # Pin the patch/project status targets to the SAME thresholds enforced locally
 # by scripts/validate_code.py and in CI (.github/workflows/ci.yml):
 #   - diff/patch coverage on changed lines >= 95%  (AGENTS.md, immutable)
-#   - total project coverage            >= 85%  (AGENTS.md, immutable)
+#   - total project coverage            >= 92%  (AGENTS.md)
 #
 # Without this file Codecov falls back to `target: auto`, which sets the patch
 # target to the base commit's coverage. That silently diverges from the
@@ -17,7 +17,7 @@ coverage:
   status:
     project:
       default:
-        target: 85%
+        target: 92%
         threshold: 1%
         informational: false
     patch:

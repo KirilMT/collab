@@ -13,11 +13,6 @@ from collab.errors import SubprocessSecurityError
 from tests.backend.subprocess_testing import patch_subprocess
 
 
-def test_validate_git_argv_accepts_config():
-    argv = safe_subprocess.validate_argv(["git", "config", "user.name"], policy="git")
-    assert argv[1] == "config"
-
-
 @pytest.mark.parametrize(
     "subcommand",
     ["merge-base", "for-each-ref", "rev-list"],

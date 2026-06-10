@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 
 import pytest
@@ -398,6 +399,7 @@ def test_warn_cross_branch_overlap_disabled_returns_zero(monkeypatch, tmp_path):
     assert emitted == []
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git executable not available")
 def test_detect_overlap_real_git_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -119,7 +119,7 @@ jobs:
 
       - name: Report coverage
         run: |
-          coverage report --fail-under=85
+          coverage report --fail-under=92
       - name: Check diff coverage
         run: |
           diff-cover coverage.xml \

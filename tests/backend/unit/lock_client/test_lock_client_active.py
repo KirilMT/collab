@@ -98,9 +98,13 @@ def test_active_locks_dns_failure(monkeypatch):
         lc.active()
 
 
-def test_get_lock_status_expired(monkeypatch):
-    """Test get_lock_status marks expired locks as unlocked (server-side expiry not
-    enforced)."""
+def test_get_lock_status_ignores_expires_at_row_still_locked(monkeypatch):
+    """get_lock_status ignores expires_at: any present DB row is reported as locked.
+
+    Server-side expiry is intentionally disabled, so even a row whose ``expires_at`` is
+    in the past must still be reported as an active lock until it is explicitly
+    released. The client never evaluates ``expires_at``.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 

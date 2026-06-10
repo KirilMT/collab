@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import types
@@ -67,8 +68,11 @@ def test_touch_pid_file_heartbeat_updates_mtime(monkeypatch, tmp_path):
 
 def test_touch_pid_file_heartbeat_missing_file_is_noop(monkeypatch, tmp_path):
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
+    missing = tmp_path / "missing.pid"
+    monkeypatch.setattr(mod, "PID_FILE", str(missing))
     mod._touch_pid_file_heartbeat()
+    # No-op: a heartbeat touch must not create a PID file that does not exist.
+    assert not missing.exists()
 
 
 def test_touch_pid_file_heartbeat_oserror_is_swallowed(monkeypatch, tmp_path):
@@ -149,23 +153,30 @@ def test_live_locks_watcher_get_parent_ide_pid_traversal_gap(monkeypatch):
 
 
 def test_live_locks_watcher_process_helpers_error_gaps(monkeypatch):
+    """Cover the Windows exception branches in process helpers deterministically."""
     mod = load_watcher_module()
-    """Cover various exception branches in process helpers."""
-    # _get_process_info_local exception
-    with mock.patch("subprocess.check_output", side_effect=Exception("cmd fail")):
-        assert mod._get_process_info_local(123) == (None, None)
+    # Force the Windows code paths so the assertions exercise the real
+    # exception branches on every host (not the non-win32 early-return guard).
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
-    # Simulate psutil failures
+    # _get_process_info_local: the wmic probe raising -> (None, None).
+    def _wmic_boom(_pid):
+        raise Exception("wmic fail")
+
+    monkeypatch.setattr(mod.platform_probe, "wmic_process_name_and_ppid", _wmic_boom)
+    assert mod._get_process_info_local(123) == (None, None)
+
+    # _is_process_alive: psutil present but reports the pid as not existing.
     mock_psutil = mock.MagicMock()
     mock_psutil.pid_exists.return_value = False
     mock_psutil.Process.side_effect = Exception("psutil fail")
-
     with mock.patch.dict(sys.modules, {"psutil": mock_psutil}):
         assert mod._is_process_alive(123) is False
 
-    # _get_cmdline_for_pid_local error path
+    # _get_cmdline_for_pid_local: psutil.Process raises and the platform
+    # fallback yields nothing -> None.
+    monkeypatch.setattr(mod.platform_probe, "get_cmdline", lambda _pid: None)
     with mock.patch.dict(sys.modules, {"psutil": mock_psutil}):
-        mock_psutil.Process.side_effect = Exception("psutil fail")
         assert mod._get_cmdline_for_pid_local(123) is None
 
 
@@ -220,44 +231,6 @@ def test_shorten_process_label_and_cmdline_match_moved():
         "python .collab/pycharm/live_locks_mod.py"
     )
     assert not mod._cmdline_matches_watcher_local("C:/Windows/not_mod.exe")
-
-
-def test_should_ignore_and_cmdline_helpers_migrated():
-    mod = load_watcher_module()
-    assert mod._should_ignore_path(".git/objects/abc") is True
-    assert mod._should_ignore_path("collab/app.py") is False
-
-    assert mod._cmdline_matches_watcher_local("python live_locks_watcher") is True
-    assert mod._cmdline_matches_watcher_local(None) is False
-
-    shortened = mod._shorten_process_label(
-        "C:/some/very/long/path/python.exe script.py token1 token2 token3 token4 token5"
-    )
-    assert shortened is not None
-    assert ("..." in shortened) or (len(shortened) <= 80)
-
-
-def test_write_and_existing_watcher_running_migrated(monkeypatch, tmp_path):
-    mod = load_watcher_module()
-    pid_file = tmp_path / f"pytest_collab_{os.getpid()}.daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    meta = {
-        "pid": os.getpid(),
-        "cmdline": "python live_locks_watcher",
-        "entrypoint": "pycharm-watcher",
-    }
-    with open(mod.PID_FILE, "w", encoding="utf-8") as fh:
-        json.dump(meta, fh)
-
-    monkeypatch.setattr(
-        mod, "_get_cmdline_for_pid_local", lambda pid: "python live_locks_watcher"
-    )
-    monkeypatch.setattr(mod, "_is_process_alive", lambda pid: True)
-
-    running, pid, cmdline, entry = mod._existing_watcher_running()
-    assert running is True
-    assert pid == os.getpid()
 
 
 def test_write_pid_file_and_read_migrated(monkeypatch, tmp_path):
@@ -360,41 +333,14 @@ def test_is_same_machine_token_returns_false_for_unknown_token(monkeypatch):
 # New test: malformed PID JSON should be treated as no existing watcher
 
 
-def test_existing_watcher_running_with_malformed_json(tmp_path):
+def test_existing_watcher_running_with_malformed_json(monkeypatch, tmp_path):
     mod = load_watcher_module()
     # Write malformed JSON to PID file and ensure helper treats it as no watcher
     pid_file = tmp_path / ".daemon.pid"
     pid_file.write_text("{not: json}")
-    orig = mod.PID_FILE
-    try:
-        mod.PID_FILE = str(pid_file)
-        running, pid, cmd, entry = mod._existing_watcher_running()
-        assert running is False and pid is None
-    finally:
-        mod.PID_FILE = orig
-
-
-def test_is_process_alive_fallback_without_psutil_moved(monkeypatch):
-    mod = load_watcher_module()
-    # Simulate ImportError for psutil and make tasklist command fail
-    import builtins as _builtins
-
-    real_import = _builtins.__import__
-
-    def fake_import(name, *a, **k):
-        if name == "psutil":
-            raise ImportError("no psutil")
-        return real_import(name, *a, **k)
-
-    monkeypatch.setattr(_builtins, "__import__", fake_import)
-
-    def fake_check_output(*a, **k):
-        raise Exception("tasklist failed")
-
-    monkeypatch.setattr("subprocess.check_output", fake_check_output)
-
-    # Should return False when both psutil unavailable and tasklist fails
-    assert mod._is_process_alive(999999) is False
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    running, pid, cmd, entry = mod._existing_watcher_running()
+    assert running is False and pid is None
 
 
 def test_get_cmdline_for_pid_local_uses_psutil(monkeypatch):
@@ -543,22 +489,38 @@ def test_existing_watcher_running_handles_cmdline_probe_exception(
 
 
 def test_existing_watcher_running_stale_pid_with_dead_parent_details(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, caplog
 ):
-    """Stale watcher PID with stored parent should emit dead-parent diagnostics path."""
+    """Stale watcher PID with a stored dead parent emits root-cause diagnostics."""
     mod = load_watcher_module()
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text(
-        json.dumps({"pid": 4321, "entrypoint": "not-watcher"}), encoding="utf-8"
+        json.dumps(
+            {
+                "pid": 4321,
+                "entrypoint": "not-watcher",
+                "parent_pid": 9876,
+                "started_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
     )
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
     # cmdline probe must not match a watcher, so we don't short-circuit
     monkeypatch.setattr(mod, "_get_cmdline_for_pid_local", lambda pid: None)
+    # Both the watcher PID and the stored parent PID are dead.
     monkeypatch.setattr(mod, "_is_process_alive", lambda _p: False)
 
-    running, pid, cmdline, entry = mod._existing_watcher_running()
+    with caplog.at_level(logging.INFO):
+        running, pid, cmdline, entry = mod._existing_watcher_running()
+
     assert running is False
     assert pid == 4321
+    # The dead-parent diagnostics path must actually run and log the root cause.
+    assert "parent_pid=9876" in caplog.text
+    assert "Root cause" in caplog.text
+    # Stale PID file should have been cleaned up.
+    assert not pid_file.exists()
 
 
 # ============================================================================

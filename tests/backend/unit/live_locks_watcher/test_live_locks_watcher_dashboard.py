@@ -104,6 +104,9 @@ def test_start_dashboard_server_migrated(tmp_path, monkeypatch):
 
     url = mod._start_dashboard_server()
     assert url is not None
+    # Assert the full URL shape (scheme/host/port from FakeServer, .html page).
+    assert url.startswith("http://127.0.0.1:11111/")
+    assert url.endswith(".html")
 
 
 def test_start_dashboard_server_tmpfile_error(monkeypatch, tmp_path):
@@ -155,24 +158,6 @@ def test_start_dashboard_server_unlink_error(monkeypatch, tmp_path):
 
     result = mod._start_dashboard_server()
     assert result is None
-
-
-# ---- Auto-migrated from migrated_remaining ----
-
-
-def test_start_dashboard_server_missing_and_success_moved(tmp_path, monkeypatch):
-    mod = load_watcher_module()
-    tmp_root = tmp_path / "collab_root"
-    (tmp_root / "dashboard").mkdir(parents=True)
-    # missing file
-    monkeypatch.setattr(mod, "_RESOURCE_ROOT", str(tmp_root))
-    url = mod._start_dashboard_server()
-    assert url is None
-
-    # create file and succeed
-    (tmp_root / "dashboard" / "index.html").write_text("<html>ok</html>")
-    url2 = mod._start_dashboard_server()
-    assert url2 and url2.startswith("http://127.0.0.1:")
 
 
 watcher = load_watcher_module()

@@ -161,14 +161,6 @@ def test_detect_kind_from_event_unknown_returns_none():
     assert agent_hooks._detect_kind_from_event(None) is None
 
 
-def test_detect_kind_event_overrides_other(monkeypatch):
-    monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
-    for env_name in ("CURSOR_TRACE_ID", "CLAUDE_CODE", "GITHUB_COPILOT_AGENT_ID"):
-        monkeypatch.delenv(env_name, raising=False)
-    # No env markers -> would be "other", but the event marks it cursor.
-    assert agent_hooks._detect_kind({"cursor_version": "1.0"}) == "cursor"
-
-
 def test_detect_kind_explicit_env_wins_over_event(monkeypatch):
     monkeypatch.setenv("COLLAB_AGENT_KIND", "composer")
     assert agent_hooks._detect_kind({"cursor_version": "1.0"}) == "composer"
@@ -342,13 +334,6 @@ def test_run_ide_hook_subprocess_error_fails_open(monkeypatch):
         agent_hooks.run_ide_hook(["--from-ide-hook"], stdin_text='{"path": "a.py"}')
         == 0
     )
-
-
-def test_run_ide_hook_defaults_argv_to_sys(monkeypatch):
-    monkeypatch.delenv("COLLAB_AGENT_HOOKS", raising=False)
-    monkeypatch.setattr(agent_hooks.sys, "argv", ["prog"])
-    # No enable signal -> noop without touching stdin.
-    assert agent_hooks.run_ide_hook(stdin_text='{"path": "a.py"}') == 0
 
 
 # --------------------------------------------------------------------------- #

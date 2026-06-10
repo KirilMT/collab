@@ -16,14 +16,16 @@ def test_force_release(monkeypatch):
     """Test force-releasing a lock (admin operation)."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service_key")
+    # Make admin status deterministic regardless of import-time env state.
+    monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "service_key")
 
     response = FakeResponse(status=200, data=[{"file_path": "collab/app.py"}])
     monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="admin")
     ok, msg = lc.force_release("collab/app.py")
-    assert isinstance(ok, bool)
-    assert isinstance(msg, str)
+    assert ok is True
+    assert msg == "force-released"
 
 
 def test_force_release_api_exception(monkeypatch):

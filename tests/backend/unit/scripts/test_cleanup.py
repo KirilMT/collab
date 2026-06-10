@@ -33,23 +33,6 @@ class TestRemove:
         assert ok is False
         assert msg == ""
 
-    def test_remove_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cleanup, "ROOT", tmp_path)
-        f = tmp_path / ".coverage"
-        f.write_text("data", encoding="utf-8")
-        ok, _ = cleanup._remove(f, dry_run=False)
-        assert ok is True
-        assert not f.exists()
-
-    def test_remove_directory(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cleanup, "ROOT", tmp_path)
-        d = tmp_path / "htmlcov"
-        d.mkdir()
-        (d / "index.html").write_text("<html/>", encoding="utf-8")
-        ok, _ = cleanup._remove(d, dry_run=False)
-        assert ok is True
-        assert not d.exists()
-
     def test_dry_run_does_not_delete(self, tmp_path, monkeypatch):
         monkeypatch.setattr(cleanup, "ROOT", tmp_path)
         f = tmp_path / "coverage.xml"

@@ -59,5 +59,6 @@ def test_force_release_all_chunking(monkeypatch):
 
     client._client = CustomClient()
     released = client.force_release_all()
-    assert isinstance(released, int)
-    assert released >= 0
+    # The delete response carries no rows (data=None), so force_release_all
+    # falls back to counting the attempted paths in the chunk (all 5).
+    assert released == 5

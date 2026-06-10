@@ -10,8 +10,6 @@ This prevents the recurring issue where pytest runs would terminate the
 production daemon or cause status flips due to cross-namespace discovery.
 """
 
-import json
-import os
 import sys
 import types
 from pathlib import Path
@@ -72,58 +70,66 @@ def test_namespace_filter_rejects_mismatched_watcher(monkeypatch, tmp_path):
 
 
 def test_pid_file_namespace_tag_round_trip(monkeypatch, tmp_path):
-    """PID file namespace tag must survive write/read cycle correctly."""
+    """PID metadata (incl.
+
+    the --pid-file namespace tag) survives a real write/read.
+    """
     mod = load_lock_client_module()
 
     test_pid_file = str(tmp_path / "roundtrip.pid")
     test_pid = 9999
 
-    # Write with namespace metadata
     monkeypatch.setattr(mod, "PID_FILE", test_pid_file)
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    # The watcher's namespace tag is derived from argv at write time.
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        ["-m", "collab.lock_client", "watch", "--pid-file", test_pid_file],
+    )
 
-    # Simulate daemon writing PID with namespace tag
-    pid_meta = {
-        "pid": test_pid,
-        "started_at": "2026-05-02T10:00:00Z",
-        "entrypoint": "python lock_client.py",
-        "cmdline": (
-            f"python .collab/pycharm/live_locks_watcher.py "
-            f"--pid-file {test_pid_file}"
-        ),
-        "cwd": os.getcwd(),
-    }
-    Path(test_pid_file).write_text(json.dumps(pid_meta), encoding="utf-8")
+    # Write via the real implementation, then read it back.
+    mod.LockClient._write_pid(test_pid)
+    assert mod.LockClient._read_pid() == test_pid
 
-    # Read and verify namespace tag is present
-    read_data = json.loads(Path(test_pid_file).read_text(encoding="utf-8"))
-    assert "cmdline" in read_data
-    assert f"--pid-file {test_pid_file}" in read_data["cmdline"]
-    assert read_data["pid"] == test_pid
+    client = mod.LockClient(local_only=True)
+    meta = client._read_pid_file()
+    assert isinstance(meta, dict)
+    assert meta["pid"] == test_pid
+    assert "--pid-file" in meta["cmdline"]
+    assert test_pid_file in meta["cmdline"]
+    # The persisted cmdline must be recognised as belonging to this namespace.
+    assert client._extract_pid_file_from_cmdline(meta["cmdline"]) == test_pid_file
+    assert client._cmdline_matches_current_pid_namespace(meta["cmdline"]) is True
 
 
 def test_conflicting_pid_files_are_independent(monkeypatch, tmp_path):
-    """Test and prod PID files must be independent, not affected by deletion."""
-    load_lock_client_module()
+    """_remove_pid on one namespace must not affect another PID file."""
+    mod = load_lock_client_module()
+
+    # COLLAB_TEST_MODE=1 makes _remove_pid a no-op; exercise the real removal path.
+    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
 
     test_pid_file = str(tmp_path / "test_independent.pid")
     prod_pid_file = str(tmp_path / "prod_independent.pid")
 
-    # Create both files
-    Path(test_pid_file).write_text("1111", encoding="utf-8")
-    Path(prod_pid_file).write_text("2222", encoding="utf-8")
+    # Write the production PID file via the real writer.
+    monkeypatch.setattr(mod, "PID_FILE", prod_pid_file)
+    mod.LockClient._write_pid(2222)
+    assert Path(prod_pid_file).exists()
 
+    # Write the test PID file via the real writer, then remove it.
+    monkeypatch.setattr(mod, "PID_FILE", test_pid_file)
+    mod.LockClient._write_pid(1111)
     assert Path(test_pid_file).exists()
-    assert Path(prod_pid_file).exists()
+    mod.LockClient._remove_pid()
 
-    # Delete test PID file (simulating test cleanup)
-    Path(test_pid_file).unlink()
-
-    # Production PID file must remain untouched
+    # The test PID file is gone; the production one is untouched and still valid.
     assert not Path(test_pid_file).exists()
+    assert mod.LockClient._read_pid() is None
     assert Path(prod_pid_file).exists()
-    assert Path(prod_pid_file).read_text(encoding="utf-8") == "2222"
+    monkeypatch.setattr(mod, "PID_FILE", prod_pid_file)
+    assert mod.LockClient._read_pid() == 2222
 
 
 def test_discover_watchers_filters_by_strict_namespace(monkeypatch, tmp_path):
@@ -280,37 +286,57 @@ def test_isolation_prevents_cross_namespace_discovery(monkeypatch, tmp_path):
 
 
 def test_pid_namespace_isolation_env_override(monkeypatch, tmp_path):
-    """Verify COLLAB_PID_FILE env var creates proper isolation."""
-    load_lock_client_module()
+    """COLLAB_PID_FILE override must win over the state-dir derived PID path."""
+    mod = load_lock_client_module()
 
     isolated_pid = str(tmp_path / "isolated.pid")
     monkeypatch.setenv("COLLAB_PID_FILE", isolated_pid)
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
 
-    # Force reload of PID_FILE from environment
-    if "COLLAB_PID_FILE" in os.environ:
-        pid_file_to_use = os.environ["COLLAB_PID_FILE"]
-        assert pid_file_to_use == isolated_pid
+    # The real resolver must honour the env override regardless of state dir/agent.
+    resolved = mod.agent_identity.resolve_daemon_pid_path(str(tmp_path), "agent-123")
+    assert resolved == isolated_pid
+
+    # Without the override, the path is derived from the state dir (different file).
+    monkeypatch.delenv("COLLAB_PID_FILE", raising=False)
+    fallback = mod.agent_identity.resolve_daemon_pid_path(str(tmp_path), None)
+    assert fallback != isolated_pid
+    assert fallback.startswith(str(tmp_path))
 
 
 def test_namespace_tag_propagation_in_watcher_spawn(monkeypatch, tmp_path):
-    """Verify daemon_start properly tags spawned watcher with --pid-file."""
+    """daemon_start must spawn the watcher with the current --pid-file namespace tag."""
     mod = load_lock_client_module()
 
     test_pid_file = str(tmp_path / "spawn_test.pid")
     monkeypatch.setattr(mod, "PID_FILE", test_pid_file)
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    # Use the simpler Unix spawn branch and keep the startup wait instant.
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+    monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(
+        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: None)
+    )
 
-    # Verify that the spawn command includes --pid-file parameter
-    mod.LockClient(local_only=True)
+    client = mod.LockClient(local_only=True)
+    monkeypatch.setattr(client, "_get_parent_ide_pid", lambda: (None, None))
+    monkeypatch.setattr(client, "_write_pid", lambda *a, **k: None)
+    monkeypatch.setattr(client, "_is_process_alive", lambda pid: False)
 
-    # The spawn logic should include --pid-file in the command
-    # (We test this indirectly by checking the module's spawn implementation
-    # includes the flag in daemon_start's subprocess call)
-    source = mod.__file__
-    with open(source, "r", encoding="utf-8") as f:
-        content = f.read()
-        # Verify daemon_start includes --pid-file when spawning watch
-        assert (
-            "--pid-file" in content
-        ), "daemon_start must include --pid-file when spawning watcher"
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4321
+
+    def fake_spawn(argv, **kwargs):
+        captured["argv"] = list(argv)
+        return FakeProc()
+
+    monkeypatch.setattr(mod.safe_subprocess, "spawn_background", fake_spawn)
+
+    client.daemon_start()
+
+    argv = captured["argv"]
+    assert "--pid-file" in argv
+    # The flag value must be the current namespace PID file.
+    assert argv[argv.index("--pid-file") + 1] == test_pid_file
