@@ -65,6 +65,11 @@ def _configure_coverage_data_file() -> None:
     if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
         return
 
+    # Skip when running under pytest — pytest-cov manages its own coverage
+    # file and temp routing would corrupt the aggregated coverage data.
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+
     try:
         project_root = Path(__file__).resolve().parent.parent
         digest = hashlib.sha1(
@@ -518,7 +523,7 @@ def run_command(
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
+            check=check,
             env=ironclad_env,
         )
 
@@ -919,8 +924,11 @@ def validate_python_backend(
             except Exception as e:
                 msg = f"[WARN] Could not remove .mypy_cache: {e}"
                 print(f"{Colors.WARNING}{msg}{Colors.ENDC}")
+        # Match CI exactly: `mypy` with no args, relying on pyproject.toml
+        # [tool.mypy] section which already defines files = ["collab", "tests",
+        # "scripts"]. CI uses plain `mypy`; we add --no-incremental for safety.
         success, _ = run_command(
-            ["mypy", "--no-incremental"] + python_targets,
+            ["mypy", "--no-incremental"],
             "Type checking",
             force_all_apps=force_all_apps,
         )
@@ -1346,10 +1354,17 @@ def validate_javascript_frontend(
             success = "skipped"
         else:
             success, _ = run_command(
-                ["npm", "run", "test", "--", "--coverage"],
+                [
+                    "npm",
+                    "run",
+                    "test",
+                    "--",
+                    "--coverageReporters=text",
+                    "--coverageReporters=lcov",
+                ],
                 "Jest tests with coverage",
                 force_all_apps=force_all_apps,
-                check=False,
+                check=True,
             )
     checks.append(("Jest Tests", success))
 
@@ -1419,6 +1434,131 @@ def _run_cleanup() -> None:
         print_success(f"Removed {total} generated artifact(s) — repo is clean.")
     else:
         print_success("Nothing to clean — repo is already clean.")
+
+
+_CROSS_PLATFORM_PATTERNS: tuple = (
+    (
+        "ctypes.windll",
+        "Only available on Windows. CI runs on Linux — ensure platform guard "
+        "and # type: ignore[attr-defined] or try/except AttributeError.",
+    ),
+    (
+        "ctypes.windll.kernel32",
+        "Only available on Windows. CI runs on Linux — ensure platform guard "
+        "and # type: ignore[attr-defined] or try/except AttributeError.",
+    ),
+    (
+        "ctypes.windll.user32",
+        "Only available on Windows. CI runs on Linux — ensure platform guard.",
+    ),
+    (
+        "msvcrt",
+        "Windows-only module. CI runs on Linux — ensure platform guard.",
+    ),
+    (
+        "_winreg",
+        "Windows-only module. CI runs on Linux — ensure platform guard.",
+    ),
+    (
+        "winreg",
+        "Windows-only module. CI runs on Linux — ensure platform guard.",
+    ),
+)
+
+
+def _check_cross_platform_code() -> None:
+    """Scan staged Python files for Windows-only patterns that fail CI mypy on Linux.
+
+    This catches the most common cause of \"passes locally, fails CI\" — platform-
+    specific APIs that mypy on Linux cannot resolve.  Prints a warning with remediation
+    guidance for each match.
+    """
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        staged = result.stdout.strip().splitlines() if result.returncode == 0 else []
+    except (FileNotFoundError, OSError):
+        staged = []
+
+    if not staged:
+        return
+
+    py_files = [f for f in staged if f.endswith(".py")]
+    if not py_files:
+        return
+
+    warnings: list[tuple[str, str, int, str]] = []
+
+    for filepath in py_files:
+        lines: list[str]
+        try:
+            fh = open(filepath, "r", encoding="utf-8")
+            lines = fh.readlines()
+            fh.close()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        for lineno, line in enumerate(lines, 1):
+            if "# type: ignore" not in line:
+                for pattern, guidance in _CROSS_PLATFORM_PATTERNS:
+                    if pattern in line:
+                        stripped = line.strip()
+                        if (
+                            not stripped.startswith("#")
+                            and not stripped.startswith('"""')
+                            and not ('"' + pattern + '"' in line and "getattr" in line)
+                        ):
+                            warnings.append(
+                                (
+                                    filepath,
+                                    guidance,
+                                    lineno,
+                                    stripped.strip()[:80],
+                                )
+                            )
+                            break
+
+    if not warnings:
+        return
+
+    print(
+        f"\n{Colors.WARNING}{Colors.BOLD}"
+        f"{'─' * 80}\n"
+        f"⚠ CROSS-PLATFORM COMPATIBILITY WARNING\n"
+        f"{'─' * 80}{Colors.ENDC}\n"
+    )
+    print(
+        f"{Colors.WARNING}The following staged Python files contain "
+        f"Windows-only APIs.{Colors.ENDC}"
+    )
+    print(
+        f"{Colors.WARNING}CI runs on Linux where mypy will NOT see these "
+        f"attributes.{Colors.ENDC}"
+    )
+    print(
+        f"{Colors.WARNING}These MAY cause CI mypy failures even though they "
+        f"pass locally.{Colors.ENDC}\n"
+    )
+
+    for filepath, guidance, lineno, snippet in warnings:
+        print(f"  {Colors.WARNING}{filepath}:{lineno}{Colors.ENDC}" f"  — {snippet}")
+        print(f"    {Colors.OKCYAN}→ {guidance}{Colors.ENDC}")
+        print()
+
+    print(
+        f"{Colors.WARNING}"
+        f"Remediation: add '# type: ignore[attr-defined]' on the affected line, "
+        f"or wrap in try/except AttributeError.\n"
+        f"{'─' * 80}{Colors.ENDC}\n"
+    )
 
 
 def main():
@@ -1492,7 +1632,13 @@ def main():
 
     print_header("COLLAB RUNTIME CODE VALIDATION")
     print(f"{Colors.OKCYAN}This script simulates the CI pipeline locally.{Colors.ENDC}")
-    print(f"{Colors.OKCYAN}All checks must pass before committing code.{Colors.ENDC}\n")
+    print(f"{Colors.OKCYAN}All checks must pass before committing code.{Colors.ENDC}")
+
+    # ---- CROSS-PLATFORM AWARENESS CHECK ----
+    _check_cross_platform_code()
+    # ----------------------------------------
+
+    print()
 
     scopes = detect_changed_scopes(args.files if args.files else None)
     if args.quick and scopes.get("reason"):
