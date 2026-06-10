@@ -1199,6 +1199,29 @@
 
         .detail-panel.open {
             display: block;
+            position: relative;
+        }
+
+        .detail-copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.75rem;
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: 0.3rem;
+            padding: 0.2rem 0.45rem;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .detail-copy-btn:hover {
+            color: var(--primary);
+            border-color: var(--primary);
+        }
+        .detail-copy-btn.copied {
+            color: #16a34a;
+            border-color: #16a34a;
         }
 
         .detail-grid {
@@ -2444,6 +2467,58 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     );
                 })
                 .join("");
+
+            // --- Restore detail panel if one was open before refresh ---
+            if (expandedRowPath && lockDetailCache[expandedRowPath]) {
+                // Verify the lock is still in the current result set
+                var stillPresent = (locks || []).some(function (l) {
+                    return l.file_path === expandedRowPath;
+                });
+                if (stillPresent) {
+                    var detailId = "detail-" + expandedRowPath.replace(/[^a-zA-Z0-9]/g, "-");
+                    var row = document.querySelector(
+                        "tr[data-file='" + expandedRowPath.replace(/'/g, "\\'") + "']"
+                    );
+                    if (row && !document.getElementById(detailId)) {
+                        var detailRow = document.createElement("tr");
+                        detailRow.id = detailId;
+                        detailRow.className = "detail-panel open";
+                        var lockJson = lockDetailCache[expandedRowPath];
+                        var keys = Object.keys(lockJson).sort();
+                        var gridHtml = keys
+                            .map(function (k) {
+                                var val = lockJson[k];
+                                if (val === null || val === undefined) val = "\u2014";
+                                else if (typeof val === "object") val = JSON.stringify(val);
+                                return (
+                                    '<div class="detail-label">' +
+                                    k +
+                                    '</div><div class="detail-value">' +
+                                    String(val) +
+                                    "</div>"
+                                );
+                            })
+                            .join("");
+                        var jsonHtml =
+                            '<div class="detail-json">' +
+                            JSON.stringify(lockJson, null, 2) +
+                            "</div>";
+                        var copyBtn = '<button class="detail-copy-btn" title="Copy JSON" onclick="copyDetailJson(this)"><i class="fas fa-copy"></i></button>';
+                        detailRow.innerHTML =
+                            '<td colspan="6">' +
+                            copyBtn +
+                            '<div class="detail-grid">' +
+                            gridHtml +
+                            "</div>" +
+                            jsonHtml +
+                            "</td>";
+                        row.parentNode.insertBefore(detailRow, row.nextSibling);
+                    }
+                } else {
+                    // Lock was released — clean up state
+                    expandedRowPath = null;
+                }
+            }
         }
 
         function resetHistory() {
@@ -3240,6 +3315,24 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
         }
 
         // ===================================================================
+        // Detail panel copy helper
+        // ===================================================================
+
+        function copyDetailJson(btn) {
+            var jsonBlock = btn.closest("tr").querySelector(".detail-json");
+            if (!jsonBlock) return;
+            var text = jsonBlock.textContent;
+            navigator.clipboard.writeText(text).then(function () {
+                btn.classList.add("copied");
+                btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                setTimeout(function () {
+                    btn.classList.remove("copied");
+                    btn.innerHTML = '<i class="fas fa-copy"></i>';
+                }, 1500);
+            });
+        }
+
+        // ===================================================================
         // Row click  → detail panel
         // ===================================================================
 
@@ -3283,7 +3376,9 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 return '<div class="detail-label">' + k + '</div><div class="detail-value">' + String(val) + '</div>';
             }).join("");
             var jsonHtml = '<div class="detail-json">' + JSON.stringify(lockJson, null, 2) + '</div>';
+            var copyBtn = '<button class="detail-copy-btn" title="Copy JSON" onclick="copyDetailJson(this)"><i class="fas fa-copy"></i></button>';
             detailRow.innerHTML = '<td colspan="6">' +
+                copyBtn +
                 '<div class="detail-grid">' + gridHtml + '</div>' + jsonHtml + '</td>';
             row.parentNode.insertBefore(detailRow, row.nextSibling);
             expandedRowPath = filePath;
