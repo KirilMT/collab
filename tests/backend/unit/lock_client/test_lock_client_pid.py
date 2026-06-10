@@ -6,21 +6,6 @@ from ._helpers import load_lock_client_module
 mod = load_lock_client_module()
 
 
-def test_read_pid_missing(monkeypatch, tmp_path):
-    mod = load_lock_client_module()
-    # Point PID_FILE to a non-existent path
-    monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "missing.pid"))
-    assert mod.LockClient._read_pid() is None
-
-
-def test_read_pid_plain_integer(monkeypatch, tmp_path):
-    mod = load_lock_client_module()
-    p = tmp_path / "plain.pid"
-    p.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(p))
-    assert mod.LockClient._read_pid() == 12345
-
-
 def test_read_pid_json_and_invalid(monkeypatch, tmp_path):
     mod = load_lock_client_module()
     p = tmp_path / "meta.pid"

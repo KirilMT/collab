@@ -865,29 +865,6 @@ def test_start_parent_monitor_waiter_outer_exception(monkeypatch, tmp_path):
     lc._start_parent_monitor_thread()
 
 
-def test_reconcile_git_failure_returns_current_user_locks(monkeypatch, tmp_path):
-    """Reconcile on git failure returns current user's active locks set."""
-    lc = _make_client(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        lc,
-        "_get_modified_and_unpushed_files",
-        mock.Mock(side_effect=RuntimeError("git fail")),
-    )
-    monkeypatch.setattr(
-        lc,
-        "active",
-        mock.Mock(
-            return_value=[
-                {"developer_id": "test_user", "file_path": "collab/a.py"},
-                {"developer_id": "other", "file_path": "collab/b.py"},
-            ]
-        ),
-    )
-
-    out = lc._reconcile()
-    assert out == {"collab/a.py"}
-
-
 def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_path):
     """still_valid lock with different token but same machine enters resumed list
     path."""

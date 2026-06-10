@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from tests.backend.unit.scripts._helpers import load_script_module
 
@@ -1286,3 +1289,317 @@ def test_main_unknown_args_and_multi_category_paths(monkeypatch):
         ],
     )
     assert validate_code.main() == 1
+
+
+def test_configure_coverage_data_file_handles_exception(monkeypatch):
+    """A failure while building the temp path is swallowed (lines 81-83)."""
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    def _raise(*_a, **_k):
+        raise RuntimeError("digest boom")
+
+    monkeypatch.setattr(validate_code.hashlib, "sha1", _raise)
+    validate_code._configure_coverage_data_file()
+    assert validate_code.os.getenv("COVERAGE_FILE") is None
+
+
+def test_module_import_handles_reconfigure_failure(monkeypatch):
+    """A reconfigure failure on the original stdout is swallowed (102-103)."""
+
+    class _Stream(io.StringIO):
+        encoding = "utf-8"
+
+        def reconfigure(self, **_kwargs):
+            raise RuntimeError("no reconfigure")
+
+    monkeypatch.setattr(sys, "stdout", _Stream())
+    monkeypatch.setattr(sys, "stderr", _Stream())
+    monkeypatch.setattr(sys, "__stdout__", _Stream(), raising=False)
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
+
+    script_path = Path("scripts/validate_code.py").resolve()
+    spec = importlib.util.spec_from_file_location(
+        "validate_code_reconfigure_ut", script_path
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod is not None
+
+
+def test_dedupe_output_blocks_skips_none_blocks():
+    """``None`` blocks are skipped while duplicates collapse (line 178)."""
+    result = validate_code._dedupe_output_blocks("alpha", None, "alpha", "beta")
+    assert result == ["alpha", "beta"]
+
+
+def test_extract_coverage_block_returns_marked_region():
+    """A coverage marker yields the surrounding region (lines 209-211)."""
+    lines = ["intro", "coverage: 87%", "TOTAL 87%", "outro"]
+    block = validate_code._extract_coverage_block(lines)
+    assert "coverage: 87%" in block
+
+
+def test_format_failure_output_includes_coverage_details():
+    """Coverage markers produce a dedicated section (line 264)."""
+    stdout = "\n".join(
+        [
+            "================ short test summary info ================",
+            "FAILED tests/x.py::test_y - boom",
+            "coverage: platform linux",
+            "TOTAL 80%",
+        ]
+    )
+    formatted = validate_code.format_failure_output(stdout, "")
+    assert "Coverage details" in formatted
+
+
+def test_print_output_tail_short_output_prints_full(capsys):
+    """Short output is printed verbatim (line 310)."""
+    validate_code._print_output_tail(
+        "short\nline", "Label", validate_code.Colors.OKCYAN
+    )
+    out = capsys.readouterr().out
+    assert "short" in out
+    assert "Label" in out
+
+
+def test_get_python_executable_falls_back_to_sys_executable(monkeypatch):
+    """A missing venv interpreter falls back to sys.executable (line 345)."""
+
+    class _FakePath:
+        def __init__(self, *_a):
+            pass
+
+        @property
+        def parent(self):
+            return self
+
+        def __truediv__(self, _other):
+            return self
+
+        def exists(self):
+            return False
+
+    monkeypatch.setattr(validate_code, "Path", lambda *_a: _FakePath())
+    assert validate_code._get_python_executable() == validate_code.sys.executable
+
+
+def test_python_module_fallback_command_edge_cases():
+    """Empty and path-like commands return None (lines 355, 359)."""
+    assert validate_code._python_module_fallback_command([]) is None
+    assert validate_code._python_module_fallback_command(["/usr/bin/ruff", "x"]) is None
+
+
+def test_git_remote_origin_exists_success(monkeypatch):
+    """A zero return code reports an existing origin remote (line 395)."""
+    monkeypatch.setattr(
+        validate_code.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    assert validate_code._git_remote_origin_exists() is True
+
+
+def test_resolve_diff_compare_branch_handles_fetch_error(monkeypatch):
+    """A fetch OSError is swallowed before falling back (lines 425-426)."""
+    monkeypatch.setattr(validate_code, "_git_ref_exists", lambda _ref: False)
+    monkeypatch.setattr(validate_code, "_git_remote_origin_exists", lambda: True)
+
+    def _raise(*_a, **_k):
+        raise OSError("fetch failed")
+
+    monkeypatch.setattr(validate_code.subprocess, "run", _raise)
+    branch, warning = validate_code._resolve_diff_compare_branch(quick=False)
+    assert branch is None
+    assert warning is not None and "Unable to resolve" in warning
+
+
+def test_run_command_wraps_windows_npm(monkeypatch):
+    """Npm commands are wrapped with ``cmd /c`` on Windows (line 472)."""
+    monkeypatch.setattr(validate_code.sys, "platform", "win32")
+    captured = {}
+
+    def _run(cmd, **_k):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(validate_code.subprocess, "run", _run)
+    success, _ = validate_code.run_command(["npm", "list"], "npm list", check=False)
+    assert success is True
+    assert captured["cmd"][:2] == ["cmd", "/c"]
+
+
+def test_run_command_returns_false_on_nonzero(monkeypatch, capsys):
+    """A non-zero return code prints failure and returns False (534-537)."""
+    monkeypatch.setattr(
+        validate_code.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="o", stderr="e"),
+    )
+    success, output = validate_code.run_command(["python", "-V"], "ver", check=False)
+    assert success is False
+    assert output == "e"
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_run_command_handles_called_process_error(monkeypatch):
+    """A CalledProcessError is reported as a failure (lines 539-542)."""
+    err = validate_code.subprocess.CalledProcessError(
+        2, ["python"], output="boom-out", stderr="boom-err"
+    )
+
+    def _raise(*_a, **_k):
+        raise err
+
+    monkeypatch.setattr(validate_code.subprocess, "run", _raise)
+    success, output = validate_code.run_command(["python", "-V"], "ver")
+    assert success is False
+    assert "boom" in output
+
+
+def test_run_command_handles_file_not_found(monkeypatch):
+    """A missing executable is reported clearly (lines 543-546)."""
+
+    def _raise(*_a, **_k):
+        raise FileNotFoundError("no python")
+
+    monkeypatch.setattr(validate_code.subprocess, "run", _raise)
+    success, output = validate_code.run_command(["python", "-V"], "ver")
+    assert success is False
+    assert "Command not found" in output
+
+
+def test_get_changed_files_returns_empty_on_git_error(monkeypatch):
+    """A git invocation error yields an empty change set (lines 614-615)."""
+
+    def _raise(*_a, **_k):
+        raise FileNotFoundError("git missing")
+
+    monkeypatch.setattr(validate_code.subprocess, "run", _raise)
+    assert validate_code._get_changed_files() == []
+
+
+def test_expand_input_paths_skips_empty_entries():
+    """Empty path entries are ignored (line 633)."""
+    result = validate_code._expand_input_paths(["", "ghost.py"])
+    assert "ghost.py" in result
+    assert "" not in result
+
+
+def test_expand_input_paths_skips_dirs_and_ignored_parts(tmp_path):
+    """Directories and ignored path parts are filtered out (lines 639, 641)."""
+    pkg = tmp_path / "pkg"
+    (pkg / "__pycache__").mkdir(parents=True)
+    (pkg / "__pycache__" / "cached.pyc").write_text("x", encoding="utf-8")
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    result = validate_code._expand_input_paths([str(pkg)])
+    assert any(p.endswith("pkg/mod.py") for p in result)
+    assert not any("__pycache__" in p for p in result)
+
+
+def test_quick_frontend_needs_playwright_full_suite_returns_true():
+    """Full-suite mode always requires Playwright (line 741)."""
+    assert validate_code._quick_frontend_needs_playwright([], True) is True
+
+
+def test_validate_python_backend_no_targets_returns_true():
+    """File lists with no actionable targets short-circuit (lines 838-839)."""
+    assert (
+        validate_code.validate_python_backend(quick=False, files=["notes.md"]) is True
+    )
+
+
+def test_validate_backend_djlint_soft_failure_with_files(monkeypatch, capsys):
+    """A targeted djlint failure is treated as a soft skip (969, 986-987)."""
+    seen = []
+
+    def _run_command(cmd, *_a, **_k):
+        seen.append(cmd)
+        if "djlint" in cmd:
+            return False, "djlint issues"
+        return True, ""
+
+    monkeypatch.setattr(validate_code, "run_command", _run_command)
+    monkeypatch.setattr(validate_code.os.path, "exists", lambda _p: False)
+
+    result = validate_code.validate_python_backend(
+        quick=False, files=["collab/dashboard/index.html"]
+    )
+    assert result is True
+    assert any("djlint" in cmd for cmd in seen)
+    assert "DjLint found issues" in capsys.readouterr().out
+
+
+def test_validate_others_globs_docs_when_no_files(monkeypatch):
+    """File-less runs glob default doc targets (lines 1166-1174)."""
+    monkeypatch.setattr(
+        validate_code.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=1),
+    )
+    assert validate_code.validate_others(files=None) is True
+
+
+def test_validate_frontend_full_mode_no_discovered_js(monkeypatch, tmp_path):
+    """Full mode with no discoverable JS short-circuits (lines 1284-1294)."""
+    monkeypatch.setattr(validate_code.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.chdir(tmp_path)
+    scopes = {
+        "full_suite": True,
+        "backend": [],
+        "frontend": ["tests/frontend/"],
+        "reason": None,
+        "changed_files": [],
+    }
+    assert (
+        validate_code.validate_javascript_frontend(
+            quick=False, files=None, scopes=scopes
+        )
+        is True
+    )
+
+
+def test_main_quick_mode_prints_scope_reason(monkeypatch, capsys):
+    """Quick mode prints the scope resolution reason (line 1645)."""
+    monkeypatch.setattr(validate_code, "_run_cleanup", lambda: None)
+    monkeypatch.setattr(validate_code, "validate_python_backend", lambda **_k: True)
+    monkeypatch.setattr(
+        validate_code, "validate_javascript_frontend", lambda **_k: True
+    )
+    monkeypatch.setattr(validate_code, "validate_others", lambda **_k: True)
+    monkeypatch.setattr(
+        validate_code,
+        "detect_changed_scopes",
+        lambda *a, **k: {
+            "full_suite": True,
+            "backend": [],
+            "frontend": [],
+            "reason": "Global config changed",
+            "changed_files": [],
+        },
+    )
+    monkeypatch.setattr(validate_code.sys, "argv", ["validate_code.py", "--quick"])
+    assert validate_code.main() == 0
+    assert "Quick mode: Global config changed" in capsys.readouterr().out
+
+
+def test_validate_code_dunder_main(monkeypatch):
+    """The ``__main__`` guard runs main() and exits cleanly (line 1692)."""
+
+    class _Stream(io.StringIO):
+        encoding = "utf-8"
+
+    monkeypatch.setattr(sys, "stdout", _Stream())
+    monkeypatch.setattr(sys, "stderr", _Stream())
+    # A non-matching file means main() short-circuits to a clean exit.
+    monkeypatch.setattr(sys, "argv", ["validate_code.py", "ghost.bin"])
+
+    script_path = Path("scripts/validate_code.py").resolve()
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(script_path), run_name="__main__")
+    assert exc_info.value.code == 0

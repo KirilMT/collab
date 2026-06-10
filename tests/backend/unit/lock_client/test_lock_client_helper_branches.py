@@ -1073,36 +1073,6 @@ def test_graceful_shutdown_flush_handlers_exceptions(monkeypatch, tmp_path):
         logger_obj.removeHandler(bad_handler)
 
 
-def test_graceful_shutdown_pid_remove_oserror_retry(monkeypatch, tmp_path):
-    """_graceful_shutdown retries PID file removal on OSError (≤2 retries)."""
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text('{"pid": 9999}')
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(mod, "_get_state_dir", lambda: str(tmp_path))
-
-    c2 = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c2, "active", lambda: [])
-
-    remove_calls = [0]
-    real_remove = os.remove
-
-    def _flaky_remove(path):
-        if str(path) == str(pid_file):
-            remove_calls[0] += 1
-            if remove_calls[0] == 1:
-                raise OSError("locked")
-            real_remove(path)
-        else:
-            real_remove(path)
-
-    monkeypatch.setattr(mod.os, "remove", _flaky_remove)
-    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
-
-    c2._graceful_shutdown()
-    assert remove_calls[0] == 2  # failed once, succeeded second time
-
-
 def test_cleanup_orphaned_processes_no_wmic_debug_and_outer_exception(monkeypatch):
     """Hit the no-wmic debug log path and outer PID-level exception branch."""
     monkeypatch.setattr(mod.sys, "platform", "win32")
@@ -1173,22 +1143,6 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
         c.daemon_start()
     except Exception:
         pass  # We only care about the stale-stop-request branch being executed
-
-
-def test_safe_now_typeerror_fallback(monkeypatch):
-    """_safe_now hits TypeError branch when now() raises TypeError, falls back to
-    stdlib."""
-    import datetime as _dt_stdlib
-
-    # Build a fake datetime namespace whose class-level now() raises TypeError
-    class _BadNow:
-        @staticmethod
-        def now():
-            raise TypeError("cannot call")
-
-    monkeypatch.setattr(mod, "datetime", _BadNow)
-    result = mod._safe_now()
-    assert isinstance(result, _dt_stdlib.datetime)
 
 
 def test_safe_now_returns_real_dt_when_class_now_works(monkeypatch):

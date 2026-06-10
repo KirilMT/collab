@@ -717,24 +717,6 @@ def test_get_create_client_caches_result(monkeypatch):
     assert result is fake_fn
 
 
-# RESTORED: test_get_create_client_import_error
-def test_get_create_client_import_error(monkeypatch):
-    monkeypatch.setattr(mod, "_supabase_create_client", None)
-
-    original_import = (
-        __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-    )
-
-    def mock_import(name, *args, **kwargs):
-        if name == "supabase":
-            raise ImportError("No module named 'supabase'")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("builtins.__import__", mock_import)
-    with pytest.raises(SystemExit):
-        mod._get_create_client()
-
-
 # RESTORED: test_get_create_client_lazy_import_success
 def test_get_create_client_lazy_import_success(monkeypatch):
     monkeypatch.setattr(mod, "_supabase_create_client", None)

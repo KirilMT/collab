@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -435,3 +436,141 @@ def test_main_default_argv_all_sections(monkeypatch):
         "docs",
         "yaml",
     ]
+
+
+def test_resolve_python_module_command_skips_pathlike_executable():
+    """A path-like executable is returned unchanged (line 100)."""
+    command = ["/usr/bin/isort", "collab"]
+    assert format_code._resolve_python_module_command(command, "py") == command
+
+
+def test_wrap_windows_node_command_empty_command_returns_empty(monkeypatch):
+    """An empty command short-circuits on Windows (line 111)."""
+    monkeypatch.setattr(format_code.sys, "platform", "win32")
+    assert format_code._wrap_windows_node_command([]) == []
+
+
+def test_resolve_dev_tool_command_empty_command_returns_empty(tmp_path):
+    """An empty command is returned unchanged (line 129)."""
+    assert format_code._resolve_dev_tool_command([], tmp_path) == []
+
+
+def test_normalize_whitespace_skips_file_with_read_error(monkeypatch, tmp_path):
+    """A file that raises OSError on read is skipped (lines 329-330)."""
+    formatter = format_code.CodeFormatter(check_only=False)
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
+    target = tmp_path / "readable.py"
+    target.write_bytes(b"a  \n")
+
+    monkeypatch.setattr(
+        format_code.subprocess,
+        "run",
+        lambda *_a, **_k: _mock_completed(0, "readable.py\n", ""),
+    )
+
+    original_read_bytes = Path.read_bytes
+
+    def _read_bytes(path_obj):
+        if path_obj.name == "readable.py":
+            raise OSError("read boom")
+        return original_read_bytes(path_obj)
+
+    monkeypatch.setattr(Path, "read_bytes", _read_bytes)
+
+    with CaptureStdout() as out:
+        assert formatter.normalize_whitespace() is True
+    # The read error means no issue was recorded, so the file stays untouched.
+    assert "all files clean" in out.getvalue()
+
+
+def test_normalize_whitespace_truncates_many_issues(monkeypatch, tmp_path):
+    """More than ten issue files trigger the truncation line (line 352)."""
+    formatter = format_code.CodeFormatter(check_only=True)
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
+
+    names = []
+    for index in range(12):
+        name = f"f{index}.py"
+        (tmp_path / name).write_bytes(b"x  \n")
+        names.append(name)
+    listing = "\n".join(names) + "\n"
+
+    monkeypatch.setattr(
+        format_code.subprocess,
+        "run",
+        lambda *_a, **_k: _mock_completed(0, listing, ""),
+    )
+
+    with CaptureStdout() as out:
+        assert formatter.normalize_whitespace() is False
+    assert "and 2 more" in out.getvalue()
+
+
+def test_format_python_no_targets_returns_true():
+    """Non-Python file lists yield no targets and short-circuit (line 376)."""
+    formatter = format_code.CodeFormatter(files=["README.md"])
+    assert formatter.format_python() is True
+
+
+def test_check_prettier_missing_prettier_returns_false(monkeypatch, tmp_path):
+    """A missing prettier package returns False immediately (line 440)."""
+    formatter = format_code.CodeFormatter()
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
+    monkeypatch.setattr(
+        format_code.subprocess, "run", lambda *_a, **_k: _mock_completed(1)
+    )
+    assert formatter._check_prettier() is False
+
+
+def test_check_prettier_all_installed_returns_true(monkeypatch, tmp_path):
+    """Both prettier and the yaml plugin present returns True (line 456)."""
+    formatter = format_code.CodeFormatter()
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
+    monkeypatch.setattr(
+        format_code.subprocess, "run", lambda *_a, **_k: _mock_completed(0)
+    )
+    assert formatter._check_prettier() is True
+
+
+def test_format_templates_no_targets_returns_true():
+    """No HTML targets short-circuits template formatting (line 561)."""
+    formatter = format_code.CodeFormatter(files=["main.py"])
+    assert formatter.format_templates() is True
+
+
+def test_format_templates_fix_fails_then_check_passes(monkeypatch, capsys):
+    """A failed reformat followed by a clean check reports success (597-601)."""
+    formatter = format_code.CodeFormatter(files=["collab/dashboard/index.html"])
+
+    calls = {"n": 0}
+
+    def _exec(_cmd, suppress_output=False):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return True, _mock_completed(0)  # version probe
+        if calls["n"] == 2:
+            return False, _mock_completed(1)  # reformat reports a change
+        return True, _mock_completed(0)  # verification check passes
+
+    monkeypatch.setattr(formatter, "_exec", _exec)
+    assert formatter.format_templates() is True
+    assert "All issues fixed" in capsys.readouterr().out
+
+
+def test_format_code_dunder_main(monkeypatch):
+    """The ``__main__`` guard runs main() and exits cleanly (line 682)."""
+    import cleanup
+
+    monkeypatch.setattr(
+        format_code.subprocess,
+        "run",
+        lambda *_a, **_k: _mock_completed(0, "", ""),
+    )
+    monkeypatch.setattr(cleanup, "clean_caches", lambda dry_run=False: 0)
+    # A non-text file means every formatting section is a no-op.
+    monkeypatch.setattr(sys, "argv", ["format_code.py", "ghost.bin"])
+
+    script_path = Path(format_code.__file__)
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(script_path), run_name="__main__")
+    assert exc_info.value.code == 0

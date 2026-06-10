@@ -317,6 +317,30 @@ class TestMain:
         assert "File exists" in capsys.readouterr().out
 
 
+class TestDiscoveryHelperBranches:
+    def test_iter_repo_source_files_yields_root_level_modules(self, tmp_path):
+        """Repo-root scan yields top-level ``*.py`` candidates (lines 398-399)."""
+        (tmp_path / "run.py").write_text("x = 1\n", encoding="utf-8")
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        files = list(disc._iter_repo_source_files(disc.repo_root))
+        assert (tmp_path / "run.py") in files
+
+    def test_should_skip_dir_excluded_and_normal(self, tmp_path):
+        """Excluded/egg-info dirs skip; ordinary dirs do not (lines 427, 430)."""
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        assert disc._should_skip_dir(tmp_path / "build") is True
+        assert disc._should_skip_dir(tmp_path / "pkg.egg-info") is True
+        assert disc._should_skip_dir(tmp_path / "ordinary") is False
+
+    def test_is_candidate_source_rejects_non_py_and_special_names(self, tmp_path):
+        """Non-.py and dunder/test/private files are rejected (lines 435, 437)."""
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        assert disc._is_candidate_source(tmp_path / "notes.txt") is False
+        assert disc._is_candidate_source(tmp_path / "__init__.py") is False
+        assert disc._is_candidate_source(tmp_path / "test_mod.py") is False
+        assert disc._is_candidate_source(tmp_path / "_private.py") is False
+
+
 def test_generate_tests_dunder_main(monkeypatch, tmp_path, capsys):
     # Exercise the ``if __name__ == "__main__": main()`` guard via an absolute,
     # CWD-independent path and assert the dry-run output main() actually prints.
