@@ -69,7 +69,10 @@ LOCK_STRICT=0                                      # 1 = block on lock errors, 0
 COLLAB_AGENT_ID=agent-my-task                      # Optional: unique id per AI agent session
 COLLAB_AGENT_LABEL=refactor-auth                   # Optional display label
 COLLAB_AGENT_MODE=1                                # Auto-generate/persist agent id when unset
-COLLAB_OVERLAP_STRICT=0                            # 1 = block git push on cross-branch overlaps
+COLLAB_OVERLAP_STRICT=0                            # 1 = block git push on cross-branch overlaps (fail-closed)
+COLLAB_OVERLAP_FETCH=auto                          # auto = fetch only in strict; 1/0 to force/skip
+COLLAB_OVERLAP_LINE_LEVEL=1                        # 0 = file-level instead of git merge-tree (line-level)
+COLLAB_OVERLAP_REMOTE=                             # override the auto-detected remote (e.g. upstream)
 ```
 
 > **Keep `SUPABASE_SERVICE_ROLE_KEY` private — never commit it to version control.**
@@ -116,7 +119,12 @@ This installs `pre-commit`, `post-commit`, `pre-push`, and `commit-msg` hooks in
 repository. The hooks acquire locks for staged files, block commits that conflict with another
 developer's lock, and release locks after a successful push. By default, Collab warns about
 overlaps across unmerged branches during push; set `COLLAB_OVERLAP_STRICT=1` to block the push
-when overlaps are detected. They resolve the project `.venv` first,
+when overlaps are detected (fail-closed, and the hook first runs `git fetch` so branches pushed
+from other clones are seen). Overlap is confirmed at line level via `git merge-tree`, so edits to
+different regions of the same file are not flagged, and the comparison remote is auto-detected.
+For enforcement that cannot be bypassed with `git push --no-verify`,
+add the `PR Overlap Guard` GitHub Action to your branch-protection required checks. The hooks
+resolve the project `.venv` first,
 so **commits from VS Code / Cursor Source Control behave the same as a venv-activated terminal**.
 
 Existing non-collab hooks are preserved; pass `--force` to overwrite them.

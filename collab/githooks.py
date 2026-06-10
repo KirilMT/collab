@@ -187,10 +187,27 @@ def acquire_staged() -> int:
     return 1
 
 
-def warn_cross_branch_overlap() -> int:
-    """Print cross-branch overlap warnings; returns non-zero on strict overlap."""
-    root = _git_toplevel()
-    return overlap.warn_cross_branch_overlap(root, emit=_hook_log)
+def warn_cross_branch_overlap(remote: Optional[str] = None) -> int:
+    """Print cross-branch overlap warnings; returns non-zero on strict overlap.
+
+    ``remote`` is the push target git passes to the pre-push hook (``$1``); it lets
+    the check compare against the correct remote instead of assuming ``origin``.
+
+    Returns ``overlap.EXIT_OVERLAP``/``EXIT_ERROR`` (non-zero) when strict mode
+    must block the push, otherwise ``overlap.EXIT_OK``. Resolving the repo root is
+    itself guarded so a failure there cannot crash the hook with a traceback: in
+    strict mode it fails closed, otherwise it fails open.
+    """
+    try:
+        root = _git_toplevel()
+    except Exception as exc:  # pragma: no cover - defensive
+        _hook_log(f"[collab] Warning: could not resolve repo root: {exc}")
+        return (
+            overlap.EXIT_ERROR
+            if overlap.is_overlap_strict_enabled()
+            else overlap.EXIT_OK
+        )
+    return overlap.warn_cross_branch_overlap(root, emit=_hook_log, remote=remote)
 
 
 def release_all() -> int:
@@ -302,7 +319,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if command == "release-all":
         return release_all()
     if command == "check-overlap":
-        return warn_cross_branch_overlap()
+        # Optional positional arg: the push remote git passes to pre-push ($1).
+        remote = args[1] if len(args) > 1 and not args[1].startswith("-") else None
+        return warn_cross_branch_overlap(remote)
     if command == "init":
         force = "--force" in args[1:]
         summary = install_hooks(force=force)

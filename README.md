@@ -89,7 +89,11 @@ anon key come pre-configured from `.env.example`:
 | `COLLAB_AGENT_MODE`         | Set to `1` to auto-generate/persist an agent id when unset          |
 | `COLLAB_AGENT_HOOKS`        | Set to `1` to enable the IDE edit hook that auto-claims agent edits |
 | `COLLAB_WATCHER_AGENT_ID`   | Opt in to a dedicated agent watcher (default: watcher = human)      |
-| `COLLAB_OVERLAP_STRICT`     | If `1`, git push blocks if overlaps detected on unmerged branches.  |
+| `COLLAB_OVERLAP_STRICT`     | If `1`, git push blocks on cross-branch overlap (implies the check) |
+| `COLLAB_OVERLAP_CHECK`      | If `0`, disable overlap warnings entirely (ignored when strict)     |
+| `COLLAB_OVERLAP_FETCH`      | `auto` (default: fetch only in strict), or `1`/`0` to force/skip    |
+| `COLLAB_OVERLAP_LINE_LEVEL` | If `0`, use file-level overlap instead of `git merge-tree` (line)   |
+| `COLLAB_OVERLAP_REMOTE`     | Remote to compare against (default: auto-detected, e.g. `origin`)   |
 
 > **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button.
 > Without it, only your own locks can be released. Obtain it from a maintainer — **never commit it**.
@@ -483,7 +487,13 @@ collab daemon-status
 - File locks use a unique key on `file_path`.
 - Only one developer can hold a lock per file simultaneously.
 - **Lock Lifecycle**: Locks are held during local editing and committed changes. They are automatically released after a successful `git push` via the pre-push hook.
-- **Cross-Branch Overlap**: By default, Collab warns if a file you are pushing is also modified on another unmerged branch. To prevent pushing in this scenario, set `COLLAB_OVERLAP_STRICT=1`.
+- **Cross-Branch Overlap (client)**: By default, Collab warns if a change you are pushing would conflict with another unmerged branch. To **block** the push in this case, set `COLLAB_OVERLAP_STRICT=1`.
+  - **Line-level accuracy**: overlap is confirmed with a real in-memory merge (`git merge-tree`), so two branches editing **different regions** of the same file are not flagged. On git older than 2.38 it falls back to file-level. Force file-level with `COLLAB_OVERLAP_LINE_LEVEL=0`.
+  - **Remote-aware**: the remote to compare against is auto-detected (the push target, the branch upstream, `origin`, or the sole remote); override with `COLLAB_OVERLAP_REMOTE`.
+  - **Fresh state**: in strict mode the pre-push hook runs `git fetch` first so branches pushed from **other** clones are visible. This is **fail-closed** — if the fetch or check cannot complete, the push is blocked. `COLLAB_OVERLAP_FETCH` is `auto` by default (fetch only in strict, to avoid adding a fetch to every advisory push); set `1`/`0` to force or skip.
+  - Branches you are stacked on top of (ancestors of `HEAD`) are not flagged.
+  - When strict mode blocks you: rebase onto / coordinate merge order with the other branch, or override for a single push with `COLLAB_OVERLAP_STRICT=0` (last resort: `git push --no-verify`).
+- **Cross-PR Overlap (server, bulletproof)**: The [`PR Overlap Guard`](.github/workflows/pr-overlap-guard.yml) workflow fails a PR check when its changed files overlap another open PR targeting the same base. Because git hooks can be bypassed with `--no-verify`, add this check to your branch-protection **required status checks** for enforcement that cannot be skipped.
 
 ### Dashboard
 

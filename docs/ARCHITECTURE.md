@@ -86,9 +86,15 @@ Collab prevents merge conflicts by ensuring only one developer can modify a file
 
 - **Lock Acquisition**: Automatically acquired by the background watcher on local edit, or manually via CLI.
 - **Lock Release**: By default, locks are released automatically after a successful `git push` (via the pre-push hook). This ensures that files are only locked while work is "in progress" locally.
-- **Cross-Branch Overlap Detection**: Collab detects when files modified on the current branch are also modified on other unmerged branches.
+- **Cross-Branch Overlap Detection (client)**: Collab detects when changes on the current branch would conflict with other unmerged branches (local or remote-tracking).
   - **Advisory (Default)**: Warnings are issued during `git push` but do not block the operation.
-  - **Strict Mode**: When `COLLAB_OVERLAP_STRICT=1` is set, `git push` will be blocked if an overlap is detected, forcing developers to coordinate or rebase.
+  - **Strict Mode**: When `COLLAB_OVERLAP_STRICT=1` is set, `git push` is blocked if an overlap is detected. Strict mode implies the check, so it cannot be silently disabled by `COLLAB_OVERLAP_CHECK=0`.
+  - **Line-level accuracy**: a file-level overlap is confirmed with `git merge-tree` (a real in-memory 3-way merge, git >= 2.38). Edits to _different_ regions of the same file do not conflict and are not flagged; on older git it falls back to file-level. Toggle with `COLLAB_OVERLAP_LINE_LEVEL`.
+  - **Remote-agnostic**: the comparison remote is resolved dynamically — the push target git passes to the pre-push hook (`$1`), then the branch upstream, then `origin`, then the sole remote. Override with `COLLAB_OVERLAP_REMOTE`. Base ref, candidate refs, and the fetch all use the resolved remote.
+  - **Remote refresh**: in strict mode the pre-push hook runs `git fetch --prune <remote>` first (`COLLAB_OVERLAP_FETCH` is `auto`, i.e. strict-only, by default) so a branch pushed from another clone is visible — closing the gap where stale tracking refs hid an overlap.
+  - **Fail-closed**: In strict mode, an unexpected error or an inability to refresh remote state blocks the push (`exit 1` = overlap, `exit 3` = could-not-verify). Advisory mode always fails open.
+  - **False-positive guard**: branches that `HEAD` is stacked on top of (ancestors of `HEAD`) are excluded. The warning text is plain ASCII so it renders on a Windows cp1252 console without raising `UnicodeEncodeError`.
+- **Cross-PR Overlap Detection (server)**: `collab.pr_overlap`, run by the `PR Overlap Guard` GitHub Action on `pull_request`, fails the check when a PR's changed files overlap another open PR targeting the same base. This is the enforcement layer that `git push --no-verify` cannot bypass; require it via branch protection. The overlap math is a pure, unit-tested function with network access isolated behind an injectable HTTP getter.
 
 ### Strict attribution (who actually edited)
 

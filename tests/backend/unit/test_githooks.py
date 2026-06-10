@@ -340,6 +340,7 @@ def test_release_all_success(monkeypatch, tmp_path):
 
 def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_OVERLAP_FETCH", "0")
     monkeypatch.setattr(
         githooks.overlap,
         "detect_cross_branch_overlaps",
@@ -350,13 +351,69 @@ def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
     err = io.StringIO()
     with redirect_stderr(err):
         assert githooks.warn_cross_branch_overlap() == 0
-    assert "Cross-branch overlap" in err.getvalue()
+    assert "cross-branch overlap" in err.getvalue().lower()
 
 
 def test_main_check_overlap_command(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
-    monkeypatch.setattr(githooks, "warn_cross_branch_overlap", lambda: 0)
+    seen = {}
+
+    def fake(remote=None):
+        seen["remote"] = remote
+        return 0
+
+    monkeypatch.setattr(githooks, "warn_cross_branch_overlap", fake)
     assert githooks.main(["check-overlap"]) == 0
+    assert seen["remote"] is None
+    # The push remote ($1) is forwarded through to the overlap check.
+    assert githooks.main(["check-overlap", "upstream"]) == 0
+    assert seen["remote"] == "upstream"
+
+
+def test_warn_cross_branch_overlap_blocks_in_strict(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_OVERLAP_FETCH", "0")
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+    monkeypatch.setattr(
+        githooks.overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [
+            githooks.overlap.OverlapReport(branch="feat/x", files=("a.py",))
+        ],
+    )
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_OVERLAP
+    assert rc != 0
+
+
+def test_warn_cross_branch_overlap_toplevel_failure_fails_closed_in_strict(
+    monkeypatch,
+):
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("not a git repo")
+
+    monkeypatch.setattr(githooks, "_git_toplevel", boom)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_ERROR
+
+
+def test_warn_cross_branch_overlap_toplevel_failure_fails_open_advisory(monkeypatch):
+    monkeypatch.delenv("COLLAB_OVERLAP_STRICT", raising=False)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("not a git repo")
+
+    monkeypatch.setattr(githooks, "_git_toplevel", boom)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_OK
 
 
 def test_release_all_failure(monkeypatch, tmp_path):

@@ -20,7 +20,7 @@ def test_validate_git_argv_accepts_config():
 
 @pytest.mark.parametrize(
     "subcommand",
-    ["merge-base", "for-each-ref", "rev-list"],
+    ["merge-base", "for-each-ref", "rev-list", "fetch"],
 )
 def test_validate_git_argv_accepts_overlap_subcommands(subcommand):
     argv = safe_subprocess.validate_argv(
