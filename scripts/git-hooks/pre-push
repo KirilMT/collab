@@ -38,7 +38,7 @@ if [ -n "$PRE_COMMIT_BIN" ] && [ -x "$PRE_COMMIT_BIN" ]; then
     fi
 fi
 
-"$PYTHON" -c "from collab.overlap import warn_cross_branch_overlap; warn_cross_branch_overlap()"
+"$PYTHON" -m collab.githooks check-overlap
 
 echo "[collab] Releasing all locks after successful pre-push validation..."
 "$PYTHON" "$PROJECT_ROOT/scripts/collab_git_hook.py" release-all
