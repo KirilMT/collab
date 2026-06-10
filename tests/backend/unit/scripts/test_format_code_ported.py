@@ -1,4 +1,8 @@
-"""Additional ported coverage tests for scripts/format_code.py."""
+"""Ported coverage tests for scripts/format_code.py.
+
+Only the cases that exercise code paths not already covered by
+``test_format_code.py`` are retained here.
+"""
 
 from __future__ import annotations
 
@@ -91,77 +95,6 @@ def test_scenario_clean(monkeypatch):
 
     for tool in BACKEND_TOOLS:
         assert f"✅ {tool} - SUCCESS" in output
-
-
-def test_scenario_fixable(monkeypatch):
-    monkeypatch.setattr(
-        format_code.CodeFormatter,
-        "_get_targets",
-        lambda self, ext, default: ["collab/main.py"] if ".py" in ext else [],
-    )
-    call_map = {
-        "ruff": [(1, "fixed", ""), (0, "", "")],
-        "isort": [(1, "fixed", ""), (0, "", "")],
-        "black": [(1, "fixed", ""), (0, "", "")],
-        "docformatter": [(1, "fixed", ""), (0, "", "")],
-        "flake8": [(1, "fixed", ""), (0, "", "")],
-        "yamllint": [(0, "", "")],
-    }
-    with mock.patch("subprocess.run", side_effect=make_sequential_mock(call_map)):
-        with mock.patch("sys.argv", ["format_code.py", "--backend"]):
-            with CaptureStdout() as out:
-                format_code.main()
-            output = out.getvalue()
-
-    for tool in BACKEND_TOOLS:
-        assert f"❌ {tool} - ISSUES FOUND" in output
-        assert f"✅ {tool} (check) - All issues fixed" in output
-
-
-def test_scenario_unfixable(monkeypatch):
-    monkeypatch.setattr(
-        format_code.CodeFormatter,
-        "_get_targets",
-        lambda self, ext, default: ["collab/main.py"] if ".py" in ext else [],
-    )
-    call_map = {
-        "ruff": [(1, "bad", ""), (1, "bad", "")],
-        "isort": [(1, "bad", ""), (1, "bad", "")],
-        "black": [(1, "bad", ""), (1, "bad", "")],
-        "docformatter": [(1, "bad", ""), (1, "bad", "")],
-        "flake8": [(1, "bad", ""), (1, "bad", "")],
-        "yamllint": [(0, "", "")],
-    }
-    with mock.patch("subprocess.run", side_effect=make_sequential_mock(call_map)):
-        with mock.patch("sys.argv", ["format_code.py", "--backend"]):
-            with CaptureStdout() as out:
-                try:
-                    format_code.main()
-                except SystemExit:
-                    pass
-            output = out.getvalue()
-
-    assert "operation(s) failed" in output
-    for tool in BACKEND_TOOLS:
-        assert f"❌ {tool} (check) - Issues remain" in output
-
-
-def test_exec_exception_branches():
-    formatter = format_code.CodeFormatter()
-
-    with mock.patch("subprocess.run", side_effect=FileNotFoundError("no")):
-        with CaptureStdout() as out:
-            ok, result = formatter._exec(["nonexistent_tool", "arg"])
-        assert ok is False
-        assert result is None
-        assert "Tool not found" in out.getvalue()
-
-    with mock.patch("subprocess.run", side_effect=RuntimeError("boom")):
-        with CaptureStdout() as out:
-            ok, result = formatter._exec(["bad_tool", "arg"])
-        assert ok is False
-        assert result is None
-        assert "Error: boom" in out.getvalue()
 
 
 def test_run_tool_step_no_check_cmd():

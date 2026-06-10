@@ -374,29 +374,6 @@ def test_existing_watcher_running_with_malformed_json(tmp_path):
         mod.PID_FILE = orig
 
 
-def test_is_process_alive_fallback_without_psutil_moved(monkeypatch):
-    mod = load_watcher_module()
-    # Simulate ImportError for psutil and make tasklist command fail
-    import builtins as _builtins
-
-    real_import = _builtins.__import__
-
-    def fake_import(name, *a, **k):
-        if name == "psutil":
-            raise ImportError("no psutil")
-        return real_import(name, *a, **k)
-
-    monkeypatch.setattr(_builtins, "__import__", fake_import)
-
-    def fake_check_output(*a, **k):
-        raise Exception("tasklist failed")
-
-    monkeypatch.setattr("subprocess.check_output", fake_check_output)
-
-    # Should return False when both psutil unavailable and tasklist fails
-    assert mod._is_process_alive(999999) is False
-
-
 def test_get_cmdline_for_pid_local_uses_psutil(monkeypatch):
     mod = load_watcher_module()
     fake_psutil = types.SimpleNamespace()

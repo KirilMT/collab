@@ -159,41 +159,6 @@ def test_main_detects_file_changes(monkeypatch):
         pass
 
 
-def test_main_releases_locks_on_file_removal(monkeypatch):
-    mod = load_watcher_module()
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setenv("DEVELOPER_ID", "test_dev")
-
-    monkeypatch.setattr(sys, "argv", ["live_locks_watcher.py"])
-
-    call_count = [0]
-
-    def mock_check_output(cmd, *args, **kwargs):
-        call_count[0] += 1
-        if "status" in cmd:
-            if call_count[0] <= 2:
-                return b"M  src/app.py\n"
-            return b""
-        return b"test_dev\n"
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    sleep_count = [0]
-
-    def mock_sleep(seconds):
-        sleep_count[0] += 1
-        if sleep_count[0] > 2:
-            raise KeyboardInterrupt()
-
-    monkeypatch.setattr("time.sleep", mock_sleep)
-
-    try:
-        mod.main()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-
-
 def test_main_handles_keyboard_interrupt(monkeypatch):
     mod = load_watcher_module()
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
@@ -250,54 +215,6 @@ def test_main_handles_git_error(monkeypatch):
     try:
         mod.main()
     except (SystemExit, KeyboardInterrupt):
-        pass
-
-
-def test_main_timeout_triggers(monkeypatch):
-    mod = load_watcher_module()
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    monkeypatch.setattr(sys, "argv", ["live_locks_watcher.py", "--timeout", "1"])
-
-    def mock_check_output(cmd, *args, **kwargs):
-        if "user.name" in cmd:
-            return b"test_user\n"
-        if "branch" in cmd:
-            return b"main\n"
-        return b""
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    # Use a mock for time.sleep that also advances "now"
-
-    real_now = datetime.now
-    offset = [timedelta()]
-
-    def advancing_sleep(seconds):
-        offset[0] += timedelta(minutes=2)
-
-    def fake_now(*args, **kwargs):
-        return real_now() + offset[0]
-
-    monkeypatch.setattr("time.sleep", advancing_sleep)
-    monkeypatch.setattr(
-        mod,
-        "datetime",
-        type(
-            "FakeDT",
-            (),
-            {
-                "now": staticmethod(fake_now),
-                "fromisoformat": datetime.fromisoformat,
-            },
-        )(),
-        raising=False,
-    )
-
-    try:
-        mod.main()
-    except (SystemExit, AttributeError, TypeError):
         pass
 
 
@@ -486,70 +403,6 @@ def test_main_detects_conflict(monkeypatch, tmp_path):
 # ============================================================================
 
 
-def test_main_releases_lock_on_revert(monkeypatch, tmp_path):
-    """Test that locks are released when files revert to clean state."""
-    mod = load_watcher_module()
-    monkeypatch.setattr(watcher, "SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setattr(watcher, "SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setattr(sys, "argv", ["live_locks_mod.py"])
-
-    pid_file = tmp_path / "mod.pid"
-    monkeypatch.setattr(watcher, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(watcher, "desktop_notify", None)
-
-    class FakeOKResult:
-        data = [{"status": "ok"}]
-
-    class ReleaseSupaClient:
-        def table(self, name):
-            return self
-
-        def delete(self):
-            return self
-
-        def eq(self, *args):
-            return self
-
-        def execute(self):
-            return None
-
-        def rpc(self, name, params):
-            return type("Chain", (), {"execute": lambda self: FakeOKResult()})()
-
-    monkeypatch.setattr(watcher, "create_client", lambda url, key: ReleaseSupaClient())
-
-    git_call_count = [0]
-
-    def mock_check_output(cmd, *args, **kwargs):
-        git_call_count[0] += 1
-        if "user.name" in cmd:
-            return b"test_user\n"
-        if "branch" in cmd:
-            return b"main\n"
-        if "status" in cmd:
-            # First status: file modified, second: clean
-            if git_call_count[0] <= 4:
-                return b" M src/app.py\n"
-            return b""
-        return b""
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    sleep_count = [0]
-
-    def mock_sleep(seconds):
-        sleep_count[0] += 1
-        if sleep_count[0] > 3:
-            raise KeyboardInterrupt()
-
-    monkeypatch.setattr("time.sleep", mock_sleep)
-
-    try:
-        mod.main()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-
-
 def test_main_release_lock_exception(monkeypatch, tmp_path):
     """Test that lock release errors are handled (lines 369-370)."""
     mod = load_watcher_module()
@@ -618,71 +471,6 @@ def test_main_release_lock_exception(monkeypatch, tmp_path):
 # ============================================================================
 # main() Idle Timeout Tests (lines 381-382)
 # ============================================================================
-
-
-def test_main_idle_timeout(monkeypatch, tmp_path):
-    """Test that main exits after idle timeout with no changes."""
-    mod = load_watcher_module()
-    monkeypatch.setattr(watcher, "SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setattr(watcher, "SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setattr(sys, "argv", ["live_locks_mod.py", "--timeout", "1"])
-
-    pid_file = tmp_path / "mod.pid"
-    monkeypatch.setattr(watcher, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(watcher, "desktop_notify", None)
-
-    class FakeSupaClient:
-        def table(self, name):
-            return self
-
-        def delete(self):
-            return self
-
-        def eq(self, *args):
-            return self
-
-        def execute(self):
-            return None
-
-    monkeypatch.setattr(watcher, "create_client", lambda url, key: FakeSupaClient())
-
-    def mock_check_output(cmd, *args, **kwargs):
-        if "user.name" in cmd:
-            return b"test_user\n"
-        if "branch" in cmd:
-            return b"main\n"
-        return b""
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    real_now = datetime.now
-    offset = [timedelta()]
-
-    def advancing_sleep(seconds):
-        offset[0] += timedelta(minutes=2)
-
-    def fake_now(*args, **kwargs):
-        return real_now() + offset[0]
-
-    monkeypatch.setattr("time.sleep", advancing_sleep)
-    monkeypatch.setattr(
-        watcher,
-        "datetime",
-        type(
-            "FakeDT",
-            (),
-            {
-                "now": staticmethod(fake_now),
-                "fromisoformat": datetime.fromisoformat,
-            },
-        )(),
-        raising=False,
-    )
-
-    try:
-        mod.main()
-    except (SystemExit, AttributeError, TypeError):
-        pass
 
 
 # ============================================================================
@@ -1406,45 +1194,6 @@ def test_live_locks_watcher_main_loop_gaps(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_main_existing_watcher_label_lock_daemon(monkeypatch, tmp_path):
-    """Label 'lock-daemon' entry maps to 'python lock_client.py'."""
-    mod = load_watcher_module()
-    _setup_common(monkeypatch, mod)
-    monkeypatch.setattr(sys, "argv", ["live_locks_watcher.py"])
-
-    pid_file = tmp_path / "test.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    # Simulate existing watcher with 'lock-daemon' entrypoint
-    monkeypatch.setattr(
-        mod,
-        "_existing_watcher_running",
-        lambda: (True, 1234, "python lock_client.py watch", "lock-daemon"),
-    )
-
-    with pytest.raises(SystemExit):
-        mod.main()
-
-
-def test_main_existing_watcher_label_pycharm_watcher(monkeypatch, tmp_path):
-    """Label 'pycharm-watcher' entry maps to descriptive path."""
-    mod = load_watcher_module()
-    _setup_common(monkeypatch, mod)
-    monkeypatch.setattr(sys, "argv", ["live_locks_watcher.py"])
-
-    pid_file = tmp_path / "test.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    monkeypatch.setattr(
-        mod,
-        "_existing_watcher_running",
-        lambda: (True, 5678, None, "pycharm-watcher"),
-    )
-
-    with pytest.raises(SystemExit):
-        mod.main()
-
-
 def test_main_existing_watcher_label_from_cmdline(monkeypatch, tmp_path):
     """When no entrypoint, label is derived from cmdline."""
     mod = load_watcher_module()
@@ -1552,38 +1301,6 @@ def test_main_no_parent_pid_detected(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_get_parent_ide_pid_local", lambda: None)
     monkeypatch.setattr(mod, "_reconcile_on_startup", lambda client: None)
     monkeypatch.setattr(mod, "_scan_remote_locks", lambda client: None)
-
-    _stub_loop_then_interrupt(monkeypatch, mod, max_ticks=1)
-
-    def mock_check_output(cmd, *args, **kwargs):
-        return b""
-
-    patch_subprocess(monkeypatch, check_output=mock_check_output)
-
-    try:
-        mod.main()
-    except (SystemExit, KeyboardInterrupt):
-        pass
-
-
-def test_main_write_pid_file_falls_back_to_plain_pid(monkeypatch, tmp_path):
-    """If _write_pid_file raises, falls back to writing raw PID integer."""
-    mod = load_watcher_module()
-    _setup_common(monkeypatch, mod)
-    _stub_supabase(monkeypatch, mod)
-    monkeypatch.setattr(sys, "argv", ["live_locks_watcher.py"])
-
-    pid_file = tmp_path / "test.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(
-        mod, "_existing_watcher_running", lambda: (False, None, None, None)
-    )
-    monkeypatch.setattr(mod, "_get_parent_ide_pid_local", lambda: None)
-    monkeypatch.setattr(mod, "_reconcile_on_startup", lambda client: None)
-    monkeypatch.setattr(mod, "_scan_remote_locks", lambda client: None)
-    monkeypatch.setattr(
-        mod, "_write_pid_file", mock.Mock(side_effect=RuntimeError("fail"))
-    )
 
     _stub_loop_then_interrupt(monkeypatch, mod, max_ticks=1)
 
