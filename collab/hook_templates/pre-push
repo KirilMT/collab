@@ -52,6 +52,8 @@ if ! "$PYTHON" -c "import collab.githooks" >/dev/null 2>&1; then
     exit 0
 fi
 
+"$PYTHON" -m collab.githooks check-overlap
+
 echo "[collab] Releasing all locks after successful pre-push validation..." >&2
 "$PYTHON" -m collab.githooks release-all
 

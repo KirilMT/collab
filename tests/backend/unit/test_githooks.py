@@ -338,6 +338,27 @@ def test_release_all_success(monkeypatch, tmp_path):
     assert "Released 3 lock(s)." in err.getvalue()
 
 
+def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        githooks.overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [
+            githooks.overlap.OverlapReport(branch="feat/x", files=("a.py",))
+        ],
+    )
+    err = io.StringIO()
+    with redirect_stderr(err):
+        assert githooks.warn_cross_branch_overlap() == 0
+    assert "Cross-branch overlap" in err.getvalue()
+
+
+def test_main_check_overlap_command(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(githooks, "warn_cross_branch_overlap", lambda: 0)
+    assert githooks.main(["check-overlap"]) == 0
+
+
 def test_release_all_failure(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
 
@@ -357,6 +378,7 @@ def test_read_template_returns_known_hooks():
         text = githooks._read_template(name)
         assert text.startswith("#!/bin/sh")
     assert "collab.githooks acquire-staged" in githooks._read_template("pre-commit")
+    assert "collab.githooks check-overlap" in githooks._read_template("pre-push")
     assert "collab.githooks release-all" in githooks._read_template("pre-push")
 
 

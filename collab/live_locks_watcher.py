@@ -666,12 +666,41 @@ def _scan_remote_locks(client) -> None:
     _known_remote_locks = current_remote_all
 
 
+_last_overlap_warn_at = 0.0
+_OVERLAP_WARN_INTERVAL_S = 300.0
+
+
+def _maybe_warn_cross_branch_overlap() -> None:
+    """Emit cross-branch overlap warnings (throttled, warn-only)."""
+    global _last_overlap_warn_at
+    try:
+        from collab import overlap
+    except Exception:
+        return
+    if not overlap.is_overlap_check_enabled():
+        return
+    now = time.time()
+    if now - _last_overlap_warn_at < _OVERLAP_WARN_INTERVAL_S:
+        return
+    try:
+        reports = overlap.detect_cross_branch_overlaps(_PROJECT_ROOT)
+        if not reports:
+            return
+        _last_overlap_warn_at = now
+        for line in overlap.format_warnings(reports):
+            logger.warning(line)
+    except Exception as exc:
+        logger.debug("Cross-branch overlap check failed: %s", exc)
+
+
 def _process_new_files(client, branch: str, new_files: set[str]) -> None:
     """Process newly modified files: attempt to acquire locks and handle conflicts.
 
     Extracted from the main loop so unit tests can target error/fallback branches (e.g.
     when modifying the local-owned set raises).
     """
+    if new_files:
+        _maybe_warn_cross_branch_overlap()
     for fp in new_files:
         try:
             if _is_ephemeral_dev(DEVELOPER_ID):

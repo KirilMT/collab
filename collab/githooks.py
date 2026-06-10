@@ -25,7 +25,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Optional
 
-from collab import safe_subprocess
+from collab import overlap, safe_subprocess
 
 HOOK_NAMES = ("pre-commit", "post-commit", "pre-push", "commit-msg")
 _TEMPLATE_PACKAGE = "collab"
@@ -187,6 +187,12 @@ def acquire_staged() -> int:
     return 1
 
 
+def warn_cross_branch_overlap() -> int:
+    """Print cross-branch overlap warnings; always returns 0 (never blocks)."""
+    root = _git_toplevel()
+    return overlap.warn_cross_branch_overlap(root, emit=_hook_log)
+
+
 def release_all() -> int:
     """Release all locks held by this developer; used by the pre-push hook."""
     root = _git_toplevel()
@@ -285,7 +291,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args:
         print(
             "Usage: python -m collab.githooks "
-            "<acquire-staged|release-all|init> [--force]",
+            "<acquire-staged|release-all|check-overlap|init> [--force]",
             file=sys.stderr,
         )
         return 2
@@ -295,6 +301,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return acquire_staged()
     if command == "release-all":
         return release_all()
+    if command == "check-overlap":
+        return warn_cross_branch_overlap()
     if command == "init":
         force = "--force" in args[1:]
         summary = install_hooks(force=force)
