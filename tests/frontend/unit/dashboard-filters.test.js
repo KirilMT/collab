@@ -567,3 +567,160 @@ describe("buildQueryString", function () {
     ).toBe("?developerId=alice");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Defensive-branch coverage: missing/empty fields and edge sort inputs.
+// These exercise the `|| ""` fallbacks and isNaN/null guards so the new code
+// meets the 95% branch bar rather than relying on a lowered threshold.
+// ---------------------------------------------------------------------------
+
+describe("matchesFilter — missing-field fallbacks", function () {
+  test("agentLabel against a lock with no agent_label", function () {
+    expect(matchesFilter({ developer_id: "x" }, { agentLabel: "bot" })).toBe(
+      false,
+    );
+  });
+
+  test("search falls back when file_path is missing", function () {
+    expect(matchesFilter({ developer_id: "bob" }, { search: "bob" })).toBe(
+      true,
+    );
+  });
+
+  test("search falls back when developer_id is missing", function () {
+    expect(matchesFilter({ file_path: "src/a.py" }, { search: "zzz" })).toBe(
+      false,
+    );
+  });
+
+  test("developerId against a lock with no developer_id", function () {
+    expect(matchesFilter({ file_path: "a.py" }, { developerId: "alice" })).toBe(
+      false,
+    );
+  });
+
+  test("dateTo-only filter excludes a lock with no timestamp", function () {
+    expect(
+      matchesFilter(
+        { acquired_at: null, released_at: null },
+        { dateTo: "2026-06-08" },
+      ),
+    ).toBe(false);
+  });
+
+  test("invalid acquired_at date is rejected by a date filter", function () {
+    expect(
+      matchesFilter({ acquired_at: "not-a-date" }, { dateFrom: "2026-06-08" }),
+    ).toBe(false);
+  });
+});
+
+describe("matchesGlob — missing file_path", function () {
+  test("a lock with no file_path never matches a glob", function () {
+    expect(matchesGlob({}, "*.py")).toBe(false);
+  });
+});
+
+describe("sortLocks — edge inputs", function () {
+  test("two equal null fields keep their order", function () {
+    var result = sortLocks(
+      [
+        makeLock({ file_path: "a.py", developer_id: null }),
+        makeLock({ file_path: "b.py", developer_id: null }),
+      ],
+      "developer_id",
+      "asc",
+    );
+    expect(result.map((l) => l.file_path)).toEqual(["a.py", "b.py"]);
+  });
+
+  test("two invalid dates compare as equal", function () {
+    var result = sortLocks(
+      [
+        makeLock({ file_path: "a.py", acquired_at: "bad" }),
+        makeLock({ file_path: "b.py", acquired_at: "worse" }),
+      ],
+      "acquired_at",
+      "asc",
+    );
+    expect(result.map((l) => l.file_path)).toEqual(["a.py", "b.py"]);
+  });
+
+  test("a valid date sorts ahead of an invalid one (db NaN)", function () {
+    var result = sortLocks(
+      [
+        makeLock({ file_path: "a.py", acquired_at: "2026-01-01T00:00:00Z" }),
+        makeLock({ file_path: "b.py", acquired_at: "nope" }),
+      ],
+      "acquired_at",
+      "asc",
+    );
+    expect(result.map((l) => l.file_path)).toEqual(["a.py", "b.py"]);
+  });
+
+  test("zero duration_minutes exercises the numeric fallback", function () {
+    var result = sortLocks(
+      [
+        makeHistoryLock({ file_path: "a.py", duration_minutes: 5 }),
+        makeHistoryLock({ file_path: "b.py", duration_minutes: 0 }),
+        makeHistoryLock({ file_path: "c.py", duration_minutes: 3 }),
+      ],
+      "duration_minutes",
+      "asc",
+    );
+    expect(result.map((l) => l.file_path)).toEqual(["b.py", "c.py", "a.py"]);
+  });
+
+  test("empty-string fields fall back in string comparison", function () {
+    var result = sortLocks(
+      [
+        makeLock({ file_path: "a.py", developer_id: "bob" }),
+        makeLock({ file_path: "b.py", developer_id: "" }),
+        makeLock({ file_path: "c.py", developer_id: "amy" }),
+      ],
+      "developer_id",
+      "asc",
+    );
+    // "" sorts before "amy" before "bob"
+    expect(result.map((l) => l.file_path)).toEqual(["b.py", "c.py", "a.py"]);
+  });
+});
+
+describe("countActiveFilters — null/undefined/all values", function () {
+  test("ignores null, undefined, empty, and 'all' values", function () {
+    expect(
+      countActiveFilters({
+        a: null,
+        b: undefined,
+        c: "",
+        d: "all",
+        e: "real",
+      }),
+    ).toBe(1);
+  });
+
+  test("returns 0 for a null filters object", function () {
+    expect(countActiveFilters(null)).toBe(0);
+  });
+});
+
+describe("sortLocks — null in either position", function () {
+  test("null fields sort last regardless of comparison order", function () {
+    var result = sortLocks(
+      [
+        makeLock({ file_path: "b.py", developer_id: "bob" }),
+        makeLock({ file_path: "n.py", developer_id: null }),
+        makeLock({ file_path: "a.py", developer_id: "amy" }),
+      ],
+      "developer_id",
+      "asc",
+    );
+    expect(result.map((l) => l.file_path)).toEqual(["a.py", "b.py", "n.py"]);
+  });
+});
+
+describe("hasActiveFilters — null/undefined values", function () {
+  test("ignores null and undefined entries", function () {
+    expect(hasActiveFilters({ a: null, b: undefined })).toBe(false);
+  });
+});

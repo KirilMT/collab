@@ -109,6 +109,21 @@ describe("buildTimelineData", function () {
     expect(totalAcquired).toBe(0);
   });
 
+  test("null history is treated as empty", function () {
+    var result = buildTimelineData(null, "24h");
+    expect(result.labels).toHaveLength(24);
+    expect(
+      result.acquired.every(function (v) {
+        return v === 0;
+      }),
+    ).toBe(true);
+  });
+
+  test("undefined history is treated as empty", function () {
+    var result = buildTimelineData(undefined, "7d");
+    expect(result.labels).toHaveLength(7);
+  });
+
   test("multiple events in same bucket", function () {
     var now = new Date();
     var recent = new Date(now.getTime() - 30 * 60 * 1000).toISOString(); // 30 min ago

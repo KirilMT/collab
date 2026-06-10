@@ -992,3 +992,109 @@ def test_wheel_dashboard_helpers_with_synthetic_wheel(tmp_path):
     assert mod.missing_wheel_dashboard_files(str(wheel), ["absent.js"]) == (
         "absent.js",
     )
+
+
+# ---------------------------------------------------------------------------
+# _check_watcher_health — precise branch coverage for the agent-PID, temp-dir
+# fallback glob, fallback-exception, and getmtime-failure paths.
+#
+# These cover lines 280, 305, 308-309, and 354-355, which earlier tests only
+# *claimed* to exercise: those tests wrote a plain `.daemon.pid` (hitting the
+# 300/301 and 352/353 branches) rather than the agent-specific glob / error
+# branches. The platform branch is pinned to Linux so the result is identical
+# on Windows and CI.
+# ---------------------------------------------------------------------------
+
+
+def test_check_watcher_health_agent_pid_in_state_dir(monkeypatch, tmp_path):
+    """Agent-specific ``.daemon.<agent>.pid`` in state_dir is selected (line 280)."""
+    import platform as _platform
+
+    state_dir = str(tmp_path)
+    (tmp_path / ".daemon.agent1.pid").write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 1000.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 1000.5)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 500
+
+
+def test_check_watcher_health_agent_pid_in_tempdir_fallback(monkeypatch, tmp_path):
+    """Agent-specific PID found via the temp-dir fallback glob (lines 303-305)."""
+    import glob as _glob_mod
+    import hashlib as _hashlib
+    import platform as _platform
+    import tempfile as _tempfile
+
+    project_root = str(tmp_path / "proj")
+    os.makedirs(project_root, exist_ok=True)
+
+    fake_tmp = tmp_path / "tmp"
+    fake_tmp.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(fake_tmp))
+
+    norm = os.path.abspath(project_root).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    ws_dir = fake_tmp / f"collab_runtime_{h}"
+    ws_dir.mkdir()
+    agent_pid = ws_dir / ".daemon.agent9.pid"
+    agent_pid.write_text("12345", encoding="utf-8")
+
+    # First glob (state_dir) → empty; temp-dir glob → the agent PID file.
+    def _fake_glob(pattern):
+        if "collab_runtime_" in str(pattern):
+            return [str(agent_pid)]
+        return []
+
+    monkeypatch.setattr(_glob_mod, "glob", _fake_glob)
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+    monkeypatch.setattr(mod.os.path, "getmtime", lambda _p: 2000.0)
+    monkeypatch.setattr(mod.time, "time", lambda: 2000.25)
+
+    result = mod._check_watcher_health("", project_root)
+    assert result["running"] is True
+    assert result["heartbeatLatencyMs"] == 250
+
+
+def test_check_watcher_health_tempdir_fallback_exception(monkeypatch, tmp_path):
+    """An exception inside the temp-dir fallback returns down (lines 308-309)."""
+    import glob as _glob_mod
+    import hashlib as _hashlib
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+    monkeypatch.setattr(_glob_mod, "glob", lambda *_a, **_k: [])
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("hash failure")
+
+    monkeypatch.setattr(_hashlib, "sha1", _boom)
+
+    result = mod._check_watcher_health("somewhere", str(tmp_path))
+    assert result == {"running": False}
+
+
+def test_check_watcher_health_getmtime_oserror(monkeypatch, tmp_path):
+    """A getmtime failure yields running=True without heartbeat (lines 354-355)."""
+    import platform as _platform
+
+    state_dir = str(tmp_path)
+    pid_file = tmp_path / ".daemon.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isfile", lambda p: str(p) == str(pid_file))
+    monkeypatch.setattr(_platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mod.os, "kill", lambda *_a: None)
+
+    def _raise_oserror(_p):
+        raise OSError("no mtime")
+
+    monkeypatch.setattr(mod.os.path, "getmtime", _raise_oserror)
+
+    result = mod._check_watcher_health(state_dir, state_dir)
+    assert result == {"running": True}
