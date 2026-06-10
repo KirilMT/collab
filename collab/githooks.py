@@ -188,7 +188,7 @@ def acquire_staged() -> int:
 
 
 def warn_cross_branch_overlap() -> int:
-    """Print cross-branch overlap warnings; always returns 0 (never blocks)."""
+    """Print cross-branch overlap warnings; returns non-zero on strict overlap."""
     root = _git_toplevel()
     return overlap.warn_cross_branch_overlap(root, emit=_hook_log)
 

@@ -36,6 +36,12 @@ def is_overlap_check_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def is_overlap_strict_enabled() -> bool:
+    """Return True when ``COLLAB_OVERLAP_STRICT`` is enabled."""
+    raw = os.getenv("COLLAB_OVERLAP_STRICT", "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _default_git_capture(cwd: str, args: Sequence[str]) -> tuple[int, str]:
     result = safe_subprocess.capture(
         ["git", *args],
@@ -223,7 +229,7 @@ def warn_cross_branch_overlap(
 ) -> int:
     """Run overlap detection and emit warnings.
 
-    Always returns 0 (never blocks).
+    Returns non-zero when overlaps exist and ``COLLAB_OVERLAP_STRICT`` is enabled.
     """
     if not is_overlap_check_enabled():
         return 0
@@ -235,6 +241,9 @@ def warn_cross_branch_overlap(
         reports = detect_cross_branch_overlaps(root)
         for line in format_warnings(reports):
             writer(line)
+
+        if reports and is_overlap_strict_enabled():
+            return 1
     except Exception as exc:
         writer(f"[collab] Warning: cross-branch overlap check failed: {exc}")
         logger.debug("Cross-branch overlap check failed", exc_info=True)

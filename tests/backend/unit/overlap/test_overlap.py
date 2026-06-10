@@ -476,3 +476,31 @@ def test_detect_overlap_real_git_repo(tmp_path):
     assert len(reports) == 1
     assert reports[0].branch == "feat/other"
     assert reports[0].files == ("shared.txt",)
+
+
+def test_is_overlap_strict_enabled_by_env(monkeypatch):
+    monkeypatch.delenv("COLLAB_OVERLAP_STRICT", raising=False)
+    assert overlap.is_overlap_strict_enabled() is False
+
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+    assert overlap.is_overlap_strict_enabled() is True
+
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "true")
+    assert overlap.is_overlap_strict_enabled() is True
+
+
+def test_warn_cross_branch_overlap_returns_one_in_strict_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [overlap.OverlapReport(branch="feat/x", files=("a.py",))],
+    )
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+    emitted: list[str] = []
+    # Should return 1 because overlaps exist and strict mode is on
+    assert overlap.warn_cross_branch_overlap(tmp_path, emit=emitted.append) == 1
+    assert emitted
+
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "0")
+    # Should return 0 because strict mode is off
+    assert overlap.warn_cross_branch_overlap(tmp_path, emit=emitted.append) == 0

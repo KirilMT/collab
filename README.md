@@ -89,6 +89,7 @@ anon key come pre-configured from `.env.example`:
 | `COLLAB_AGENT_MODE`         | Set to `1` to auto-generate/persist an agent id when unset          |
 | `COLLAB_AGENT_HOOKS`        | Set to `1` to enable the IDE edit hook that auto-claims agent edits |
 | `COLLAB_WATCHER_AGENT_ID`   | Opt in to a dedicated agent watcher (default: watcher = human)      |
+| `COLLAB_OVERLAP_STRICT`     | If `1`, git push blocks if overlaps detected on unmerged branches.  |
 
 > **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button.
 > Without it, only your own locks can be released. Obtain it from a maintainer — **never commit it**.
@@ -479,9 +480,10 @@ collab daemon-status
 
 ### Conflict Prevention
 
-- File locks use a unique key on `file_path`
-- Only one developer can hold a lock per file
-- Merge conflicts prevented by design
+- File locks use a unique key on `file_path`.
+- Only one developer can hold a lock per file simultaneously.
+- **Lock Lifecycle**: Locks are held during local editing and committed changes. They are automatically released after a successful `git push` via the pre-push hook.
+- **Cross-Branch Overlap**: By default, Collab warns if a file you are pushing is also modified on another unmerged branch. To prevent pushing in this scenario, set `COLLAB_OVERLAP_STRICT=1`.
 
 ### Dashboard
 

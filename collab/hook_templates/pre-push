@@ -53,6 +53,11 @@ if ! "$PYTHON" -c "import collab.githooks" >/dev/null 2>&1; then
 fi
 
 "$PYTHON" -m collab.githooks check-overlap
+OVERLAP_EXIT=$?
+if [ $OVERLAP_EXIT -ne 0 ]; then
+    echo "[collab] Pre-push aborted due to cross-branch overlap (COLLAB_OVERLAP_STRICT=1)." >&2
+    exit $OVERLAP_EXIT
+fi
 
 echo "[collab] Releasing all locks after successful pre-push validation..." >&2
 "$PYTHON" -m collab.githooks release-all

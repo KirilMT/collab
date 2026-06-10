@@ -80,6 +80,16 @@ may re-acquire any of their own locks regardless of `agent_id` (human commit aft
 agent claim after human auto-lock, etc.). A human may also `force-release` any lock held under their
 own `developer_id` (including other agents' locks) without an admin key.
 
+### Conflict Prevention and Lock Lifecycle
+
+Collab prevents merge conflicts by ensuring only one developer can modify a file at a time.
+
+- **Lock Acquisition**: Automatically acquired by the background watcher on local edit, or manually via CLI.
+- **Lock Release**: By default, locks are released automatically after a successful `git push` (via the pre-push hook). This ensures that files are only locked while work is "in progress" locally.
+- **Cross-Branch Overlap Detection**: Collab detects when files modified on the current branch are also modified on other unmerged branches.
+  - **Advisory (Default)**: Warnings are issued during `git push` but do not block the operation.
+  - **Strict Mode**: When `COLLAB_OVERLAP_STRICT=1` is set, `git push` will be blocked if an overlap is detected, forcing developers to coordinate or rebase.
+
 ### Strict attribution (who actually edited)
 
 `origin` is the source of truth for the dashboard and is decided by an **explicit** signal, never by

@@ -69,6 +69,7 @@ LOCK_STRICT=0                                      # 1 = block on lock errors, 0
 COLLAB_AGENT_ID=agent-my-task                      # Optional: unique id per AI agent session
 COLLAB_AGENT_LABEL=refactor-auth                   # Optional display label
 COLLAB_AGENT_MODE=1                                # Auto-generate/persist agent id when unset
+COLLAB_OVERLAP_STRICT=0                            # 1 = block git push on cross-branch overlaps
 ```
 
 > **Keep `SUPABASE_SERVICE_ROLE_KEY` private — never commit it to version control.**
@@ -113,7 +114,9 @@ collab init-hooks
 
 This installs `pre-commit`, `post-commit`, `pre-push`, and `commit-msg` hooks into the current
 repository. The hooks acquire locks for staged files, block commits that conflict with another
-developer's lock, and release locks after a successful push. They resolve the project `.venv` first,
+developer's lock, and release locks after a successful push. By default, Collab warns about
+overlaps across unmerged branches during push; set `COLLAB_OVERLAP_STRICT=1` to block the push
+when overlaps are detected. They resolve the project `.venv` first,
 so **commits from VS Code / Cursor Source Control behave the same as a venv-activated terminal**.
 
 Existing non-collab hooks are preserved; pass `--force` to overwrite them.
