@@ -4,7 +4,7 @@
 # (Used in deployed collab package and live environments)
 
 # Core Supabase client for file lock management
-supabase==2.30.1
+supabase==2.31.0
 httpx>=0.28.1
 
 # Process monitoring and system utilities
