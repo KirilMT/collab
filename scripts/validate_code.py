@@ -1064,9 +1064,9 @@ def validate_python_backend(
             [
                 "coverage",
                 "report",
-                "--fail-under=85",
+                "--fail-under=92",
             ],
-            "Coverage threshold check (>= 85%)",
+            "Coverage threshold check (>= 92%)",
             force_all_apps=force_all_apps,
         )
         checks.append(("Total Coverage Threshold", success))

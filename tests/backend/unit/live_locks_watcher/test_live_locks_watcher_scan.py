@@ -109,17 +109,6 @@ def test_scan_remote_locks_no_duplicate_warnings(monkeypatch):
     mod._warned_remote_locks.clear()
 
 
-def test_scan_remote_locks_handles_exception(monkeypatch):
-    mod = load_watcher_module()
-    monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
-    mod._warned_remote_locks.clear()
-
-    client = FakeScanClient(raise_exc=RuntimeError("network down"))
-    mod._scan_remote_locks(client)  # should not raise
-
-    assert len(mod._warned_remote_locks) == 0
-
-
 def test_scan_remote_locks_skips_empty_file_path(monkeypatch):
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
@@ -163,42 +152,6 @@ def test_scan_remote_locks_client_exception(monkeypatch):
     # The scan aborts on the backend error before recording any remote state.
     assert mod._known_remote_locks == set()
     assert mod._warned_remote_locks == set()
-
-
-def test_scan_remote_locks_warns_for_other_owner(monkeypatch, caplog):
-    import logging
-
-    mod = load_watcher_module()
-    fake_data = [
-        {
-            "developer_id": "other_user",
-            "file_path": "collab/locked.txt",
-            "branch_name": None,
-            "reason": None,
-        }
-    ]
-    fake = type(
-        "C",
-        (),
-        {
-            "_data": fake_data,
-            "table": lambda self, *a, **k: self,
-            "select": lambda self, *a, **k: self,
-            "execute": lambda self: type("R", (), {"data": self._data})(),
-        },
-    )()
-    monkeypatch.setattr(mod, "DEVELOPER_ID", "me")
-    monkeypatch.setattr(mod, "_notify", lambda *a, **k: None)
-    mod._warned_remote_locks.clear()
-    mod._known_remote_locks.clear()
-
-    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
-        mod._scan_remote_locks(fake)
-
-    assert "collab/locked.txt" in mod._warned_remote_locks
-    # A lock owned by another developer surfaces a REMOTE LOCK warning.
-    assert any("REMOTE LOCK" in r.message for r in caplog.records)
-    mod._warned_remote_locks.clear()
 
 
 def test_scan_remote_locks_same_owner_updates_known(monkeypatch):

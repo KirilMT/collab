@@ -64,6 +64,14 @@ def test_read_pid_file_json_and_plain(monkeypatch, tmp_path):
     pid_file.write_text("not-int", encoding="utf-8")
     assert hook._read_pid_file() is None
 
+    # Malformed JSON object -> JSONDecodeError branch returns None.
+    pid_file.write_text("{bad-json", encoding="utf-8")
+    assert hook._read_pid_file() is None
+
+    # Well-formed JSON with a non-int "pid" -> isinstance guard returns None.
+    pid_file.write_text(json.dumps({"pid": "abc"}), encoding="utf-8")
+    assert hook._read_pid_file() is None
+
 
 def test_read_pid_file_empty_and_oserror(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"

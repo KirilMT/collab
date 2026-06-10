@@ -222,6 +222,10 @@ def test_graceful_shutdown_shutdown_marker_open_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "open", fail_open)
     lc._graceful_shutdown()  # should not raise
 
+    # The marker write failed, so the file must never have been created. This
+    # confirms the open() failure path (not a silently-successful write).
+    assert not (tmp_path / ".shutdown_complete").exists()
+
 
 def test_graceful_shutdown_pid_removal_retries(monkeypatch, tmp_path):
     """PID file removal retries on OSError then succeeds on third attempt."""
@@ -231,18 +235,27 @@ def test_graceful_shutdown_pid_removal_retries(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
     lc.active = mock.Mock(return_value=[])
 
+    # Count removal attempts on the PID file specifically. We match the exact
+    # path (not a substring heuristic) because the pytest tmp dir name itself
+    # contains "shutdown", which would otherwise mask the retry branch.
     call_count = [0]
     real_remove = os.remove
 
     def flaky_remove(path):
-        call_count[0] += 1
-        if call_count[0] < 3 and ".pid" in str(path) and "shutdown" not in str(path):
-            raise OSError("busy")
+        if str(path) == str(pid_file):
+            call_count[0] += 1
+            if call_count[0] < 3:
+                raise OSError("busy")
         real_remove(path)
 
     monkeypatch.setattr(mod.os, "remove", flaky_remove)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
     lc._graceful_shutdown()
+
+    # Source retries PID removal up to 3 times; two OSErrors then success means
+    # os.remove was invoked at least three times on the PID file.
+    assert call_count[0] >= 3
+    assert not pid_file.exists()
 
 
 def test_graceful_shutdown_flush_handler_raises(monkeypatch, tmp_path):
@@ -258,6 +271,10 @@ def test_graceful_shutdown_flush_handler_raises(monkeypatch, tmp_path):
         fake_logger.handlers = [bad_handler]
         mock_get_logger.return_value = fake_logger
         lc._graceful_shutdown()  # should not raise
+
+    # The shutdown path flushes handlers; the raising flush must be invoked and
+    # swallowed rather than skipped.
+    bad_handler.flush.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +333,10 @@ def test_register_signal_handlers_win32_sigbreak_exception(monkeypatch, tmp_path
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
     monkeypatch.setattr(mod.sys, "platform", "win32")
 
+    signals_set = []
+
     def raising_signal(sig, handler):
+        signals_set.append(sig)
         if sig == 21:  # SIGBREAK
             raise OSError("not permitted")
 
@@ -324,6 +344,10 @@ def test_register_signal_handlers_win32_sigbreak_exception(monkeypatch, tmp_path
     monkeypatch.setattr(mod.signal, "SIGBREAK", 21, raising=False)
 
     lc._register_signal_handlers()  # should not raise
+
+    # SIGBREAK registration must have been attempted; the OSError is caught and
+    # swallowed (no propagation past _register_signal_handlers).
+    assert 21 in signals_set
 
 
 def test_register_signal_handlers_win32_console_handler_exception(
@@ -339,14 +363,20 @@ def test_register_signal_handlers_win32_console_handler_exception(
     import builtins
 
     real_import = builtins.__import__
+    ctypes_import_attempts = {"n": 0}
 
     def fail_ctypes_import(name, *args, **kwargs):
         if name == "ctypes":
+            ctypes_import_attempts["n"] += 1
             raise ImportError("no ctypes")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fail_ctypes_import)
     lc._register_signal_handlers()  # should not raise
+
+    # The Windows console-control handler block must have attempted to import
+    # ctypes and hit the swallowed-import failure path.
+    assert ctypes_import_attempts["n"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -534,10 +564,12 @@ def test_graceful_shutdown_logging_shutdown_raises(monkeypatch, tmp_path):
     lc = _make_client(monkeypatch, tmp_path)
     lc.active = mock.Mock(return_value=[])
 
-    monkeypatch.setattr(
-        mod.logging, "shutdown", mock.Mock(side_effect=RuntimeError("boom"))
-    )
+    shutdown_spy = mock.Mock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(mod.logging, "shutdown", shutdown_spy)
     lc._graceful_shutdown()  # should not raise
+
+    # logging.shutdown() must be invoked (and its failure swallowed).
+    shutdown_spy.assert_called_once()
 
 
 def test_graceful_shutdown_print_raises_is_swallowed(monkeypatch, tmp_path):
@@ -547,13 +579,18 @@ def test_graceful_shutdown_print_raises_is_swallowed(monkeypatch, tmp_path):
     lc = _make_client(monkeypatch, tmp_path)
     lc.active = mock.Mock(return_value=[])
     real_print = builtins.print
+    print_calls = {"n": 0}
 
     def flaky_print(*args, **kwargs):
+        print_calls["n"] += 1
         raise OSError("stdout unavailable")
 
     monkeypatch.setattr(builtins, "print", flaky_print)
     lc._graceful_shutdown()
     monkeypatch.setattr(builtins, "print", real_print)
+
+    # The shutdown marker print is attempted (and its failure swallowed).
+    assert print_calls["n"] >= 1
 
 
 def test_register_signal_handlers_calls_exception_logging(monkeypatch, tmp_path):

@@ -375,7 +375,7 @@ def test_normalize_whitespace_issues_and_skips(monkeypatch, tmp_path):
     assert formatter_check.normalize_whitespace() is False
 
 
-def test_prettier_and_target_early_returns(monkeypatch):
+def test_prettier_and_target_early_returns(monkeypatch, tmp_path):
     formatter = format_code.CodeFormatter(files=["x.py"])  # no frontend/docs targets
 
     monkeypatch.setattr(formatter, "_filter_glob_targets", lambda _p: [])
@@ -393,7 +393,9 @@ def test_prettier_and_target_early_returns(monkeypatch):
     )
     assert formatter.format_frontend() is True
 
-    monkeypatch.setattr(formatter, "root_dir", Path("."))
+    # Anchor root_dir to an isolated tmp_path so rglob is deterministic and
+    # never depends on the process working directory.
+    monkeypatch.setattr(formatter, "root_dir", tmp_path)
     monkeypatch.setattr(Path, "rglob", lambda self, _ext: iter(()))
     assert formatter.format_yaml() is True
 

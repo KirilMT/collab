@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -1015,9 +1016,9 @@ def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
 # --- Appended from test_lock_client_daemon_ops.py ---
 
 
-def test_read_pid_variants(tmp_path):
+def test_read_pid_variants(monkeypatch, tmp_path):
     pidfile = tmp_path / "pid_test.pid"
-    mod.PID_FILE = str(pidfile)
+    monkeypatch.setattr(mod, "PID_FILE", str(pidfile))
 
     # JSON metadata
     meta = {"pid": os.getpid(), "started_at": "now", "entrypoint": "lock-daemon"}
@@ -1059,7 +1060,7 @@ def test_daemon_status_with_entrypoint(monkeypatch, tmp_path, capsys):
 
 def test_daemon_stop_no_running(monkeypatch, tmp_path, capsys):
     pidfile = tmp_path / "none.pid"
-    mod.PID_FILE = str(pidfile)
+    monkeypatch.setattr(mod, "PID_FILE", str(pidfile))
     client = mod.LockClient(developer_id="tester", local_only=True)
 
     # No PID file, and discover returns empty
@@ -1072,9 +1073,20 @@ def test_daemon_stop_no_running(monkeypatch, tmp_path, capsys):
 
 
 def test_quiet_console_loggers_and_validate(monkeypatch):
-    # Test context manager runs without error
+    # The context manager must raise the named logger to WARNING and stop the
+    # ``collab`` logger from propagating to the root console handler while
+    # active, then restore both on exit.
+    httpx_logger = logging.getLogger("httpx")
+    collab_logger = logging.getLogger("collab")
+    orig_httpx_level = httpx_logger.level
+    orig_collab_propagate = collab_logger.propagate
+
     with mod._quiet_console_loggers(names=["httpx"]):
-        pass
+        assert httpx_logger.level == logging.WARNING
+        assert collab_logger.propagate is False
+
+    assert httpx_logger.level == orig_httpx_level
+    assert collab_logger.propagate is orig_collab_propagate
 
     # Validate credentials should exit when module-level vars missing
     monkeypatch.setattr(mod, "SUPABASE_URL", None)
@@ -1335,8 +1347,13 @@ def test_is_process_alive_win32_ctypes_api_active(monkeypatch):
 def test_is_process_alive_win32_tasklist_fallback_not_found(monkeypatch):
     """Test _is_process_alive using tasklist fallback."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
-    monkeypatch.delitem(sys.modules, "ctypes", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    # Likewise force ``import ctypes`` to fail so the Win32 ctypes branch is
+    # skipped and discovery reaches the tasklist fallback under test.
+    monkeypatch.setitem(sys.modules, "ctypes", None)
 
     import types
 
@@ -1384,7 +1401,10 @@ def test_is_process_alive_win32_ctypes_exited_process_closes_handle(monkeypatch)
 def test_is_process_alive_win32_ctypes_access_denied_returns_true(monkeypatch):
     """Test _is_process_alive treats access denied as an existing process."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     fake_ctypes = types.SimpleNamespace(
         windll=types.SimpleNamespace(
@@ -1561,7 +1581,10 @@ def test_get_process_info_local_tasklist_success(monkeypatch):
 def test_get_process_info_local_wmic_and_tasklist_fail(monkeypatch):
     """Test _get_process_info_local returns None when all Windows lookups fail."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
     monkeypatch.setattr(mod.shutil, "which", lambda x: "wmic" if x == "wmic" else None)
 
     def mock_run(cmd, **kwargs):
@@ -2103,7 +2126,10 @@ def test_assign_to_job_object_windows_set_info_fails(monkeypatch):
 
 def test_get_process_name_via_tasklist_parses_csv(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
     monkeypatch.setattr(
         mod.shutil, "which", lambda cmd: "wmic.exe" if cmd == "wmic" else None
     )
@@ -2498,9 +2524,11 @@ def test_daemon_stop_write_stop_file_exception_branch(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
 
     real_open = builtins.open
+    write_attempts = {"n": 0}
 
     def _raising_open(path, mode="r", *args, **kwargs):
         if str(path).endswith(".stop_request") and "w" in mode:
+            write_attempts["n"] += 1
             raise OSError("cannot write stop file")
         return real_open(path, mode, *args, **kwargs)
 
@@ -2508,6 +2536,10 @@ def test_daemon_stop_write_stop_file_exception_branch(monkeypatch, tmp_path):
 
     client = mod.LockClient(local_only=True)
     client.daemon_stop()  # should not raise
+
+    # The stop-request write must have been attempted (and failed), exercising
+    # the "Failed to write stop request file" exception branch in daemon_stop.
+    assert write_attempts["n"] >= 1
 
 
 def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
@@ -2543,11 +2575,15 @@ def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
         return os.remove(path)
 
     client = mod.LockClient(local_only=True)
+    # Force the graceful-stop loop to run against a discovered PID so the
+    # canonical-PID cleanup re-reads the PID file (second call) and triggers the
+    # exception branch at the "Failed to remove canonical PID after stop" guard.
+    monkeypatch.setattr(client, "_discover_running_watchers", lambda: [5555])
     monkeypatch.setattr(mod.os.path, "exists", _exists)
     monkeypatch.setattr(mod.os, "remove", _remove)
     _read_calls = {"n": 0}
 
-    def _read_pid_then_fail():
+    def _read_pid_then_fail(*args, **kwargs):
         _read_calls["n"] += 1
         if _read_calls["n"] == 1:
             return 5555
@@ -2556,6 +2592,10 @@ def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
     monkeypatch.setattr(client, "_read_pid", _read_pid_then_fail)
 
     client.daemon_stop()  # should not raise
+
+    # First read selects the target PID; the second (canonical) read raises and
+    # exercises the cleanup exception branch.
+    assert _read_calls["n"] >= 2
 
 
 def test_daemon_status_metadata_parse_error_then_cmdline_unknown(

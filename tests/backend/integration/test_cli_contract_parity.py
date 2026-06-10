@@ -17,8 +17,18 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+
+# Repo root anchored from this file (tests/backend/integration/<file>.py ->
+# parents[3] is the repository root) so subprocesses never depend on the
+# caller's CWD. Verified at import time below to fail loudly if the layout
+# changes.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+assert (
+    _REPO_ROOT / "pyproject.toml"
+).is_file(), f"Expected repo root with pyproject.toml at {_REPO_ROOT}"
 
 
 def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, str]:
@@ -56,7 +66,7 @@ def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, s
         text=True,
         encoding="utf-8",
         errors="replace",
-        cwd=".",
+        cwd=str(_REPO_ROOT),
         env=isolated_env,
     )
 
@@ -172,10 +182,10 @@ class TestBackwardCompatibilityInvocation:
     def test_run_py_entrypoint(self) -> None:
         """Verify 'python run.py' backward compatibility entrypoint."""
         result = subprocess.run(
-            [sys.executable, "run.py", "--help"],
+            [sys.executable, str(_REPO_ROOT / "run.py"), "--help"],
             capture_output=True,
             text=True,
-            cwd=".",
+            cwd=str(_REPO_ROOT),
         )
         assert result.returncode == 0
         assert len(result.stdout) > 0
@@ -183,7 +193,7 @@ class TestBackwardCompatibilityInvocation:
     def test_collab_console_script_exists(self) -> None:
         """Verify 'collab' console script is registered in package."""
         # Check pyproject.toml registration
-        with open("pyproject.toml") as f:
+        with open(_REPO_ROOT / "pyproject.toml") as f:
             content = f.read()
             assert 'collab = "collab.lock_client:main"' in content
 
@@ -238,10 +248,8 @@ class TestCLIDashboardAssetIntegrity:
 
     def test_dashboard_index_html_exists(self) -> None:
         """Verify dashboard HTML asset is present."""
-        dashboard_path = os.path.join("collab", "dashboard", "index.html")
-        assert os.path.exists(
-            dashboard_path
-        ), f"Dashboard not found at {dashboard_path}"
+        dashboard_path = _REPO_ROOT / "collab" / "dashboard" / "index.html"
+        assert dashboard_path.exists(), f"Dashboard not found at {dashboard_path}"
 
     def test_dashboard_command_available(self) -> None:
         """Verify dashboard command is registered."""

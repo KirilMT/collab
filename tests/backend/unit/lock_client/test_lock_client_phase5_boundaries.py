@@ -136,7 +136,11 @@ def test_daemon_start_refuses_insecure_spawn_unix(monkeypatch, capsys, tmp_path)
 
 def test_discover_running_watchers_survives_tasklist_failure(monkeypatch):
     monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # Force ImportError on ``import psutil`` (psutil is installed, so deleting it
+    # from sys.modules merely re-imports it and the psutil fast path would run,
+    # picking up real processes). Setting it to None makes the import fail so the
+    # intended tasklist fallback is genuinely exercised.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     def _boom():
         raise RuntimeError("tasklist failed")
@@ -148,7 +152,11 @@ def test_discover_running_watchers_survives_tasklist_failure(monkeypatch):
 
 def test_cleanup_orphaned_processes_survives_tasklist_failure(monkeypatch, capsys):
     monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # Force ImportError on ``import psutil`` (psutil is installed, so deleting it
+    # from sys.modules merely re-imports it and the psutil fast path would run,
+    # picking up real processes). Setting it to None makes the import fail so the
+    # intended tasklist fallback is genuinely exercised.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     def _boom():
         raise RuntimeError("tasklist failed")

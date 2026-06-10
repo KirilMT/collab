@@ -7,6 +7,7 @@ assertions (no smoke tests). Module globals are mutated only through
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import types
@@ -235,7 +236,12 @@ def test_ensure_lock_service_reachable_success(monkeypatch):
 # Same-machine token resolution with an agent identity
 # ---------------------------------------------------------------------------
 def test_is_same_machine_token_agent_appends_none_variant(monkeypatch):
-    """When an agent id is present the human (None) variant is also tried."""
+    """When an agent id is present the human (None) variant is also tried.
+
+    A token generated for the (dev_id, agent=None) seed must still be recognized as
+    same-machine even though this client has a non-None ``agent_id`` — proving the
+    ``agent_candidates.append(None)`` branch is exercised and matched.
+    """
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
     c.agent_id = "agent-1"
@@ -246,6 +252,13 @@ def test_is_same_machine_token_agent_appends_none_variant(monkeypatch):
     monkeypatch.setattr(mod.socket, "gethostname", lambda: "host-a")
     monkeypatch.setattr(mod.os.path, "abspath", lambda _p: "C:/repo")
 
+    # Build the token for the *human* (agent=None) variant on this machine.
+    none_variant_seed = mod.agent_identity.session_token_seed(
+        "alice", None, "host-a", "c:/repo"
+    )
+    none_variant_token = mod.agent_identity.session_token_from_seed(none_variant_seed)
+
+    assert c._is_same_machine_token(none_variant_token) is True
     assert c._is_same_machine_token("deadbeefdeadbeef") is False
 
 
@@ -422,8 +435,8 @@ def test_cleanup_handles_no_such_process(monkeypatch):
     assert killed == []
 
 
-def test_cleanup_wmic_inspection_error(monkeypatch):
-    """When psutil cannot inspect and WMIC raises, the error path is handled."""
+def test_cleanup_wmic_inspection_error(monkeypatch, caplog):
+    """When psutil cannot inspect and WMIC raises, the error is logged, not raised."""
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(mod.platform_probe, "iter_tasklist_python_pids", lambda: [4242])
     monkeypatch.setattr(mod.os, "getpid", lambda: 1)
@@ -442,24 +455,38 @@ def test_cleanup_wmic_inspection_error(monkeypatch):
     monkeypatch.setattr(mod.platform_probe, "wmic_cmdline_value", _wmic_boom)
     monkeypatch.setattr(mod.os.path, "exists", lambda _p: False)
 
+    killed = []
+    monkeypatch.setattr(
+        mod.platform_probe,
+        "taskkill_force",
+        lambda pid, tree=False: killed.append(pid),
+    )
+
     lc = mod.LockClient(developer_id="cleaner")
-    lc.cleanup_orphaned_processes()  # must not raise
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc.cleanup_orphaned_processes()
+
+    assert killed == []  # WMIC failure means the PID is never killed
+    assert "Error checking PID 4242 via WMIC" in caplog.text
 
 
 def test_cleanup_unix_malformed_ps_line(monkeypatch):
-    """On Unix a malformed ps row (non-int pid) is skipped without crashing."""
+    """On Unix a malformed ps row (non-int pid) is skipped without killing."""
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         mod.platform_probe,
         "ps_aux",
         lambda: "user collab_pytest_ python lock_client.py watch",
     )
+    killed = []
+    monkeypatch.setattr(mod.os, "kill", lambda pid, sig: killed.append(pid))
     lc = mod.LockClient(developer_id="cleaner")
     lc.cleanup_orphaned_processes()  # ValueError on int(parts[1]) is swallowed
+    assert killed == []
 
 
-def test_cleanup_unix_ps_aux_error(monkeypatch):
-    """On Unix a ps_aux failure is logged and handled gracefully."""
+def test_cleanup_unix_ps_aux_error(monkeypatch, caplog):
+    """On Unix a ps_aux failure is logged as a warning and handled gracefully."""
     monkeypatch.setattr(sys, "platform", "linux")
 
     def _boom():
@@ -467,7 +494,9 @@ def test_cleanup_unix_ps_aux_error(monkeypatch):
 
     monkeypatch.setattr(mod.platform_probe, "ps_aux", _boom)
     lc = mod.LockClient(developer_id="cleaner")
-    lc.cleanup_orphaned_processes()  # must not raise
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        lc.cleanup_orphaned_processes()  # must not raise
+    assert "Error scanning for orphaned processes" in caplog.text
 
 
 def test_cleanup_log_file_lock_inspection(monkeypatch, capsys):
@@ -573,32 +602,63 @@ def test_watch_open_dashboard_failure_logged(monkeypatch, tmp_path):
     assert shutdown  # finally-block shutdown ran
 
 
-def test_watch_parent_method_detection_exception(monkeypatch, tmp_path):
-    """A failure detecting the parent method defaults it to 'unknown'."""
-    lc = _setup_watch(monkeypatch, tmp_path)
+def _assert_parent_method_unknown(monkeypatch, lc, caplog):
+    """Drive watch() one parent-check cycle and assert parent_method=='unknown'.
+
+    With no explicit ``parent_pid`` the loop logs the immediate-parent check line that
+    embeds ``via=<parent_method>``; a fallback to ``unknown`` is therefore directly
+    observable.
+    """
     monkeypatch.delenv("VSCODE_PID", raising=False)
     monkeypatch.delenv("PYCHARM_HOSTED", raising=False)
+    monkeypatch.setattr(lc, "_get_process_info_local", lambda _pid: ("x", None))
+    monkeypatch.setattr(mod.os, "getppid", lambda: 5000)
+    # Keep the resolved parent alive so the loop does not exit early via the
+    # parent-terminated branch; we only want to observe parent_method=='unknown'.
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda _pid: True)
+    )
+    _install_fast_now(monkeypatch)
+
+    counter = {"n": 0}
+
+    def _sleep(_x):
+        counter["n"] += 1
+        if counter["n"] > 2:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+    reasons = []
+    monkeypatch.setattr(
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
+    )
+    lc._initial_ppid = 5000
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc.watch(interval=1, timeout_mins=60)
+
+    assert "via=unknown" in caplog.text
+    # Only the finally-block cleanup shutdown ran (reason=None); the failed
+    # parent-method detection must not trigger an extra, reason-bearing shutdown.
+    assert reasons == [None]
+
+
+def test_watch_parent_method_detection_exception(monkeypatch, tmp_path, caplog):
+    """A failure detecting the parent method defaults it to 'unknown'."""
+    lc = _setup_watch(monkeypatch, tmp_path)
 
     def _boom():
         raise RuntimeError("detection failed")
 
     monkeypatch.setattr(lc, "_get_parent_ide_pid", _boom)
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    monkeypatch.setattr(mod.time, "sleep", mock.Mock(side_effect=KeyboardInterrupt))
-
-    lc.watch(interval=1, timeout_mins=60)  # exits via KeyboardInterrupt
+    _assert_parent_method_unknown(monkeypatch, lc, caplog)
 
 
-def test_watch_parent_method_unknown_when_not_detected(monkeypatch, tmp_path):
+def test_watch_parent_method_unknown_when_not_detected(monkeypatch, tmp_path, caplog):
     """When detection returns no method, parent_method defaults to 'unknown'."""
     lc = _setup_watch(monkeypatch, tmp_path)
-    monkeypatch.delenv("VSCODE_PID", raising=False)
-    monkeypatch.delenv("PYCHARM_HOSTED", raising=False)
     monkeypatch.setattr(lc, "_get_parent_ide_pid", lambda: (None, None))
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    monkeypatch.setattr(mod.time, "sleep", mock.Mock(side_effect=KeyboardInterrupt))
-
-    lc.watch(interval=1, timeout_mins=60)  # exits via KeyboardInterrupt
+    _assert_parent_method_unknown(monkeypatch, lc, caplog)
 
 
 def _drive_stop_watch(
@@ -777,7 +837,7 @@ def test_watch_stop_request_read_pid_exception(monkeypatch, tmp_path):
     assert "stop_requested" not in reasons
 
 
-def test_watch_stop_request_outer_exception(monkeypatch, tmp_path):
+def test_watch_stop_request_outer_exception(monkeypatch, tmp_path, caplog):
     """An unexpected error in the stop-file block is caught and logged."""
     lc = _setup_watch(monkeypatch, tmp_path)
     _install_fast_now(monkeypatch)
@@ -804,18 +864,24 @@ def test_watch_stop_request_outer_exception(monkeypatch, tmp_path):
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    lc._initial_ppid = 5000
-    lc.watch(
-        interval=1,
-        timeout_mins=60,
-        daemon_mode=True,
-        parent_pid=6000,
-        parent_method="vscode_pid",
+    reasons = []
+    monkeypatch.setattr(
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
     )
+    lc._initial_ppid = 5000
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc.watch(
+            interval=1,
+            timeout_mins=60,
+            daemon_mode=True,
+            parent_pid=6000,
+            parent_method="vscode_pid",
+        )
+    assert "Stop-request polling failed" in caplog.text
+    assert "stop_requested" not in reasons  # the error did not trigger a stop
 
 
-def test_watch_heartbeat_check_exception(monkeypatch, tmp_path):
+def test_watch_heartbeat_check_exception(monkeypatch, tmp_path, caplog):
     """An exception in the heartbeat health check is caught and logged."""
     lc = _setup_watch(monkeypatch, tmp_path)
     heartbeat = tmp_path / ".heartbeat"
@@ -840,25 +906,38 @@ def test_watch_heartbeat_check_exception(monkeypatch, tmp_path):
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    lc._initial_ppid = 5000
-    lc.watch(
-        interval=1,
-        timeout_mins=60,
-        daemon_mode=True,
-        parent_pid=6000,
-        parent_method="vscode_pid",
-        heartbeat_file=str(heartbeat),
+    reasons = []
+    monkeypatch.setattr(
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
     )
+    lc._initial_ppid = 5000
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc.watch(
+            interval=1,
+            timeout_mins=60,
+            daemon_mode=True,
+            parent_pid=6000,
+            parent_method="vscode_pid",
+            heartbeat_file=str(heartbeat),
+        )
+    assert "Heartbeat check exception" in caplog.text
+    # The heartbeat failure is swallowed, so no heartbeat-reasoned shutdown
+    # fires; only the finally-block cleanup runs (reason=None).
+    assert reasons == [None]
 
 
 def test_watch_parent_name_unresolvable_zombie_shutdown(monkeypatch, tmp_path):
     """Parent alive but name unresolvable for 2 checks triggers zombie shutdown."""
     lc = _setup_watch(monkeypatch, tmp_path)
     _install_fast_now(monkeypatch)
-    monkeypatch.setattr(
-        mod.LockClient, "_is_process_alive", staticmethod(lambda _pid: True)
-    )
+
+    parent_checks = {"n": 0}
+
+    def _alive(_pid):
+        parent_checks["n"] += 1
+        return True
+
+    monkeypatch.setattr(mod.LockClient, "_is_process_alive", staticmethod(_alive))
     monkeypatch.setattr(mod.os, "getppid", lambda: 5000)
 
     def _proc_boom(_pid):
@@ -869,7 +948,7 @@ def test_watch_parent_name_unresolvable_zombie_shutdown(monkeypatch, tmp_path):
 
     reasons = []
     monkeypatch.setattr(
-        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason or "x")
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
     )
     lc._initial_ppid = 5000
     lc.watch(
@@ -880,10 +959,16 @@ def test_watch_parent_name_unresolvable_zombie_shutdown(monkeypatch, tmp_path):
         parent_name="ide.exe",
         parent_method="vscode_pid",
     )
-    assert reasons  # zombie-detection shutdown fired
+    # Zombie detection only fires after >=2 parent checks find the name
+    # unresolvable.
+    assert parent_checks["n"] >= 2
+    # The zombie path calls _graceful_shutdown() with no reason, then the
+    # finally-block runs it again; neither is a "stop_requested" shutdown.
+    assert reasons == [None, None]
+    assert "stop_requested" not in reasons
 
 
-def test_watch_parent_name_resolves_again_resets_streak(monkeypatch, tmp_path):
+def test_watch_parent_name_resolves_again_resets_streak(monkeypatch, tmp_path, caplog):
     """A recovered parent name resets the unresolved streak without shutting down."""
     lc = _setup_watch(monkeypatch, tmp_path)
     _install_fast_now(monkeypatch)
@@ -907,21 +992,31 @@ def test_watch_parent_name_resolves_again_resets_streak(monkeypatch, tmp_path):
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    shutdown = []
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: shutdown.append(1))
-    lc._initial_ppid = 5000
-    lc.watch(
-        interval=1,
-        timeout_mins=60,
-        daemon_mode=True,
-        parent_pid=6000,
-        parent_name="ide.exe",
-        parent_method="vscode_pid",
+    reasons = []
+    monkeypatch.setattr(
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
     )
+    lc._initial_ppid = 5000
+    with caplog.at_level(logging.INFO, logger=mod.logger.name):
+        lc.watch(
+            interval=1,
+            timeout_mins=60,
+            daemon_mode=True,
+            parent_pid=6000,
+            parent_name="ide.exe",
+            parent_method="vscode_pid",
+        )
+    # First check: name unresolvable (streak=1); second: resolved -> streak reset.
+    assert "Resetting streak" in caplog.text
+    # The recovered name resets the streak so no zombie shutdown fires; only the
+    # finally-block cleanup runs (reason=None).
+    assert reasons == [None]
 
 
-def test_watch_immediate_parent_name_resolution_exception(monkeypatch, tmp_path):
-    """A failure resolving the immediate parent name is swallowed."""
+def test_watch_immediate_parent_name_resolution_exception(
+    monkeypatch, tmp_path, caplog
+):
+    """A failure resolving the immediate parent name is swallowed (logs 'unknown')."""
     lc = _setup_watch(monkeypatch, tmp_path)
     _install_fast_now(monkeypatch)
     monkeypatch.setattr(
@@ -944,15 +1039,24 @@ def test_watch_immediate_parent_name_resolution_exception(monkeypatch, tmp_path)
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
-    lc._initial_ppid = 5000
-    lc.watch(
-        interval=1,
-        timeout_mins=60,
-        daemon_mode=True,
-        parent_pid=6000,
-        parent_method="vscode_pid",
+    reasons = []
+    monkeypatch.setattr(
+        lc, "_graceful_shutdown", lambda reason=None: reasons.append(reason)
     )
+    lc._initial_ppid = 5000
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc.watch(
+            interval=1,
+            timeout_mins=60,
+            daemon_mode=True,
+            parent_pid=6000,
+            parent_method="vscode_pid",
+        )
+    # The swallowed lookup leaves the immediate parent name unresolved ('unknown'),
+    # surfaced in the parent-check debug line; the watcher keeps running until the
+    # KeyboardInterrupt, so only the finally-block cleanup runs (reason=None).
+    assert "immediate parent: unknown" in caplog.text
+    assert reasons == [None]
 
 
 def test_watch_releases_locks_for_cleaned_files(monkeypatch, tmp_path):
@@ -986,7 +1090,7 @@ def test_watch_releases_locks_for_cleaned_files(monkeypatch, tmp_path):
     assert released == ["a.py"]
 
 
-def test_watch_loop_iteration_exception_recovers(monkeypatch, tmp_path):
+def test_watch_loop_iteration_exception_recovers(monkeypatch, tmp_path, caplog):
     """A generic error inside the loop is logged and the loop sleeps and retries."""
     lc = _setup_watch(monkeypatch, tmp_path)
 
@@ -1004,7 +1108,11 @@ def test_watch_loop_iteration_exception_recovers(monkeypatch, tmp_path):
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
+    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+        lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
+    # The error is logged and the loop reaches its recovery sleep (>=1 call).
+    assert "Error in watcher loop" in caplog.text
+    assert counter["n"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -1024,8 +1132,8 @@ def _reconcile_client(monkeypatch, tmp_path):
     return lc
 
 
-def test_reconcile_repo_summary_write_failure(monkeypatch, tmp_path):
-    """A failure writing the repo-root summary copy is non-fatal."""
+def test_reconcile_repo_summary_write_failure(monkeypatch, tmp_path, caplog):
+    """A failure writing the repo-root summary copy is logged and non-fatal."""
     lc = _reconcile_client(monkeypatch, tmp_path)
     repo_summary = os.path.join(mod._COLLAB_ROOT, ".startup_summary.json")
 
@@ -1045,12 +1153,17 @@ def test_reconcile_repo_summary_write_failure(monkeypatch, tmp_path):
         "Thread",
         lambda *a, **k: types.SimpleNamespace(start=lambda: None),
     )
-    lc._reconcile()  # must not raise
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        result = lc._reconcile()
+    assert isinstance(result, set)  # reconcile completed and returned its git set
+    assert "Failed to write repo startup summary" in caplog.text
 
 
 def test_reconcile_cleanup_marker_removal_failure(monkeypatch, tmp_path):
     """The marker-cleanup worker swallows a failure in its delay/loop body."""
     lc = _reconcile_client(monkeypatch, tmp_path)
+
+    worker_ran = {"v": False}
 
     class _SyncThread:
         def __init__(self, target=None, daemon=None):
@@ -1058,6 +1171,7 @@ def test_reconcile_cleanup_marker_removal_failure(monkeypatch, tmp_path):
 
         def start(self):
             if self._target is not None:
+                worker_ran["v"] = True
                 self._target()
 
     monkeypatch.setattr(mod.threading, "Thread", _SyncThread)
@@ -1067,13 +1181,16 @@ def test_reconcile_cleanup_marker_removal_failure(monkeypatch, tmp_path):
         raise RuntimeError("worker delay failed")
 
     monkeypatch.setattr(mod.time, "sleep", _sleep_boom)
-    lc._reconcile()  # worker runs synchronously; the failure is swallowed
+    result = lc._reconcile()  # worker runs synchronously; the failure is swallowed
+    assert worker_ran["v"]  # the cleanup worker body actually executed
+    assert isinstance(result, set)  # the swallowed worker error did not propagate
 
 
 def test_reconcile_summary_block_outer_exception(monkeypatch, tmp_path):
     """A failure writing the primary summary file is swallowed by the outer guard."""
     lc = _reconcile_client(monkeypatch, tmp_path)
     summary_file = mod._state_path(".startup_summary.json")
+    open_attempts = {"n": 0}
 
     import builtins
 
@@ -1081,11 +1198,14 @@ def test_reconcile_summary_block_outer_exception(monkeypatch, tmp_path):
 
     def _open(path, mode="r", *args, **kwargs):
         if os.path.abspath(str(path)) == os.path.abspath(summary_file):
+            open_attempts["n"] += 1
             raise OSError("summary write blocked")
         return real_open(path, mode, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", _open)
-    lc._reconcile()  # must not raise
+    result = lc._reconcile()  # must not raise
+    assert open_attempts["n"] >= 1  # the guarded summary write was actually attempted
+    assert isinstance(result, set)
 
 
 # ---------------------------------------------------------------------------

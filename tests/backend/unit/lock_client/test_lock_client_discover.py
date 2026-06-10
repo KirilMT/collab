@@ -42,7 +42,10 @@ mod = load_lock_client_module()
 
 def test_is_process_alive_win32_no_psutil_ctypes_fallback(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed, so deleting it from sys.modules just re-imports it and
+    # the psutil fast path runs instead of the branch under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback runs.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     fake_ctypes = types.SimpleNamespace(
         windll=types.SimpleNamespace(
@@ -65,7 +68,10 @@ def test_is_process_alive_win32_no_psutil_ctypes_fallback(monkeypatch):
 
 def test_is_process_alive_win32_process_exited(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed, so deleting it from sys.modules just re-imports it and
+    # the psutil fast path runs instead of the branch under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback runs.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     fake_ctypes = types.SimpleNamespace(
         windll=types.SimpleNamespace(
@@ -88,7 +94,10 @@ def test_is_process_alive_win32_process_exited(monkeypatch):
 
 def test_is_process_alive_win32_access_denied(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed, so deleting it from sys.modules just re-imports it and
+    # the psutil fast path runs instead of the branch under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback runs.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     class FakeKernel32:
         def OpenProcess(self, a, b, c):
@@ -222,7 +231,10 @@ def test_get_process_info_local_non_windows(monkeypatch):
 
 def test_get_process_info_local_no_wmic_tasklist_fallback(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed, so deleting it from sys.modules just re-imports it and
+    # the psutil fast path runs instead of the branch under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback runs.
+    monkeypatch.setitem(sys.modules, "psutil", None)
     monkeypatch.setattr(mod.shutil, "which", lambda cmd: None if cmd == "wmic" else cmd)
 
     def fake_run(cmd, **kw):

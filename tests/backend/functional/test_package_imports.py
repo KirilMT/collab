@@ -36,16 +36,16 @@ def test_logging_config_import() -> None:
 
 
 def test_lock_client_instantiation() -> None:
-    """Verify LockClient can be instantiated in test mode."""
+    """Verify LockClient constructs in local-only mode without a backend.
+
+    Passing ``local_only=True`` deliberately skips credential validation and Supabase
+    client creation, so construction must succeed offline with no network access.
+    Asserting success (instead of catching a broad ``Exception``) proves the intended
+    behavior and surfaces any regression.
+    """
     from collab.lock_client import LockClient
 
-    # Should not crash; connection errors are acceptable
-    try:
-        client = LockClient(local_only=True)
-        assert client is not None
-    except Exception as exc:
-        # Connection errors expected in CI; import/instantiation is verified
-        assert any(
-            word in str(exc).lower()
-            for word in ["connect", "supabase", "timeout", "network"]
-        )
+    client = LockClient(local_only=True)
+    assert client is not None
+    assert client.local_only is True
+    assert client._client is None

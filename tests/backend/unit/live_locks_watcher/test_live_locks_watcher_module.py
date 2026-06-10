@@ -21,14 +21,11 @@ def _repo_root() -> Path:
     raise FileNotFoundError("Could not locate repository root")
 
 
-def test_main_function_exists():
+def test_module_imports():
+    # Merged former test_main_function_exists here (strict subset): keep its
+    # callable(main) assertion so no coverage/assertion strength is lost.
     mod = load_watcher_module()
     assert hasattr(mod, "main") and callable(mod.main)
-
-
-def test_module_imports():
-    mod = load_watcher_module()
-    assert hasattr(mod, "main")
     assert hasattr(mod, "_parse_git_status_path")
     assert hasattr(mod, "_should_ignore_path")
 
@@ -66,8 +63,20 @@ def test_reload_watcher_with_colorama_and_plyer(monkeypatch):
 
         # Basic smoke checks on functions that depend on the optional imports
         assert callable(mod._color)
-        # _notify should use our fake notification without raising
-        mod._notify("T", "M")
+
+        # _notify should forward to the desktop notifier. Spy on it and disable
+        # COLLAB_TEST_MODE (which otherwise short-circuits _notify).
+        notify_calls = []
+        spy = types.SimpleNamespace(notify=lambda **kwargs: notify_calls.append(kwargs))
+        monkeypatch.setattr(mod, "desktop_notify", spy)
+        monkeypatch.setenv("COLLAB_TEST_MODE", "0")
+
+        mod._notify("Title", "Body")
+
+        assert len(notify_calls) == 1
+        assert notify_calls[0]["title"] == "Title"
+        assert notify_calls[0]["message"] == "Body"
+        assert notify_calls[0]["app_name"] == "Collab Locks"
     finally:
         for name in ("colorama", "plyer", "supabase"):
             try:

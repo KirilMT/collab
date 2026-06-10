@@ -333,18 +333,14 @@ def test_is_same_machine_token_returns_false_for_unknown_token(monkeypatch):
 # New test: malformed PID JSON should be treated as no existing watcher
 
 
-def test_existing_watcher_running_with_malformed_json(tmp_path):
+def test_existing_watcher_running_with_malformed_json(monkeypatch, tmp_path):
     mod = load_watcher_module()
     # Write malformed JSON to PID file and ensure helper treats it as no watcher
     pid_file = tmp_path / ".daemon.pid"
     pid_file.write_text("{not: json}")
-    orig = mod.PID_FILE
-    try:
-        mod.PID_FILE = str(pid_file)
-        running, pid, cmd, entry = mod._existing_watcher_running()
-        assert running is False and pid is None
-    finally:
-        mod.PID_FILE = orig
+    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
+    running, pid, cmd, entry = mod._existing_watcher_running()
+    assert running is False and pid is None
 
 
 def test_get_cmdline_for_pid_local_uses_psutil(monkeypatch):

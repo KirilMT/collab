@@ -104,6 +104,9 @@ def test_start_dashboard_server_migrated(tmp_path, monkeypatch):
 
     url = mod._start_dashboard_server()
     assert url is not None
+    # Assert the full URL shape (scheme/host/port from FakeServer, .html page).
+    assert url.startswith("http://127.0.0.1:11111/")
+    assert url.endswith(".html")
 
 
 def test_start_dashboard_server_tmpfile_error(monkeypatch, tmp_path):

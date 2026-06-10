@@ -101,12 +101,14 @@ def test_logging_config_import_failure_falls_back(monkeypatch):
 
 def test_stdout_reconfigure_failure_is_swallowed(monkeypatch):
     """A stream whose ``reconfigure`` raises is tolerated at import (lines 128-129)."""
+    reconfigure_calls: list = []
 
     class _BadStream:
         def __init__(self, real):
             self._real = real
 
         def reconfigure(self, **_kwargs):
+            reconfigure_calls.append(_kwargs)
             raise RuntimeError("reconfigure boom")
 
         def write(self, data):
@@ -120,9 +122,15 @@ def test_stdout_reconfigure_failure_is_swallowed(monkeypatch):
 
     monkeypatch.setattr(sys, "stdout", _BadStream(sys.stdout))
 
+    # The reload must complete despite reconfigure() raising, proving the
+    # import-time try/except actually swallowed the failure.
     mod = reload_watcher_module("collab.live_locks_watcher_bad_stdout")
 
     assert hasattr(mod, "logger")
+    # The failing reconfigure path was genuinely exercised (spy fired) with the
+    # expected UTF-8 arguments, and the raised error did not propagate.
+    assert reconfigure_calls
+    assert reconfigure_calls[0].get("encoding") == "utf-8"
 
 
 def test_supabase_origin_inspection_exception_is_swallowed(monkeypatch):
@@ -143,7 +151,7 @@ def test_supabase_origin_inspection_exception_is_swallowed(monkeypatch):
     assert callable(mod.create_client)
 
 
-def test_supabase_without_create_client_logs_error(monkeypatch):
+def test_supabase_without_create_client_logs_error(monkeypatch, caplog):
     """An installed supabase lacking ``create_client`` logs and stays None.
 
     Covers lines 211-214.
@@ -162,9 +170,16 @@ def test_supabase_without_create_client_logs_error(monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
     monkeypatch.setitem(sys.modules, "supabase", fake_supa)
 
-    mod = reload_watcher_module("collab.live_locks_watcher_no_create_client")
+    # The error is emitted at import-time, so capture across the reload. The
+    # module logger name is fixed regardless of the reloaded module name.
+    with caplog.at_level(logging.ERROR, logger="collab.pycharm_watcher"):
+        mod = reload_watcher_module("collab.live_locks_watcher_no_create_client")
 
     assert mod.create_client is None
+    assert (
+        "The installed 'supabase' package does not expose 'create_client'."
+        in caplog.text
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -194,22 +209,41 @@ def test_lock_owned_by_us_returns_false_without_developer(monkeypatch):
     assert mod._lock_owned_by_us({"developer_id": "someone"}) is False
 
 
-def test_is_same_machine_token_git_exception_and_agent_candidates(monkeypatch):
+def test_is_same_machine_token_git_exception_and_agent_candidates(monkeypatch, caplog):
     """Token check tolerates git errors and also probes the no-agent variant.
 
     Covers the git-config exception handler (lines 393-394) and the
-    ``agent_candidates.append(None)`` branch (line 407).
+    ``agent_candidates.append(None)`` branch (line 407). A token built for the (dev,
+    agent=None) seed must still match even though ``AGENT_ID`` is set, proving the no-
+    agent variant is actually tried and matched.
     """
+    from collab import agent_identity
+
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "devx")
     monkeypatch.setattr(mod, "AGENT_ID", "agent-123")
+    monkeypatch.setattr(mod.socket, "gethostname", lambda: "host-w")
+    monkeypatch.setattr(mod.os.path, "abspath", lambda _p: "C:/repo")
 
     def _boom(_argv, **_kw):
         raise RuntimeError("git boom")
 
     monkeypatch.setattr(mod, "_git_capture_text", _boom)
 
-    assert mod._is_same_machine_token("does-not-match-any-variant") is False
+    # Token for the human (agent=None) variant on this machine.
+    none_variant_seed = agent_identity.session_token_seed(
+        "devx", None, "host-w", "c:/repo"
+    )
+    none_variant_token = agent_identity.session_token_from_seed(none_variant_seed)
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        matched_none_variant = mod._is_same_machine_token(none_variant_token)
+        no_match = mod._is_same_machine_token("does-not-match-any-variant")
+
+    assert matched_none_variant is True  # agent_candidates.append(None) matched
+    assert no_match is False
+    # The raising git lookup was swallowed via the debug-logged handler.
+    assert "git config user.name lookup failed in token check" in caplog.text
 
 
 # ---------------------------------------------------------------------------

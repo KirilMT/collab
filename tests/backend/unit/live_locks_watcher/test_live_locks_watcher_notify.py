@@ -5,22 +5,6 @@ from __future__ import annotations
 from ._helpers import load_watcher_module
 
 
-def test_notify_uses_desktop_notify_if_available(monkeypatch, caplog):
-    mod = load_watcher_module()
-    called = {}
-
-    class FakeDesktop:
-        def notify(self, title=None, message=None, app_name=None, timeout=None):
-            called["title"] = title
-            called["msg"] = message
-
-    monkeypatch.setattr(mod, "desktop_notify", FakeDesktop())
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    mod._notify("T", "M")
-    assert called.get("title") == "T"
-    assert "M" in called.get("msg")
-
-
 def test_notify_with_title_and_message(monkeypatch):
     """_notify forwards the title and message to the real desktop_notify backend."""
     mod = load_watcher_module()

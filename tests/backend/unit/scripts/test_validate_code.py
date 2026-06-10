@@ -16,6 +16,10 @@ from tests.backend.unit.scripts._helpers import load_script_module
 
 validate_code = load_script_module("validate_code.py", "validate_code_under_test")
 
+# Repo root anchored from this test file: tests/backend/unit/scripts/<file>.py.
+REPO_ROOT = Path(__file__).resolve().parents[4]
+VALIDATE_CODE_PATH = REPO_ROOT / "scripts" / "validate_code.py"
+
 
 def test_validate_backend_clears_mypy_cache_on_exists(monkeypatch, tmp_path):
     """Verify that validate_python_backend clears stale .mypy_cache."""
@@ -168,18 +172,31 @@ def test_configure_coverage_data_file_skips_ci_environments(monkeypatch):
 
 def test_configure_coverage_data_file_applies_temp_routing_locally(monkeypatch):
     """Verify temp directory routing is applied when NOT in CI or pytest."""
-    # Clear all guards
+    # Snapshot the real COVERAGE_FILE so the direct os.environ mutation inside
+    # the function cannot leak into later tests (monkeypatch.delenv does not
+    # record an undo entry when the variable is absent).
+    before = validate_code.os.environ.get("COVERAGE_FILE")
+
+    # Clear all guards so the local temp-routing branch is exercised.
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
-    # Call the function — should apply temp directory routing
-    validate_code._configure_coverage_data_file()
+    try:
+        # Call the function — should apply temp directory routing.
+        validate_code._configure_coverage_data_file()
 
-    # Verify COVERAGE_FILE was set (temp directory routing applied)
-    assert validate_code.os.getenv("COVERAGE_FILE") is not None
-    assert "collab" in validate_code.os.getenv("COVERAGE_FILE")
+        # Verify COVERAGE_FILE was set (temp directory routing applied).
+        routed = validate_code.os.getenv("COVERAGE_FILE")
+        assert routed is not None
+        assert "collab" in routed
+    finally:
+        # Restore the pre-test state regardless of how the assertions resolve.
+        if before is None:
+            validate_code.os.environ.pop("COVERAGE_FILE", None)
+        else:
+            validate_code.os.environ["COVERAGE_FILE"] = before
 
 
 def test_configure_coverage_data_file_skips_under_pytest(monkeypatch):
@@ -1244,7 +1261,7 @@ def test_module_import_branches_for_encoding_and_missing_dotenv(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32", raising=False)
     monkeypatch.setitem(sys.modules, "dotenv", None)
 
-    script_path = Path("scripts/validate_code.py").resolve()
+    script_path = VALIDATE_CODE_PATH
     spec = importlib.util.spec_from_file_location(
         "validate_code_import_branch_ut",
         script_path,
@@ -1320,14 +1337,17 @@ def test_module_import_handles_reconfigure_failure(monkeypatch):
     monkeypatch.setattr(sys, "__stdout__", _Stream(), raising=False)
     monkeypatch.setattr(sys, "platform", "win32", raising=False)
 
-    script_path = Path("scripts/validate_code.py").resolve()
+    script_path = VALIDATE_CODE_PATH
     spec = importlib.util.spec_from_file_location(
         "validate_code_reconfigure_ut", script_path
     )
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod is not None
+    # Assert a stable side effect of a successful import rather than the
+    # tautological ``mod is not None`` — the module must expose its public API.
+    assert hasattr(mod, "run_command")
+    assert callable(mod.run_command)
 
 
 def test_dedupe_output_blocks_skips_none_blocks():
@@ -1599,7 +1619,7 @@ def test_validate_code_dunder_main(monkeypatch):
     # A non-matching file means main() short-circuits to a clean exit.
     monkeypatch.setattr(sys, "argv", ["validate_code.py", "ghost.bin"])
 
-    script_path = Path("scripts/validate_code.py").resolve()
+    script_path = VALIDATE_CODE_PATH
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(str(script_path), run_name="__main__")
     assert exc_info.value.code == 0

@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import types
+from unittest import mock
 
 import pytest
 
@@ -1122,9 +1123,11 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
 
     # Make os.remove raise to hit the inner exception branch
     real_remove = os.remove
+    remove_attempts = {"n": 0}
 
     def _flaky_remove(path):
         if str(path) == str(stop_file):
+            remove_attempts["n"] += 1
             raise OSError("cant remove")
         real_remove(path)
 
@@ -1139,10 +1142,14 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
         popen=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no spawn")),
     )
 
-    try:
+    # The stubbed spawn raises RuntimeError after the stale-stop-request removal
+    # path runs; narrow the catch so an unexpected failure type would surface.
+    with pytest.raises(RuntimeError, match="no spawn"):
         c.daemon_start()
-    except Exception:
-        pass  # We only care about the stale-stop-request branch being executed
+
+    # The stale stop-request removal was attempted and its OSError swallowed by
+    # daemon_start's inner exception guard.
+    assert remove_attempts["n"] >= 1
 
 
 def test_safe_now_returns_real_dt_when_class_now_works(monkeypatch):
@@ -1685,13 +1692,15 @@ def test_reconcile_active_supabase_exception(monkeypatch):
     monkeypatch.setattr(
         c, "_get_modified_and_unpushed_files", lambda: (["file.py"], True)
     )
-    monkeypatch.setattr(
-        c, "active", lambda: (_ for _ in ()).throw(RuntimeError("supa down"))
-    )
+    active_spy = mock.Mock(side_effect=RuntimeError("supa down"))
+    monkeypatch.setattr(c, "active", active_spy)
 
     result = c._reconcile()
-    assert isinstance(result, set)
-    assert "file.py" in result
+    # When active() raises after modified files are collected, _reconcile falls
+    # back to the git-modified set exactly (no spurious additions/removals).
+    assert result == {"file.py"}
+    # active() is consulted once in the main reconcile path before the fallback.
+    active_spy.assert_called_once()
 
 
 def test_get_process_info_local_returns_none_for_missing_process(monkeypatch):
