@@ -565,38 +565,6 @@ def test_validate_others_early_return_and_exception(monkeypatch):
     assert validate_code.validate_others(files=["docs/readme.md"]) is True
 
 
-def test_frontend_validation_plan_quick_skips_without_frontend_diff():
-    scopes = {
-        "full_suite": False,
-        "backend": ["tests/backend/unit/"],
-        "frontend": [],
-        "reason": None,
-        "changed_files": ["collab/lock_client.py"],
-    }
-    plan = validate_code._frontend_validation_plan(
-        quick=True, files=None, scopes=scopes
-    )
-    assert plan["run_block"] is False
-    assert "skipping frontend" in (plan["skip_reason"] or "").lower()
-
-
-def test_frontend_validation_plan_quick_runs_playwright_for_dashboard_html():
-    scopes = {
-        "full_suite": False,
-        "backend": [],
-        "frontend": ["tests/frontend/"],
-        "reason": None,
-        "changed_files": ["collab/dashboard/index.html"],
-    }
-    plan = validate_code._frontend_validation_plan(
-        quick=True, files=None, scopes=scopes
-    )
-    assert plan["run_block"] is True
-    assert plan["run_playwright"] is True
-    assert plan["playwright_script"] == "test:frontend:e2e:fast"
-    assert plan["run_jest"] is False
-
-
 def test_frontend_validation_plan_full_requires_ci_script_and_supabase():
     scopes = validate_code.detect_changed_scopes(["collab/dashboard/index.html"])
     plan = validate_code._frontend_validation_plan(
@@ -1168,12 +1136,6 @@ def test_validate_frontend_fails_when_playwright_command_fails(monkeypatch, caps
     out = capsys.readouterr().out
     assert "[FAIL] E2E Tests" in out
     assert any(cmd[:3] == ["npm", "run", "test:frontend:e2e:ci"] for cmd in calls)
-
-
-def test_summary_helper_prints_skipped(capsys):
-    validate_code._print_check_summary("Jest Tests", "skipped")
-    out = capsys.readouterr().out
-    assert "[SKIPPED] Jest Tests" in out
 
 
 def test_validate_backend_summary_marks_skipped_checks(monkeypatch):

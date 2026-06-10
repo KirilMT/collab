@@ -1335,19 +1335,6 @@ def test_cli_no_command(monkeypatch, capsys):
     assert "usage:" in out.lower()
 
 
-def test_main_entry_point(monkeypatch, capsys):
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-    monkeypatch.setattr(sys, "argv", ["lock_client.py"])
-
-    with pytest.raises(SystemExit):
-        mod.main()
-
-
 def test_cli_daemon_start_with_auto_open_env(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")

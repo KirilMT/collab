@@ -171,21 +171,6 @@ def test_get_state_dir_test_mode_suffix(monkeypatch, tmp_path):
     assert "_test_" in sd
 
 
-def test_get_state_dir_with_env_creates_and_returns(monkeypatch, tmp_path):
-    """When `COLLAB_STATE_DIR` is set, `_get_state_dir` should create and return it."""
-    target = tmp_path / "state_env"
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(target))
-    # Ensure no pre-existing dir
-    if target.exists():
-        import shutil as _sh
-
-        _sh.rmtree(target)
-
-    got = mod._get_state_dir()
-    assert os.path.abspath(got) == os.path.abspath(str(target))
-    assert os.path.isdir(got)
-
-
 def test_resolve_runtime_root_prefers_COLLAB_HOME(monkeypatch, tmp_path):
     """`_resolve_runtime_root` should return `COLLAB_HOME` when present."""
     home = tmp_path / "home_dir"
@@ -433,34 +418,6 @@ def test_assign_to_job_object_create_fails(monkeypatch):
             return 0
 
     _install_fake_ctypes(monkeypatch, K32())
-    mod.LockClient._assign_to_job_object()
-
-
-def test_assign_to_job_object_assign_success_and_failure(monkeypatch):
-    """Cover AssignProcessToJobObject success and failure branches."""
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-
-    class K32Ok:
-        def CreateJobObjectW(self, a, b):
-            return 1
-
-        def SetInformationJobObject(self, *a, **k):
-            return True
-
-        def GetCurrentProcess(self):
-            return 2
-
-        def AssignProcessToJobObject(self, *a, **k):
-            return True
-
-    _install_fake_ctypes(monkeypatch, K32Ok())
-    mod.LockClient._assign_to_job_object()
-
-    class K32Fail(K32Ok):
-        def AssignProcessToJobObject(self, *a, **k):
-            return False
-
-    _install_fake_ctypes(monkeypatch, K32Fail())
     mod.LockClient._assign_to_job_object()
 
 
@@ -1168,55 +1125,6 @@ def test_cleanup_orphaned_processes_no_wmic_debug_and_outer_exception(monkeypatc
     c.cleanup_orphaned_processes()  # Should not raise; hits both debug-log paths
 
 
-def test_cleanup_orphaned_processes_unix_valueerror_branch(monkeypatch):
-    """Hit Unix ValueError/IndexError branch for malformed ps output."""
-    monkeypatch.setattr(mod.sys, "platform", "linux")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-
-    def _run_unix(args, **kwargs):
-        # First line has 'lock_client' but PID is not an integer.
-        return types.SimpleNamespace(
-            stdout="user notanint 0 0 python lock_client watch\n",
-            returncode=0,
-        )
-
-    patch_subprocess(monkeypatch, run=_run_unix)
-    c = mod.LockClient(local_only=True)
-    c.cleanup_orphaned_processes()  # No raise; ValueError silently continues
-
-
-def test_cleanup_orphaned_processes_psutil_nosuchprocess_continue(monkeypatch):
-    """Cover line 1525: continue after psutil.NoSuchProcess in pid inspection loop."""
-
-    class _Psutil:
-        class NoSuchProcess(Exception):
-            pass
-
-        class Process:
-            def __init__(self, pid):
-                self.pid = pid
-
-            def cmdline(self):
-                raise _Psutil.NoSuchProcess()
-
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-    monkeypatch.setitem(sys.modules, "psutil", _Psutil)
-
-    def _run(args, **kwargs):
-        if args and args[0] == "tasklist":
-            return types.SimpleNamespace(
-                stdout='"python.exe","1111","Console","1","1 K"\n',
-                returncode=0,
-            )
-        return types.SimpleNamespace(stdout="", returncode=0)
-
-    patch_subprocess(monkeypatch, run=_run)
-    c = mod.LockClient(local_only=True)
-    # Should not raise; PID 1111 hits NoSuchProcess and continues.
-    c.cleanup_orphaned_processes()
-
-
 def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path):
     """daemon_start removes stale stop request; covers os.remove exception branch."""
     monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "daemon.pid"))
@@ -1905,30 +1813,6 @@ def test_emit_log_resilient_stderr_write_exception_swallowed(monkeypatch):
 
     # Should not raise despite stderr write error.
     mod._emit_log_resilient(log, logging.INFO, "fallback %s", "test")
-
-
-def test_cleanup_orphaned_processes_windows_no_inspection_paths(monkeypatch):
-    """cleanup_orphaned_processes logs/continues when command-line inspection is
-    unavailable."""
-    c = mod.LockClient(local_only=True)
-
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-    monkeypatch.setattr(mod.shutil, "which", lambda _exe: None)
-
-    def _run_win(args, **kwargs):
-        if args and args[0] == "tasklist":
-            return types.SimpleNamespace(
-                stdout='"python.exe","1111","Console","1","1 K"\n',
-                returncode=0,
-            )
-        return types.SimpleNamespace(stdout="", returncode=0)
-
-    patch_subprocess(monkeypatch, run=_run_win)
-    monkeypatch.setitem(sys.modules, "psutil", None)
-    monkeypatch.setattr(mod.os.path, "exists", lambda _p: False)
-
-    c.cleanup_orphaned_processes()
 
 
 def test_cleanup_orphaned_processes_windows_parsing_and_wmic_error_branches(

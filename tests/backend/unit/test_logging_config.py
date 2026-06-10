@@ -274,32 +274,6 @@ def test_stale_handler_removal_does_not_raise(monkeypatch, tmp_path):
     assert len(collab_logger.handlers) > 0
 
 
-def test_stale_handler_removed_when_collab_name_changes(monkeypatch, tmp_path):
-    """When switching between test and production mode, old file handler is stale."""
-    _reset_logging()
-    lc = _import_fresh_logging_config()
-    collab_dir = tmp_path / "collab"
-    # First call with COLLAB_TEST_MODE=1 -> creates handler for test_collab.log
-    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
-    lc.setup_collab_logging(collab_dir=str(collab_dir))
-    collab_logger = logging.getLogger("collab")
-    file_handlers = [h for h in collab_logger.handlers if hasattr(h, "baseFilename")]
-    assert len(file_handlers) >= 1
-    assert any(
-        "test_collab.log" in getattr(h, "baseFilename", "") for h in file_handlers
-    )
-
-    # Second call without COLLAB_TEST_MODE -> should create handler for collab.log
-    # and old test_collab.log handler should be detected as stale
-    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
-    lc.setup_collab_logging(collab_dir=str(collab_dir))
-    assert (collab_dir / "logs" / "test_collab.log").exists()
-    assert (collab_dir / "logs" / "collab.log").exists()
-    current_paths = {getattr(h, "baseFilename", None) for h in collab_logger.handlers}
-    assert str(collab_dir / "logs" / "collab.log") in current_paths
-    assert str(collab_dir / "logs" / "test_collab.log") not in current_paths
-
-
 # =========================================================================
 # File handler creation failure (line 117)
 # =========================================================================

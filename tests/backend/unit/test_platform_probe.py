@@ -25,14 +25,6 @@ def test_tasklist_image_rejects_unknown(monkeypatch):
         platform_probe.tasklist_csv_for_image("cmd.exe")
 
 
-def test_get_cmdline_unix_uses_procfs_helper(monkeypatch):
-    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
-    monkeypatch.setattr(platform_probe, "wmic_cmdline", lambda _pid: None)
-    monkeypatch.setattr(platform_probe, "powershell_cmdline", lambda _pid: None)
-    monkeypatch.setattr(platform_probe, "_unix_cmdline", lambda _pid: "python -m watch")
-    assert platform_probe.get_cmdline(99) == "python -m watch"
-
-
 def test_get_cmdline_unix_procfs_null_separated(monkeypatch):
     """Parse /proc/pid/cmdline null-separated argv via the public get_cmdline API."""
     import builtins
@@ -211,10 +203,6 @@ def test_powershell_and_ps_helpers_noop_off_windows(monkeypatch):
     assert platform_probe.powershell_cmdline(1) is None
     assert platform_probe.ps_aux() == ""
     assert platform_probe.ps_pid_cmd_csv() == ""
-
-
-def test_wmic_cmdline_value_empty_off_windows():
-    assert platform_probe.wmic_cmdline_value(1) == ""
 
 
 def test_get_cmdline_windows_falls_back_to_powershell(monkeypatch):

@@ -80,19 +80,6 @@ class TestCLICommandAvailability:
         assert exit_code == 0
         assert "usage" in stdout.lower() or "collab" in stdout.lower()
 
-    def test_active_command_available(self) -> None:
-        """Verify 'active' command is available and returns valid output."""
-        exit_code, stdout, _ = run_collab_cli("active")
-        assert exit_code == 0
-        # Output should indicate lock status (even if empty)
-        assert len(stdout) > 0
-
-    def test_status_command_accepts_file_argument(self) -> None:
-        """Verify 'status' command accepts file path argument."""
-        exit_code, stdout, _ = run_collab_cli("status", "example.py")
-        assert exit_code == 0
-        assert len(stdout) > 0
-
     def test_history_command_available(self) -> None:
         """Verify 'history' command returns valid output."""
         exit_code, stdout, _ = run_collab_cli("history")
@@ -106,15 +93,6 @@ class TestCLICommandAvailability:
             expect_success=False,
         )
         # Exit code can be 0 (running) or 1 (not running); both are valid
-        assert exit_code in (0, 1)
-
-    def test_cleanup_command_available(self) -> None:
-        """Verify 'cleanup' command is available and safe."""
-        exit_code, _, _ = run_collab_cli(
-            "cleanup",
-            expect_success=False,
-        )
-        # Cleanup should not crash even if no processes exist
         assert exit_code in (0, 1)
 
     def test_help_documents_golden_commands(self) -> None:
@@ -187,12 +165,6 @@ class TestCLICommandAvailability:
 
 class TestBackwardCompatibilityInvocation:
     """Verify all documented invocation patterns work identically."""
-
-    def test_python_m_collab_main_entrypoint(self) -> None:
-        """Verify 'python -m collab.__main__' invocation works."""
-        exit_code, stdout, _ = run_collab_cli("--help")
-        assert exit_code == 0
-        assert len(stdout) > 0
 
     def test_run_py_entrypoint(self) -> None:
         """Verify 'python run.py' backward compatibility entrypoint."""

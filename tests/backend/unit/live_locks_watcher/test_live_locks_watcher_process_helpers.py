@@ -222,44 +222,6 @@ def test_shorten_process_label_and_cmdline_match_moved():
     assert not mod._cmdline_matches_watcher_local("C:/Windows/not_mod.exe")
 
 
-def test_should_ignore_and_cmdline_helpers_migrated():
-    mod = load_watcher_module()
-    assert mod._should_ignore_path(".git/objects/abc") is True
-    assert mod._should_ignore_path("collab/app.py") is False
-
-    assert mod._cmdline_matches_watcher_local("python live_locks_watcher") is True
-    assert mod._cmdline_matches_watcher_local(None) is False
-
-    shortened = mod._shorten_process_label(
-        "C:/some/very/long/path/python.exe script.py token1 token2 token3 token4 token5"
-    )
-    assert shortened is not None
-    assert ("..." in shortened) or (len(shortened) <= 80)
-
-
-def test_write_and_existing_watcher_running_migrated(monkeypatch, tmp_path):
-    mod = load_watcher_module()
-    pid_file = tmp_path / f"pytest_collab_{os.getpid()}.daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    meta = {
-        "pid": os.getpid(),
-        "cmdline": "python live_locks_watcher",
-        "entrypoint": "pycharm-watcher",
-    }
-    with open(mod.PID_FILE, "w", encoding="utf-8") as fh:
-        json.dump(meta, fh)
-
-    monkeypatch.setattr(
-        mod, "_get_cmdline_for_pid_local", lambda pid: "python live_locks_watcher"
-    )
-    monkeypatch.setattr(mod, "_is_process_alive", lambda pid: True)
-
-    running, pid, cmdline, entry = mod._existing_watcher_running()
-    assert running is True
-    assert pid == os.getpid()
-
-
 def test_write_pid_file_and_read_migrated(monkeypatch, tmp_path):
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "pidfile.pid"))

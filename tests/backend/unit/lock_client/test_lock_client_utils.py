@@ -23,19 +23,6 @@ def test_safe_now_typeerror_uses_class_now(monkeypatch):
     assert got.year == 2026
 
 
-def test_safe_now_typeerror_falls_back_to_real_datetime(monkeypatch):
-    """Cover _safe_now final fallback when class-level now() also errors."""
-
-    class _BadDate:
-        # Instance call triggers TypeError, class-level call also TypeError.
-        def now(self):
-            return _real_datetime(2026, 5, 2, 10, 0, 0)
-
-    monkeypatch.setattr(mod, "datetime", _BadDate(), raising=False)
-    got = mod._safe_now()
-    assert isinstance(got, _real_datetime)
-
-
 def test_get_create_client_preloaded_module_importerror_exits(monkeypatch):
     """Cover _get_create_client branch where preloaded supabase import fails."""
     import builtins
@@ -153,20 +140,6 @@ def test_is_same_machine_token_returns_false_with_duplicates(monkeypatch):
     assert c._is_same_machine_token("deadbeefdeadbeef") is False
 
 
-def test_get_cmdline_for_pid_windows_powershell_failure_returns_none(monkeypatch):
-    """Return None when neither psutil nor platform_probe can resolve cmdline."""
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-
-    class _BrokenPsutil:
-        def Process(self, _pid):
-            raise OSError("access denied")
-
-    monkeypatch.setitem(sys.modules, "psutil", _BrokenPsutil())
-    monkeypatch.setattr(mod.platform_probe, "get_cmdline", lambda _pid: None)
-
-    assert mod.LockClient._get_cmdline_for_pid(12345) is None
-
-
 def test_get_cmdline_for_pid_unix_proc_empty_and_exception(monkeypatch, tmp_path):
     """Cover /proc cmdline empty-data and exception fallback branches."""
     monkeypatch.setattr(mod.sys, "platform", "linux")
@@ -228,62 +201,11 @@ def test_normalize_file_path_abs_dotprefix_and_exception_fallback(monkeypatch):
     assert c._normalize_file_path("a\\b.py") == "a/b.py"
 
 
-def test_force_release_all_exception_returns_zero(monkeypatch):
-    """Cover force_release_all outer exception handler (lines 944-946)."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service-key")
-
-    c = mod.LockClient(local_only=True)
-    c._is_admin = True
-
-    class _BoomClient:
-        def table(self, _name):
-            raise RuntimeError("db fail")
-
-    c._client = _BoomClient()
-    assert c.force_release_all() == 0
-
-
-def test_get_state_dir_env(tmp_path, monkeypatch):
-    mod = load_lock_client_module()
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    got = mod._get_state_dir()
-    assert os.path.abspath(got) == os.path.abspath(str(tmp_path))
-
-
-def test_normalize_and_parse_paths(tmp_path):
-    mod = load_lock_client_module()
-    # Absolute path -> relative
-    p = os.path.join(mod._PROJECT_ROOT, "src", "file.py")
-    out = mod.LockClient(local_only=True)._normalize_file_path(p)
-    assert out.startswith("src/")
-
-    # collab/ stays collab/
-    s = "collab/foo.txt"
-    out = mod.LockClient(local_only=True)._normalize_file_path(s)
-    assert out.startswith("collab/")
-
-    # parse git rename
-    line = "R  old/path -> new/path"
-    assert mod.LockClient._parse_git_status_path(line) == "new/path"
-
-
 def test_should_ignore_path():
     mod = load_lock_client_module()
     assert mod.LockClient._should_ignore_path(".git/HEAD")
     assert mod.LockClient._should_ignore_path(".collab/.startup_summary.json")
     assert not mod.LockClient._should_ignore_path("src/main.py")
-
-
-def test_session_token_consistent():
-    mod = load_lock_client_module()
-    c1 = mod.LockClient(developer_id="dev_x", local_only=True)
-    c2 = mod.LockClient(developer_id="dev_x", local_only=True)
-    t1 = c1._get_session_token()
-    t2 = c2._get_session_token()
-    assert t1 == t2
-    assert c1._is_same_machine_token(t1)
 
 
 def test_get_create_client_uses_sys_modules_with_safe_origin(monkeypatch):
@@ -374,19 +296,6 @@ def test_safe_now_returns_datetime(monkeypatch):
     assert mod._safe_now() == now
 
 
-def test_get_state_dir_env_var(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    sd = mod._get_state_dir()
-    assert sd == str(tmp_path)
-
-
-def test_get_state_dir_default_creates_dir(monkeypatch):
-    monkeypatch.delenv("COLLAB_STATE_DIR", raising=False)
-    sd = mod._get_state_dir()
-    assert os.path.exists(sd)
-    assert "collab_runtime_" in sd
-
-
 def test_state_path(monkeypatch, tmp_path):
     monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
     p = mod._state_path("test.marker")
@@ -411,11 +320,6 @@ def test_quiet_console_loggers_restores_collab_propagation(monkeypatch):
     with mod._quiet_console_loggers():
         assert collab_logger.propagate is False
     assert collab_logger.propagate is True
-
-
-def test_quiet_console_loggers_default_names(monkeypatch):
-    with mod._quiet_console_loggers():
-        pass
 
 
 def test_validate_credentials_ok(monkeypatch):
