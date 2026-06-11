@@ -64,6 +64,14 @@ def test_read_pid_file_json_and_plain(monkeypatch, tmp_path):
     pid_file.write_text("not-int", encoding="utf-8")
     assert hook._read_pid_file() is None
 
+    # Malformed JSON object -> JSONDecodeError branch returns None.
+    pid_file.write_text("{bad-json", encoding="utf-8")
+    assert hook._read_pid_file() is None
+
+    # Well-formed JSON with a non-int "pid" -> isinstance guard returns None.
+    pid_file.write_text(json.dumps({"pid": "abc"}), encoding="utf-8")
+    assert hook._read_pid_file() is None
+
 
 def test_read_pid_file_empty_and_oserror(monkeypatch, tmp_path):
     pid_file = tmp_path / "daemon.pid"
@@ -170,6 +178,24 @@ def test_acquire_staged_strict_failure(monkeypatch):
     assert "lock check failed" in err.getvalue()
 
 
+def test_acquire_staged_non_strict_failure_returns_zero(monkeypatch):
+    """Lock backend failure with LOCK_STRICT unset must not block the commit."""
+    monkeypatch.setattr(hook, "_get_staged_files", lambda: ["a.py"])
+    monkeypatch.setattr(hook, "_watcher_pid", lambda: None)
+
+    class _BrokenClient:
+        def __init__(self):
+            raise RuntimeError("lock backend down")
+
+    monkeypatch.setattr("collab.lock_client.LockClient", _BrokenClient)
+    monkeypatch.delenv("LOCK_STRICT", raising=False)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = hook.acquire_staged()
+    assert rc == 0
+    assert "lock check failed" in err.getvalue()
+
+
 def test_acquire_staged_conflict(monkeypatch):
     monkeypatch.setattr(hook, "_get_staged_files", lambda: ["a.py"])
     monkeypatch.setattr(hook, "_watcher_pid", lambda: None)
@@ -267,15 +293,61 @@ def test_release_all_success_and_failure(monkeypatch):
     assert "lock cleanup failed" in err.getvalue()
 
 
+def test_validate_and_release_validation_failure_keeps_locks(monkeypatch):
+    """A non-zero validation exit keeps locks and propagates the return code."""
+    captured = {}
+
+    def _fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["cwd"] = kwargs.get("cwd")
+        return SimpleNamespace(returncode=3)
+
+    monkeypatch.setattr(hook.subprocess, "run", _fake_run)
+    release_called = {"n": 0}
+    monkeypatch.setattr(hook, "release_all", lambda: release_called.__setitem__("n", 1))
+
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = hook.validate_and_release()
+
+    assert rc == 3
+    assert release_called["n"] == 0  # locks kept on validation failure
+    assert "keeping locks active" in err.getvalue()
+    assert captured["argv"][0] == sys.executable
+    assert captured["argv"][-1] == "--quick"
+    assert str(captured["argv"][1]).endswith("validate_code.py")
+
+
+def test_validate_and_release_success_releases_locks(monkeypatch):
+    """A successful validation delegates to release_all and returns its code."""
+    monkeypatch.setattr(
+        hook.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0)
+    )
+    release_called = {"n": 0}
+
+    def _fake_release_all():
+        release_called["n"] += 1
+        return 0
+
+    monkeypatch.setattr(hook, "release_all", _fake_release_all)
+
+    assert hook.validate_and_release() == 0
+    assert release_called["n"] == 1
+
+
 def test_main_command_dispatch(monkeypatch):
     monkeypatch.setattr(hook, "acquire_staged", lambda: 7)
     monkeypatch.setattr(hook, "release_all", lambda: 8)
+    monkeypatch.setattr(hook, "validate_and_release", lambda: 9)
 
     monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "acquire-staged"])
     assert hook.main() == 7
 
     monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "release-all"])
     assert hook.main() == 8
+
+    monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "validate-and-release"])
+    assert hook.main() == 9
 
     monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "unknown"])
     err = io.StringIO()
@@ -291,8 +363,23 @@ def test_main_command_dispatch(monkeypatch):
 
 
 def test_collab_git_hook_dunder_main(monkeypatch):
+    # Execute the real ``if __name__ == "__main__": raise SystemExit(main())``
+    # guard via an absolute, CWD-independent path. ``runpy`` runs a *fresh*
+    # module, so patching ``hook.acquire_staged`` would not take effect there.
+    # Instead, force "no staged files" by patching the shared ``subprocess``
+    # module (the fresh module imports the same cached object), which drives
+    # acquire_staged() down its zero-staged-files path -> exit code 0 without
+    # touching git or the real LockClient.
+    root = Path(__file__).resolve().parents[4]
+    script = root / "scripts" / "collab_git_hook.py"
+
+    monkeypatch.setattr(
+        hook.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
     monkeypatch.setattr(sys, "argv", ["collab_git_hook.py", "acquire-staged"])
-    monkeypatch.setattr(hook, "acquire_staged", lambda: 0)
+
     with pytest.raises(SystemExit) as exc:
-        runpy.run_path("scripts/collab_git_hook.py", run_name="__main__")
+        runpy.run_path(str(script), run_name="__main__")
     assert exc.value.code == 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -11,16 +12,19 @@ from collab.errors import SubprocessSecurityError
 
 
 @pytest.mark.security
-def test_spawn_paths_reject_shell_metacharacters_in_git_subcommand():
-    with pytest.raises(SubprocessSecurityError):
+def test_validate_git_argv_rejects_disallowed_subcommand():
+    # A git subcommand outside the allowlist (here a shell-metacharacter-laden
+    # token) must be rejected before the process is ever spawned.
+    with pytest.raises(SubprocessSecurityError) as exc:
         safe_subprocess.validate_argv(
             ["git", "config;rm -rf /", "user.name"],
             policy="git",
         )
+    assert "subcommand not allowed" in str(exc.value)
 
 
 @pytest.mark.security
-def test_watcher_spawn_requires_resolved_python_executable():
+def test_validate_watcher_argv_resolves_python_executable():
     argv = safe_subprocess.validate_argv(
         [
             sys.executable,
@@ -33,7 +37,9 @@ def test_watcher_spawn_requires_resolved_python_executable():
         ],
         policy="watcher",
     )
-    assert argv[0] == sys.executable or argv[0].endswith("python.exe")
+    # The watcher launcher must be resolved to an absolute python interpreter.
+    assert os.path.isabs(argv[0])
+    assert safe_subprocess._is_python_executable(argv[0])
 
 
 @pytest.mark.security

@@ -64,7 +64,7 @@ Collab Runtime is a standalone collaborative file-locking package that provides 
 | Python linting       | Ruff, Flake8, Mypy, Pylint                           | -                    |
 | Python formatting    | isort -> Black -> docformatter (strict order)        | -                    |
 | Frontend lint/format | Prettier, ESLint-ready hooks, Playwright-ready hooks | -                    |
-| Backend tests        | Pytest (coverage >=85%)                              | -                    |
+| Backend tests        | Pytest (coverage >=92%)                              | -                    |
 | Frontend tests       | Jest/Playwright-ready structure                      | -                    |
 | Package managers     | pip (`requirements.txt`), npm (`package.json`)       | -                    |
 
@@ -163,7 +163,7 @@ python scripts/validate_code.py
 
 ### Coverage Thresholds (IMMUTABLE)
 
-- Backend total coverage: >=85 percent
+- Backend total coverage: >=92 percent
 - Backend diff coverage on changed lines: >=95 percent
 - Frontend checks (ESLint + Playwright E2E/visual) remain enabled; real tests exist under `tests/frontend/playwright/`
 

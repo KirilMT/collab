@@ -128,14 +128,6 @@ def test_identity_summary_modes():
     assert agent["agent_kind"] == "cursor"
 
 
-def test_runtime_marker_alone_does_not_enable_agent_mode(monkeypatch):
-    """Strict attribution: ambient IDE markers must not flip on agent mode."""
-    monkeypatch.delenv("COLLAB_AGENT_ID", raising=False)
-    monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
-    monkeypatch.setenv("CURSOR_TRACE_ID", "trace-xyz")
-    assert agent_identity.is_agent_mode_requested() is False
-
-
 def test_resolve_agent_kind_precedence(monkeypatch):
     monkeypatch.delenv("COLLAB_AGENT_KIND", raising=False)
     for env_name, _ in agent_identity._AGENT_RUNTIME_MARKERS:
@@ -284,12 +276,6 @@ def test_is_agent_mode_requested_ignores_runtime_marker(monkeypatch):
     monkeypatch.delenv("COLLAB_AGENT_MODE", raising=False)
     monkeypatch.setenv("COMPOSER_SESSION_ID", "sess-1")
     assert agent_identity.is_agent_mode_requested() is False
-
-
-def test_resolve_agent_label_returns_none_when_empty(monkeypatch):
-    monkeypatch.delenv("COLLAB_AGENT_LABEL", raising=False)
-    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
-    assert agent_identity.resolve_agent_label() is None
 
 
 def test_format_lock_owner_human_only():

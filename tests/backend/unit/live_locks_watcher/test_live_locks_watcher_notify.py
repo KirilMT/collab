@@ -5,39 +5,24 @@ from __future__ import annotations
 from ._helpers import load_watcher_module
 
 
-def test_notify_uses_desktop_notify_if_available(monkeypatch, caplog):
+def test_notify_with_title_and_message(monkeypatch):
+    """_notify forwards the title and message to the real desktop_notify backend."""
     mod = load_watcher_module()
-    called = {}
+    received = {}
 
     class FakeDesktop:
         def notify(self, title=None, message=None, app_name=None, timeout=None):
-            called["title"] = title
-            called["msg"] = message
+            received["title"] = title
+            received["message"] = message
+            received["app_name"] = app_name
 
     monkeypatch.setattr(mod, "desktop_notify", FakeDesktop())
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    mod._notify("T", "M")
-    assert called.get("title") == "T"
-    assert "M" in called.get("msg")
 
+    mod._notify("Test Title", "Test Message")
 
-def test_notify_with_title_and_message(monkeypatch):
-    mod = load_watcher_module()
-    notify_called = []
-
-    def mock_notify(title, message, app_name=None):
-        notify_called.append((title, message, app_name))
-
-    monkeypatch.setattr(mod, "_desktop_notify", mock_notify, raising=False)
-
-    try:
-        mod._notify("Test Title", "Test Message")
-    except Exception:
-        pass
-
-    if notify_called:
-        assert notify_called[0][0] == "Test Title"
-        assert notify_called[0][1] == "Test Message"
+    assert received["title"] == "Test Title"
+    assert received["message"] == "Test Message"
 
 
 def test_notify_fallback_no_desktop_notify(monkeypatch, caplog):

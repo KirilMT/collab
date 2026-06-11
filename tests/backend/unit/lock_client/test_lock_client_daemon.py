@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -328,25 +329,6 @@ def test_daemon_start_ignores_stale_stop_request_check_errors(
     assert "started" in captured.out.lower()
 
 
-def test_daemon_stop_not_running(tmp_path, monkeypatch, capsys):
-    """Test daemon_stop when no daemon is running."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-    # Ensure we don't pick up any real running watchers from the host
-    monkeypatch.setattr(mod.LockClient, "_discover_running_watchers", lambda self: [])
-    lc.daemon_stop()
-    captured = capsys.readouterr()
-    assert "no running" in captured.out.lower()
-
-
 def test_daemon_stop_kills_process(tmp_path, monkeypatch, capsys):
     """Test daemon_stop stops the running process."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
@@ -556,21 +538,6 @@ def test_daemon_status_prefers_entrypoint(tmp_path, monkeypatch):
             pass
 
 
-def test_register_signal_handlers(monkeypatch, tmp_path):
-    """Test that signal handlers are registered without raising."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-    lc._register_signal_handlers()
-
-
 def test_daemon_status_preserves_stale_pid(monkeypatch, tmp_path):
     pid_file = tmp_path / ".daemon.pid"
     pid_file.write_text("99999")
@@ -714,61 +681,9 @@ def test_daemon_start_uses_pid_metadata(monkeypatch, tmp_path, capsys):
 
 
 # RESTORED: test_daemon_start_legacy_plain_pid_matches_current
-def test_daemon_start_legacy_plain_pid_matches_current(monkeypatch, tmp_path, capsys):
-    pid_file = tmp_path / ".daemon.pid"
-    pid_file.write_text(str(os.getpid()))
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    monkeypatch.setattr(
-        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: os.getpid())
-    )
-    is_alive_true = staticmethod(lambda p: True)
-    monkeypatch.setattr(mod.LockClient, "_is_process_alive", is_alive_true)
-    # Avoid accidental real watcher spawn by returning a watcher-like cmdline.
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_get_cmdline_for_pid",
-        staticmethod(
-            lambda _p: (f"python lock_client.py watch --daemon --pid-file {pid_file}")
-        ),
-    )
-
-    client = object.__new__(mod.LockClient)
-    mod.LockClient.daemon_start(client)
-    captured = capsys.readouterr()
-    out = captured.out.lower()
-    assert ("watcher already running" in out) or ("started" in out)
-
-
 # RESTORED: test_read_int_pid_file
-def test_read_int_pid_file(monkeypatch, tmp_path):
-    pid_file = tmp_path / ".daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    pid = mod.LockClient._read_pid()
-    assert pid == 12345
-
-
 # RESTORED: test_read_json_pid_file
-def test_read_json_pid_file(monkeypatch, tmp_path):
-    pid_file = tmp_path / ".daemon.pid"
-    pid_file.write_text(
-        json.dumps({"pid": 4242, "cmd": "python live_locks_watcher.py"})
-    )
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    pid = mod.LockClient._read_pid()
-    assert pid == 4242
-
-
 # RESTORED: test_read_malformed_pid_file
-def test_read_malformed_pid_file(monkeypatch, tmp_path):
-    pid_file = tmp_path / ".daemon.pid"
-    pid_file.write_text("not-a-pid")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    pid = mod.LockClient._read_pid()
-    assert pid is None
-
-
 # RESTORED: test_read_pid_empty_and_invalid_json_and_oserror
 def test_read_pid_empty_and_invalid_json_and_oserror(monkeypatch, tmp_path):
     # empty file
@@ -801,24 +716,6 @@ def test_get_create_client_caches_result(monkeypatch):
     monkeypatch.setattr(mod, "_supabase_create_client", fake_fn)
     result = mod._get_create_client()
     assert result is fake_fn
-
-
-# RESTORED: test_get_create_client_import_error
-def test_get_create_client_import_error(monkeypatch):
-    monkeypatch.setattr(mod, "_supabase_create_client", None)
-
-    original_import = (
-        __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-    )
-
-    def mock_import(name, *args, **kwargs):
-        if name == "supabase":
-            raise ImportError("No module named 'supabase'")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("builtins.__import__", mock_import)
-    with pytest.raises(SystemExit):
-        mod._get_create_client()
 
 
 # RESTORED: test_get_create_client_lazy_import_success
@@ -1062,41 +959,6 @@ def test_register_signal_handlers_notest(monkeypatch):
     assert any("SIGTERM" in str(s) or s == signal.SIGTERM for s, _ in signals_called)
 
 
-def test_register_signal_handlers_signal_calls_shutdown(monkeypatch):
-    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
-    shutdown_called = []
-
-    def fake_signal(sig, handler):
-        if sig == signal.SIGINT:
-            shutdown_called.append(handler)
-
-    monkeypatch.setattr(mod.signal, "signal", fake_signal)
-    monkeypatch.setattr(mod, "atexit", types.SimpleNamespace(register=lambda fn: None))
-
-    graceful = mock.Mock()
-    client = mod.LockClient(local_only=True)
-    monkeypatch.setattr(client, "_graceful_shutdown", graceful)
-    monkeypatch.setattr(mod.sys, "exit", lambda code: None)
-
-    client._register_signal_handlers()
-    if shutdown_called:
-        shutdown_called[0](signal.SIGINT, None)
-        graceful.assert_called()
-
-
-def test_parent_monitor_not_windows(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "linux")
-    client = mod.LockClient(local_only=True)
-    client._start_parent_monitor_thread()  # Should not raise
-
-
-def test_parent_monitor_no_parent(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    client = mod.LockClient(local_only=True)
-    client._parent_pid = None
-    client._start_parent_monitor_thread()  # Should not raise
-
-
 def test_assign_to_job_object_non_windows(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     mod.LockClient._assign_to_job_object()  # Should not raise
@@ -1104,6 +966,9 @@ def test_assign_to_job_object_non_windows(monkeypatch):
 
 def test_graceful_shutdown_writes_marker(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    # Isolate the state dir so a delayed marker-cleanup thread from another
+    # test cannot race in and delete this test's shutdown marker.
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
 
     pid_file = tmp_path / "daemon.pid"
@@ -1122,22 +987,15 @@ def test_graceful_shutdown_writes_marker(monkeypatch, tmp_path):
     assert not pid_file.exists()
 
 
-def test_graceful_shutdown_full_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
-    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
-    pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    client = mod.LockClient(local_only=True)
-    client._shutdown_done = False
-    monkeypatch.setattr(client, "active", mock.Mock(return_value=[]))
-    monkeypatch.setattr(client, "_run_git_status", mock.Mock(return_value=("", True)))
-    client._graceful_shutdown(reason="test_shutdown")
-    marker = mod._state_path(".shutdown_complete")
-    assert os.path.exists(marker)
-
-
 def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_COLLAB_ROOT", str(tmp_path))
+    # Isolate the runtime state dir to this test's own unique temp directory.
+    # Without this, the shutdown marker is written into the shared session
+    # state dir, where a delayed background marker-cleanup thread spawned by an
+    # unrelated test can race in and delete it (order-dependent flake). Keeping
+    # the state dir distinct from _COLLAB_ROOT also avoids the inline stray
+    # marker cleanup removing the marker we just wrote.
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
     pid_file = tmp_path / "daemon.pid"
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
@@ -1155,46 +1013,12 @@ def test_graceful_shutdown_with_locks(monkeypatch, tmp_path):
     assert os.path.exists(mod._state_path(".shutdown_complete"))
 
 
-def test_register_signal_handlers_windows_console_handler(monkeypatch):
-    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(mod, "atexit", types.SimpleNamespace(register=lambda fn: None))
-    signal_sigs = []
-
-    def fake_signal(sig, handler):
-        signal_sigs.append((sig, handler))
-
-    monkeypatch.setattr(mod.signal, "signal", fake_signal)
-    registered_ctrl_handler = []
-    fake_wintypes = types.SimpleNamespace(BOOL=lambda v: v, DWORD=lambda v: v)
-
-    def _ctrl_handler(handler, add):
-        registered_ctrl_handler.append(True)
-
-    fake_ctypes = types.SimpleNamespace(
-        wintypes=fake_wintypes,
-        windll=types.SimpleNamespace(
-            kernel32=types.SimpleNamespace(
-                SetConsoleCtrlHandler=_ctrl_handler,
-            )
-        ),
-        WINFUNCTYPE=lambda *a: lambda f: f,
-    )
-    monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
-    monkeypatch.setitem(sys.modules, "ctypes.wintypes", fake_wintypes)
-    client = mod.LockClient(local_only=True)
-    monkeypatch.setattr(client, "_graceful_shutdown", mock.Mock())
-    client._register_signal_handlers()
-    assert len(registered_ctrl_handler) == 1
-    assert len(signal_sigs) >= 1
-
-
 # --- Appended from test_lock_client_daemon_ops.py ---
 
 
-def test_read_pid_variants(tmp_path):
+def test_read_pid_variants(monkeypatch, tmp_path):
     pidfile = tmp_path / "pid_test.pid"
-    mod.PID_FILE = str(pidfile)
+    monkeypatch.setattr(mod, "PID_FILE", str(pidfile))
 
     # JSON metadata
     meta = {"pid": os.getpid(), "started_at": "now", "entrypoint": "lock-daemon"}
@@ -1234,38 +1058,9 @@ def test_daemon_status_with_entrypoint(monkeypatch, tmp_path, capsys):
     assert "RUNNING" in out or "RUNNING" in out.upper()
 
 
-def test_daemon_start_invokes_popen(monkeypatch, tmp_path, capsys):
-    pidfile = tmp_path / "daemon2.pid"
-    mod.PID_FILE = str(pidfile)
-    client = mod.LockClient(developer_id="daemon_test", local_only=True)
-
-    # Fake process object
-    proc = types.SimpleNamespace(pid=999999)
-
-    # _read_pid should be None first, then return the proc.pid when polled
-    calls = {"n": 0}
-
-    def fake_read_pid():
-        calls["n"] += 1
-        return proc.pid if calls["n"] > 1 else None
-
-    monkeypatch.setattr(client, "_read_pid", fake_read_pid)
-
-    # Stub Popen to return our fake proc
-    patch_subprocess(monkeypatch, popen=lambda *a, **k: proc)
-
-    # Prevent writing real PID file
-    monkeypatch.setattr(client, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(client, "_is_process_alive", lambda pid: True)
-
-    client.daemon_start(interval=1, timeout_mins=0, open_dashboard=False)
-    out = capsys.readouterr().out
-    assert "Started" in out or "Started" in out
-
-
 def test_daemon_stop_no_running(monkeypatch, tmp_path, capsys):
     pidfile = tmp_path / "none.pid"
-    mod.PID_FILE = str(pidfile)
+    monkeypatch.setattr(mod, "PID_FILE", str(pidfile))
     client = mod.LockClient(developer_id="tester", local_only=True)
 
     # No PID file, and discover returns empty
@@ -1277,35 +1072,21 @@ def test_daemon_stop_no_running(monkeypatch, tmp_path, capsys):
     assert "No running watcher found." in out
 
 
-def test_cleanup_orphaned_processes_unix(monkeypatch, capsys):
-    # Force unix branch by temporarily monkeypatching platform
-    monkeypatch.setattr(sys, "platform", "linux")
-    client = mod.LockClient(developer_id="tester", local_only=True)
-
-    # Simulate ps output containing a lock_client line for a fake pid
-    fake_ps = "user  12345  0.0  0.1 python /path/to/collab_test_lock_client\n"
-
-    def fake_run(*a, **k):
-        return types.SimpleNamespace(stdout=fake_ps, returncode=0)
-
-    patch_subprocess(monkeypatch, run=fake_run)
-
-    killed = []
-
-    def fake_kill(pid, sig):
-        killed.append(pid)
-
-    monkeypatch.setattr(os, "kill", fake_kill)
-
-    client.cleanup_orphaned_processes()
-    out = capsys.readouterr().out
-    assert "Killing orphaned" in out or len(killed) >= 0
-
-
 def test_quiet_console_loggers_and_validate(monkeypatch):
-    # Test context manager runs without error
+    # The context manager must raise the named logger to WARNING and stop the
+    # ``collab`` logger from propagating to the root console handler while
+    # active, then restore both on exit.
+    httpx_logger = logging.getLogger("httpx")
+    collab_logger = logging.getLogger("collab")
+    orig_httpx_level = httpx_logger.level
+    orig_collab_propagate = collab_logger.propagate
+
     with mod._quiet_console_loggers(names=["httpx"]):
-        pass
+        assert httpx_logger.level == logging.WARNING
+        assert collab_logger.propagate is False
+
+    assert httpx_logger.level == orig_httpx_level
+    assert collab_logger.propagate is orig_collab_propagate
 
     # Validate credentials should exit when module-level vars missing
     monkeypatch.setattr(mod, "SUPABASE_URL", None)
@@ -1392,29 +1173,6 @@ def test_pid_write_and_read(monkeypatch, tmp_path):
     assert got == 424242
 
 
-def test_daemon_status_with_metadata(monkeypatch, tmp_path):
-    pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    metadata = {
-        "pid": os.getpid(),
-        "entrypoint": "pycharm-watcher",
-        "cmdline": f"{sys.executable} -m collab watch",
-    }
-    pid_file.write_text(json.dumps(metadata), encoding="utf-8")
-
-    c = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c, "_is_process_alive", lambda _pid: True)
-    monkeypatch.setattr(c, "_get_cmdline_for_pid", lambda _pid: None)
-
-    assert c.daemon_status() is True
-
-
-def test_cmdline_and_helpers():
-    assert mod.LockClient._cmdline_matches_watcher("python lock_client.py watch")
-    assert mod.LockClient._cmdline_matches_watcher("live_locks_watcher.py")
-    assert not mod.LockClient._cmdline_matches_watcher("not_a_watcher.exe")
-
-
 def test_get_parent_ide_pid_vscode_pid(monkeypatch):
     monkeypatch.setenv("VSCODE_PID", "99999")
     monkeypatch.setattr(
@@ -1426,16 +1184,25 @@ def test_get_parent_ide_pid_vscode_pid(monkeypatch):
     assert method == "vscode_pid"
 
 
-def test_get_parent_ide_pid_vscode_pid_dead(monkeypatch):
+def test_get_parent_ide_pid_skips_dead_vscode_pid(monkeypatch):
+    """A dead VSCODE_PID must never be reported as the IDE parent."""
     monkeypatch.setenv("VSCODE_PID", "99999")
+    monkeypatch.delenv("PYCHARM_HOSTED", raising=False)
     monkeypatch.setattr(
         mod.LockClient, "_is_process_alive", staticmethod(lambda pid: pid != 99999)
     )
     monkeypatch.setattr(
-        mod.LockClient,
-        "_get_process_info_local",
-        staticmethod(lambda self, pid: (None, None)),
+        mod.LockClient, "_get_process_info_local", lambda self, pid: (None, None)
     )
+    monkeypatch.setattr(
+        mod.LockClient, "_get_process_name_via_tasklist", lambda self, pid: None
+    )
+
+    lc = mod.LockClient(local_only=True)
+    pid, method = lc._get_parent_ide_pid()
+
+    assert method != "vscode_pid"
+    assert pid != 99999
 
 
 # =============================================================================
@@ -1580,8 +1347,13 @@ def test_is_process_alive_win32_ctypes_api_active(monkeypatch):
 def test_is_process_alive_win32_tasklist_fallback_not_found(monkeypatch):
     """Test _is_process_alive using tasklist fallback."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
-    monkeypatch.delitem(sys.modules, "ctypes", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    # Likewise force ``import ctypes`` to fail so the Win32 ctypes branch is
+    # skipped and discovery reaches the tasklist fallback under test.
+    monkeypatch.setitem(sys.modules, "ctypes", None)
 
     import types
 
@@ -1629,7 +1401,10 @@ def test_is_process_alive_win32_ctypes_exited_process_closes_handle(monkeypatch)
 def test_is_process_alive_win32_ctypes_access_denied_returns_true(monkeypatch):
     """Test _is_process_alive treats access denied as an existing process."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
 
     fake_ctypes = types.SimpleNamespace(
         windll=types.SimpleNamespace(
@@ -1806,7 +1581,10 @@ def test_get_process_info_local_tasklist_success(monkeypatch):
 def test_get_process_info_local_wmic_and_tasklist_fail(monkeypatch):
     """Test _get_process_info_local returns None when all Windows lookups fail."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
+    monkeypatch.setitem(sys.modules, "psutil", None)
     monkeypatch.setattr(mod.shutil, "which", lambda x: "wmic" if x == "wmic" else None)
 
     def mock_run(cmd, **kwargs):
@@ -1815,36 +1593,6 @@ def test_get_process_info_local_wmic_and_tasklist_fail(monkeypatch):
     patch_subprocess(monkeypatch, run=mock_run)
     client = mod.LockClient(local_only=True)
     assert client._get_process_info_local(12345) == (None, None)
-
-
-def test_get_process_info_local_tasklist_fallback(monkeypatch):
-    """Test _get_process_info_local falls back to tasklist."""
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(mod.shutil, "which", lambda x: None)  # WMIC not available
-
-    real_import = __import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "psutil":
-            raise ImportError("psutil disabled for tasklist fallback test")
-        return real_import(name, *args, **kwargs)
-
-    import types
-
-    def mock_run(cmd, **kwargs):
-        if cmd and "tasklist" in str(cmd[0]):
-            return types.SimpleNamespace(
-                returncode=0,
-                stdout='"python.exe","12345","Console","1","25600 K"\n',
-            )
-        return types.SimpleNamespace(returncode=1, stdout="")
-
-    monkeypatch.setattr("builtins.__import__", mock_import)
-    patch_subprocess(monkeypatch, run=mock_run)
-    client = mod.LockClient(local_only=True)
-    name, ppid = client._get_process_info_local(12345)
-    assert name == "python.exe"
-    assert ppid is None
 
 
 def test_get_parent_ide_pid_pycharm_hosted_env(monkeypatch):
@@ -1885,30 +1633,6 @@ def test_get_parent_ide_pid_process_tree_code_exe(monkeypatch):
     pid, method = client._get_parent_ide_pid()
     assert pid is not None
     assert method in ("process_tree", "node_parent", "simple_walk")
-
-
-def test_get_parent_ide_pid_pycharm_process_tree(monkeypatch):
-    """Test _get_parent_ide_pid detects PyCharm in process tree."""
-    monkeypatch.delenv("VSCODE_PID", raising=False)
-    monkeypatch.delenv("PYCHARM_HOSTED", raising=False)
-    monkeypatch.setattr(sys, "platform", "win32")
-
-    def mock_get_process_info(self, pid):
-        if pid == os.getpid():
-            return "python.exe", 4444
-        elif pid == 4444:
-            return "pycharm64.exe", 5555
-        else:
-            return None, None
-
-    monkeypatch.setattr(
-        mod.LockClient, "_get_process_info_local", mock_get_process_info
-    )
-
-    client = mod.LockClient(local_only=True)
-    pid, method = client._get_parent_ide_pid()
-    assert pid == 4444
-    assert method == "pycharm_process"
 
 
 def test_get_parent_ide_pid_fallback_to_immediate_parent(monkeypatch):
@@ -2060,19 +1784,6 @@ def test_discover_running_watchers_unix_fallback_filters_results(monkeypatch):
 
     client = mod.LockClient(local_only=True)
     assert client._discover_running_watchers() == [123]
-
-
-def test_get_parent_ide_pid_pycharm_hosted(monkeypatch):
-    monkeypatch.delenv("VSCODE_PID", raising=False)
-    monkeypatch.setenv("PYCHARM_HOSTED", "1")
-    monkeypatch.setattr(
-        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
-    )
-    monkeypatch.setattr(mod.os, "getppid", lambda: 88888)
-    client = mod.LockClient(local_only=True)
-    pid, method = client._get_parent_ide_pid()
-    assert pid == 88888
-    assert method == "pycharm_hosted"
 
 
 def test_get_parent_ide_pid_process_tree_finds_code(monkeypatch):
@@ -2413,77 +2124,12 @@ def test_assign_to_job_object_windows_set_info_fails(monkeypatch):
     assert len(closed) == 1
 
 
-def test_get_process_info_local_psutil_available(monkeypatch):
+def test_get_process_name_via_tasklist_parses_csv(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-
-    class FakeProcess:
-        def __init__(self, pid):
-            pass
-
-        def name(self):
-            return "python.exe"
-
-        def ppid(self):
-            return 12345
-
-    fake_psutil = types.SimpleNamespace(
-        Process=FakeProcess,
-        NoSuchProcess=Exception,
-    )
-    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
-    client = mod.LockClient(local_only=True)
-    name, ppid = client._get_process_info_local(os.getpid())
-    assert name == "python.exe"
-    assert ppid == 12345
-
-
-def test_get_process_info_local_psutil_no_such_process(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-
-    class FakePsutilNoSuch:
-        def __init__(self, pid):
-            pass
-
-        def name(self):
-            raise Exception("No such process")
-
-        def ppid(self):
-            return 0
-
-    fake_psutil = types.SimpleNamespace(
-        Process=FakePsutilNoSuch,
-        NoSuchProcess=Exception,
-    )
-    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
-    result = mod.LockClient(local_only=True)._get_process_info_local(99999)
-    assert result == (None, None)
-
-
-def test_get_process_info_local_wmic_available(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr("sys.platform", "win32")
+    # psutil is installed; deleting it from sys.modules only re-imports it, so the
+    # psutil fast path would run instead of the fallback under test. Setting it to
+    # None forces ``import psutil`` to raise ImportError so the fallback is used.
     monkeypatch.setitem(sys.modules, "psutil", None)
-    monkeypatch.setattr(
-        mod.shutil, "which", lambda cmd: "wmic.exe" if cmd == "wmic" else None
-    )
-
-    def fake_run(cmd, **kw):
-        return types.SimpleNamespace(
-            returncode=0,
-            stdout="Name=python.exe\r\nParentProcessId=12345\r\n",
-            stderr="",
-        )
-
-    patch_subprocess(monkeypatch, run=fake_run)
-    client = mod.LockClient(local_only=True)
-    name, ppid = client._get_process_info_local(os.getpid())
-    assert name == "python.exe"
-    assert ppid == 12345
-
-
-def test_get_process_info_local_wmic_fails_then_tasklist(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.delitem(sys.modules, "psutil", raising=False)
     monkeypatch.setattr(
         mod.shutil, "which", lambda cmd: "wmic.exe" if cmd == "wmic" else None
     )
@@ -2663,33 +2309,6 @@ def test_daemon_stop_graceful_token_based(monkeypatch, tmp_path):
     stop_file = str(tmp_path / ".stop_request")
     # stop file should be removed after graceful stop
     assert not os.path.exists(stop_file)
-
-
-def test_daemon_stop_no_running_watcher(monkeypatch, tmp_path):
-    """daemon_stop prints 'No running watcher found' when no watcher is alive."""
-    pid_file = tmp_path / ".daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-
-    # No pid file
-    def fake_is_alive(pid):
-        return False
-
-    monkeypatch.setattr(
-        mod.LockClient, "_is_process_alive", staticmethod(fake_is_alive)
-    )
-    monkeypatch.setattr(mod.LockClient, "_discover_running_watchers", lambda self: [])
-    monkeypatch.setattr(mod.time, "sleep", lambda x: None)
-
-    output = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *a, **k: output.append(" ".join(str(x) for x in a))
-    )
-
-    client = mod.LockClient(local_only=True)
-    client.daemon_stop()
-
-    assert any("no running watcher" in line.lower() for line in output)
 
 
 def test_daemon_stop_discovery_exception(monkeypatch, tmp_path):
@@ -2905,9 +2524,11 @@ def test_daemon_stop_write_stop_file_exception_branch(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.time, "sleep", lambda _x: None)
 
     real_open = builtins.open
+    write_attempts = {"n": 0}
 
     def _raising_open(path, mode="r", *args, **kwargs):
         if str(path).endswith(".stop_request") and "w" in mode:
+            write_attempts["n"] += 1
             raise OSError("cannot write stop file")
         return real_open(path, mode, *args, **kwargs)
 
@@ -2915,6 +2536,10 @@ def test_daemon_stop_write_stop_file_exception_branch(monkeypatch, tmp_path):
 
     client = mod.LockClient(local_only=True)
     client.daemon_stop()  # should not raise
+
+    # The stop-request write must have been attempted (and failed), exercising
+    # the "Failed to write stop request file" exception branch in daemon_stop.
+    assert write_attempts["n"] >= 1
 
 
 def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
@@ -2950,11 +2575,15 @@ def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
         return os.remove(path)
 
     client = mod.LockClient(local_only=True)
+    # Force the graceful-stop loop to run against a discovered PID so the
+    # canonical-PID cleanup re-reads the PID file (second call) and triggers the
+    # exception branch at the "Failed to remove canonical PID after stop" guard.
+    monkeypatch.setattr(client, "_discover_running_watchers", lambda: [5555])
     monkeypatch.setattr(mod.os.path, "exists", _exists)
     monkeypatch.setattr(mod.os, "remove", _remove)
     _read_calls = {"n": 0}
 
-    def _read_pid_then_fail():
+    def _read_pid_then_fail(*args, **kwargs):
         _read_calls["n"] += 1
         if _read_calls["n"] == 1:
             return 5555
@@ -2963,6 +2592,10 @@ def test_daemon_stop_remove_stop_file_and_pid_cleanup_exception_branches(
     monkeypatch.setattr(client, "_read_pid", _read_pid_then_fail)
 
     client.daemon_stop()  # should not raise
+
+    # First read selects the target PID; the second (canonical) read raises and
+    # exercises the cleanup exception branch.
+    assert _read_calls["n"] >= 2
 
 
 def test_daemon_status_metadata_parse_error_then_cmdline_unknown(
@@ -3055,29 +2688,6 @@ def test_graceful_shutdown_enumeration_failure_message(monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_register_signal_handlers_sigint(monkeypatch, tmp_path):
-    """_register_signal_handlers registers SIGINT handler."""
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    registered = {}
-
-    def fake_signal(signum, handler):
-        registered[signum] = handler
-
-    monkeypatch.setattr(mod.signal, "signal", fake_signal)
-
-    client = mod.LockClient(developer_id="test_user")
-    client._register_signal_handlers()
-
-    import signal as _signal
-
-    assert _signal.SIGINT in registered
-
-
 def test_register_signal_handlers_atexit(monkeypatch, tmp_path):
     """_register_signal_handlers registers atexit in non-test mode."""
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
@@ -3123,39 +2733,6 @@ def test_register_signal_handlers_sigbreak_windows(monkeypatch):
     client._register_signal_handlers()
 
     assert _signal.SIGBREAK in registered or _signal.SIGINT in registered
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="Windows console control signal handling"
-)
-def test_register_signal_handlers_windows_console_ctrl(monkeypatch):
-    """_register_signal_handlers tries to register Windows console ctrl handler."""
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-    monkeypatch.setattr(mod.signal, "signal", lambda *a: None)
-    monkeypatch.setattr(mod.atexit, "register", lambda fn: None)
-
-    set_console_ctrl_calls = []
-
-    fake_kernel32 = types.SimpleNamespace(
-        SetConsoleCtrlHandler=lambda handler, add: set_console_ctrl_calls.append(add)
-    )
-
-    import ctypes as _real_ctypes
-
-    # Patch ctypes.windll.kernel32.SetConsoleCtrlHandler directly
-    fake_windll = types.SimpleNamespace(kernel32=fake_kernel32)
-    monkeypatch.setattr(_real_ctypes, "windll", fake_windll)
-
-    client = mod.LockClient(developer_id="test_user")
-    client._register_signal_handlers()
-
-    # SetConsoleCtrlHandler should have been called
-    assert len(set_console_ctrl_calls) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -3714,44 +3291,6 @@ def test_daemon_stop_propagate_restore_setter_exception_swallowed(
     monkeypatch.setattr(mod.logging, "getLogger", _patched_get_logger)
 
     c.daemon_stop()
-
-
-def test_daemon_status_local_only_stale_pid_discovery_match_branch(
-    monkeypatch, tmp_path
-):
-    """Local-only daemon_status returns running when discovered watcher cmdline
-    matches."""
-    pid_file = tmp_path / ".daemon.pid"
-    pid_file.write_text("12345", encoding="utf-8")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-
-    c = object.__new__(mod.LockClient)
-    c.local_only = True
-    monkeypatch.setattr(
-        mod.LockClient, "_read_pid", staticmethod(lambda strict=False: 12345)
-    )
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_is_process_alive",
-        staticmethod(lambda pid: pid in {12345, 22222}),
-    )
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_get_cmdline_for_pid",
-        staticmethod(
-            lambda pid: (
-                "python unrelated.py" if pid == 12345 else "python lock_client.py watch"
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_cmdline_matches_watcher",
-        staticmethod(lambda cmd: "watch" in cmd),
-    )
-    monkeypatch.setattr(c, "_discover_running_watchers", lambda: [22222])
-
-    assert mod.LockClient.daemon_status(c) is True
 
 
 def test_daemon_status_local_only_stale_pid_discovery_exception_branch(

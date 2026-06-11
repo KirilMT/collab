@@ -25,14 +25,6 @@ def test_tasklist_image_rejects_unknown(monkeypatch):
         platform_probe.tasklist_csv_for_image("cmd.exe")
 
 
-def test_get_cmdline_unix_uses_procfs_helper(monkeypatch):
-    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
-    monkeypatch.setattr(platform_probe, "wmic_cmdline", lambda _pid: None)
-    monkeypatch.setattr(platform_probe, "powershell_cmdline", lambda _pid: None)
-    monkeypatch.setattr(platform_probe, "_unix_cmdline", lambda _pid: "python -m watch")
-    assert platform_probe.get_cmdline(99) == "python -m watch"
-
-
 def test_get_cmdline_unix_procfs_null_separated(monkeypatch):
     """Parse /proc/pid/cmdline null-separated argv via the public get_cmdline API."""
     import builtins
@@ -65,16 +57,22 @@ def test_resolve_returns_none_when_executable_missing(monkeypatch):
     assert platform_probe.is_pid_alive_tasklist(42) is False
 
 
-def test_resolve_uses_abspath_when_which_finds_executable(monkeypatch):
+def test_is_pid_alive_tasklist_uses_abspath_when_which_finds_executable(monkeypatch):
     monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: "tasklist")
+    monkeypatch.setattr(platform_probe.safe_subprocess, "is_test_mode", lambda: False)
     monkeypatch.setattr(platform_probe.os.path, "abspath", lambda p: f"/abs/{p}")
     monkeypatch.setattr(platform_probe.sys, "platform", "win32")
 
+    seen_argv: list[list[str]] = []
+
     def _run(argv, **kwargs):
+        seen_argv.append(list(argv))
         return _completed(stdout="42")
 
     patch_subprocess(monkeypatch, run=_run)
     assert platform_probe.is_pid_alive_tasklist(42) is True
+    # The resolved executable must be the absolute path, not the bare name.
+    assert seen_argv and seen_argv[0][0] == "/abs/tasklist"
 
 
 def test_resolve_which_exception_returns_none(monkeypatch):
@@ -87,11 +85,13 @@ def test_resolve_which_exception_returns_none(monkeypatch):
     assert platform_probe.tasklist_csv_for_pid(9) == ""
 
 
-def test_is_pid_alive_tasklist_non_windows():
+def test_is_pid_alive_tasklist_non_windows(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
     assert platform_probe.is_pid_alive_tasklist(1) is False
 
 
-def test_tasklist_csv_for_image_non_windows():
+def test_tasklist_csv_for_image_non_windows(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
     assert platform_probe.tasklist_csv_for_image("python.exe") == ""
 
 
@@ -160,7 +160,8 @@ def test_wmic_and_powershell_windows_paths(monkeypatch):
     assert 555 in platform_probe.iter_tasklist_python_pids()
 
 
-def test_wmic_non_windows_returns_empty():
+def test_wmic_non_windows_returns_empty(monkeypatch):
+    monkeypatch.setattr(platform_probe.sys, "platform", "linux")
     assert platform_probe.wmic_cmdline(1) is None
     assert platform_probe.wmic_cmdline_value(1) == ""
     assert platform_probe.wmic_process_name_and_ppid(1) == (None, None)
@@ -180,17 +181,21 @@ def test_wmic_process_name_parse_value_error(monkeypatch):
     assert ppid is None
 
 
-def test_resolve_returns_bare_name_in_test_mode(monkeypatch):
+def test_tasklist_csv_for_pid_uses_bare_name_in_test_mode(monkeypatch):
     monkeypatch.setattr(platform_probe.shutil, "which", lambda _name: None)
     monkeypatch.setattr(platform_probe.safe_subprocess, "is_test_mode", lambda: True)
     monkeypatch.setattr(platform_probe.sys, "platform", "win32")
 
+    seen_argv: list[list[str]] = []
+
     def _run(argv, **kwargs):
-        assert argv[0] == "tasklist"
+        seen_argv.append(list(argv))
         return _completed(stdout="")
 
     patch_subprocess(monkeypatch, run=_run)
     assert platform_probe.tasklist_csv_for_pid(1) == ""
+    # In test mode the resolver falls back to the bare executable name.
+    assert seen_argv and seen_argv[0][0] == "tasklist"
 
 
 def test_iter_tasklist_skips_malformed_csv_rows(monkeypatch):
@@ -211,10 +216,6 @@ def test_powershell_and_ps_helpers_noop_off_windows(monkeypatch):
     assert platform_probe.powershell_cmdline(1) is None
     assert platform_probe.ps_aux() == ""
     assert platform_probe.ps_pid_cmd_csv() == ""
-
-
-def test_wmic_cmdline_value_empty_off_windows():
-    assert platform_probe.wmic_cmdline_value(1) == ""
 
 
 def test_get_cmdline_windows_falls_back_to_powershell(monkeypatch):

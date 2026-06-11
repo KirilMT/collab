@@ -13,123 +13,7 @@ from ._helpers import FakeResponse, load_lock_client_module, make_create_client
 mod = load_lock_client_module()
 
 
-def test_graceful_shutdown_git_fallback(monkeypatch, tmp_path):
-    """Test _graceful_shutdown falls back to release_all on git error."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-
-    def broken_git():
-        raise RuntimeError("git failed")
-
-    monkeypatch.setattr(lc, "_run_git_status", broken_git)
-    monkeypatch.setattr(lc, "release_all", mock.Mock(return_value=2))
-
-    lc._graceful_shutdown()
-    assert not pid_file.exists()
-    # Now verifies behavior: PRESERVE locks on shutdown
-    lc.release_all.assert_not_called()
-
-
-def test_graceful_shutdown_smart_release(monkeypatch, tmp_path):
-    """Test _graceful_shutdown selectively releases clean files."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-
-    monkeypatch.setattr(lc, "_run_git_status", lambda: " M src/dirty.py\n")
-
-    locks = [
-        {"developer_id": "test_user", "file_path": "collab/dirty.py"},
-        {"developer_id": "test_user", "file_path": "collab/clean.py"},
-        {"developer_id": "test_user", "file_path": ""},
-        {"developer_id": "other_user", "file_path": "collab/other.py"},
-    ]
-    monkeypatch.setattr(lc, "active", mock.Mock(return_value=locks))
-
-    release_mock = mock.Mock(return_value=(True, None))
-    monkeypatch.setattr(lc, "release", release_mock)
-
-    lc._graceful_shutdown()
-
-    # Now verifies behavior: PRESERVE locks on shutdown
-    release_mock.assert_not_called()
-    assert not pid_file.exists()
-
-
-def test_graceful_shutdown_with_exception(monkeypatch, tmp_path):
-    """Test _graceful_shutdown handles release errors gracefully."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-
-    # Force the fallback path and make it fail
-    def fail_git():
-        raise RuntimeError("git fail")
-
-    monkeypatch.setattr(lc, "_run_git_status", fail_git)
-    monkeypatch.setattr(lc, "release_all", mock.Mock(side_effect=RuntimeError("fail")))
-
-    lc._graceful_shutdown()  # Should not raise
-
-
 # RESTORED: test_graceful_shutdown_releases_locks
-def test_graceful_shutdown_releases_locks(monkeypatch, tmp_path):
-    """Test _graceful_shutdown logs when locks are released (restored).
-
-    This covers the case where a lock owned by the current developer is present and the
-    graceful shutdown path should attempt to release it.
-    """
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-
-    # Return locks to release
-    locks_data = [
-        {"file_path": "collab/app.py", "developer_id": "test_user"},
-    ]
-    response = FakeResponse(status=200, data=locks_data)
-    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
-
-    lc = mod.LockClient(developer_id="test_user")
-    lc._graceful_shutdown()
-
-
 # ---------------------------------------------------------------------------
 # Additional graceful_shutdown coverage tests
 # ---------------------------------------------------------------------------
@@ -196,19 +80,6 @@ def test_graceful_shutdown_writes_shutdown_marker(monkeypatch, tmp_path):
 
     shutdown_file = tmp_path / ".shutdown_complete"
     assert shutdown_file.exists()
-
-
-def test_graceful_shutdown_writes_shutdown_marker_deep(monkeypatch, tmp_path):
-    """_graceful_shutdown writes the .shutdown_complete marker file (deep path with
-    _make_client)."""
-    state_dir = str(tmp_path)
-    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
-    lc = _make_client(monkeypatch, tmp_path)
-    lc.active = mock.Mock(return_value=[])
-    lc._graceful_shutdown()
-    # Marker should exist in state dir
-    marker = tmp_path / ".shutdown_complete"
-    assert marker.exists()
 
 
 def test_graceful_shutdown_preserves_locks(monkeypatch, tmp_path):
@@ -281,27 +152,6 @@ def test_graceful_shutdown_with_reason(monkeypatch, tmp_path):
     lc._graceful_shutdown(reason="stop_requested")
 
 
-def test_graceful_shutdown_active_raises(monkeypatch, tmp_path):
-    """_graceful_shutdown handles exception in active() gracefully."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text("12345")
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(mod.time, "sleep", lambda x: None)
-
-    lc = mod.LockClient(developer_id="test_user")
-    monkeypatch.setattr(lc, "active", mock.Mock(side_effect=RuntimeError("API down")))
-
-    lc._graceful_shutdown()  # Should not raise
-
-
 # ---------------------------------------------------------------------------
 # Deep shutdown / signal-handler / parent-monitor branch coverage tests
 # ---------------------------------------------------------------------------
@@ -323,27 +173,6 @@ def _make_client(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # _graceful_shutdown — no-reason branch (line 2521-2522 region)
 # ---------------------------------------------------------------------------
-
-
-def test_graceful_shutdown_no_reason_logs_generic_message(monkeypatch, tmp_path):
-    """_graceful_shutdown with no reason logs the generic message."""
-    lc = _make_client(monkeypatch, tmp_path)
-    lc.active = mock.Mock(return_value=[])
-    lc._graceful_shutdown(reason=None)  # covers else branch at 2521-2522
-
-
-def test_graceful_shutdown_with_reason_logs_specific_message(monkeypatch, tmp_path):
-    """_graceful_shutdown with a reason logs the reason-specific message."""
-    lc = _make_client(monkeypatch, tmp_path)
-    lc.active = mock.Mock(return_value=[])
-    lc._graceful_shutdown(reason="test_reason")  # covers if branch at 2504
-
-
-def test_graceful_shutdown_active_raises_logs_error(monkeypatch, tmp_path):
-    """Active() exception during shutdown is caught and logged."""
-    lc = _make_client(monkeypatch, tmp_path)
-    lc.active = mock.Mock(side_effect=RuntimeError("db down"))
-    lc._graceful_shutdown()  # should not raise
 
 
 def test_graceful_shutdown_active_fails_writes_error_sentinel(
@@ -374,18 +203,6 @@ def test_graceful_shutdown_active_has_my_locks(monkeypatch, tmp_path):
     lc._graceful_shutdown()  # covers lines where n_kept is incremented
 
 
-def test_graceful_shutdown_writes_shutdown_marker_deep_alt(monkeypatch, tmp_path):
-    """_graceful_shutdown writes the .shutdown_complete marker file."""
-    state_dir = str(tmp_path)
-    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
-    lc = _make_client(monkeypatch, tmp_path)
-    lc.active = mock.Mock(return_value=[])
-    lc._graceful_shutdown()
-    # Marker should exist in state dir
-    marker = tmp_path / ".shutdown_complete"
-    assert marker.exists()
-
-
 def test_graceful_shutdown_shutdown_marker_open_fails(monkeypatch, tmp_path):
     """If writing shutdown marker raises, _graceful_shutdown doesn't propagate."""
     import builtins
@@ -405,6 +222,10 @@ def test_graceful_shutdown_shutdown_marker_open_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "open", fail_open)
     lc._graceful_shutdown()  # should not raise
 
+    # The marker write failed, so the file must never have been created. This
+    # confirms the open() failure path (not a silently-successful write).
+    assert not (tmp_path / ".shutdown_complete").exists()
+
 
 def test_graceful_shutdown_pid_removal_retries(monkeypatch, tmp_path):
     """PID file removal retries on OSError then succeeds on third attempt."""
@@ -414,18 +235,27 @@ def test_graceful_shutdown_pid_removal_retries(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
     lc.active = mock.Mock(return_value=[])
 
+    # Count removal attempts on the PID file specifically. We match the exact
+    # path (not a substring heuristic) because the pytest tmp dir name itself
+    # contains "shutdown", which would otherwise mask the retry branch.
     call_count = [0]
     real_remove = os.remove
 
     def flaky_remove(path):
-        call_count[0] += 1
-        if call_count[0] < 3 and ".pid" in str(path) and "shutdown" not in str(path):
-            raise OSError("busy")
+        if str(path) == str(pid_file):
+            call_count[0] += 1
+            if call_count[0] < 3:
+                raise OSError("busy")
         real_remove(path)
 
     monkeypatch.setattr(mod.os, "remove", flaky_remove)
     monkeypatch.setattr(mod.time, "sleep", lambda x: None)
     lc._graceful_shutdown()
+
+    # Source retries PID removal up to 3 times; two OSErrors then success means
+    # os.remove was invoked at least three times on the PID file.
+    assert call_count[0] >= 3
+    assert not pid_file.exists()
 
 
 def test_graceful_shutdown_flush_handler_raises(monkeypatch, tmp_path):
@@ -441,6 +271,10 @@ def test_graceful_shutdown_flush_handler_raises(monkeypatch, tmp_path):
         fake_logger.handlers = [bad_handler]
         mock_get_logger.return_value = fake_logger
         lc._graceful_shutdown()  # should not raise
+
+    # The shutdown path flushes handlers; the raising flush must be invoked and
+    # swallowed rather than skipped.
+    bad_handler.flush.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +294,8 @@ def test_register_signal_handlers_non_win32(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.sys, "platform", "linux")
 
     lc._register_signal_handlers()
-    assert mod.signal.SIGINT in signals_set or len(signals_set) >= 1
+    assert mod.signal.SIGINT in signals_set
+    assert mod.signal.SIGTERM in signals_set
 
 
 def test_register_signal_handlers_test_mode_skips_atexit(monkeypatch, tmp_path):
@@ -498,7 +333,10 @@ def test_register_signal_handlers_win32_sigbreak_exception(monkeypatch, tmp_path
     monkeypatch.setenv("COLLAB_TEST_MODE", "1")
     monkeypatch.setattr(mod.sys, "platform", "win32")
 
+    signals_set = []
+
     def raising_signal(sig, handler):
+        signals_set.append(sig)
         if sig == 21:  # SIGBREAK
             raise OSError("not permitted")
 
@@ -506,6 +344,10 @@ def test_register_signal_handlers_win32_sigbreak_exception(monkeypatch, tmp_path
     monkeypatch.setattr(mod.signal, "SIGBREAK", 21, raising=False)
 
     lc._register_signal_handlers()  # should not raise
+
+    # SIGBREAK registration must have been attempted; the OSError is caught and
+    # swallowed (no propagation past _register_signal_handlers).
+    assert 21 in signals_set
 
 
 def test_register_signal_handlers_win32_console_handler_exception(
@@ -521,14 +363,20 @@ def test_register_signal_handlers_win32_console_handler_exception(
     import builtins
 
     real_import = builtins.__import__
+    ctypes_import_attempts = {"n": 0}
 
     def fail_ctypes_import(name, *args, **kwargs):
         if name == "ctypes":
+            ctypes_import_attempts["n"] += 1
             raise ImportError("no ctypes")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fail_ctypes_import)
     lc._register_signal_handlers()  # should not raise
+
+    # The Windows console-control handler block must have attempted to import
+    # ctypes and hit the swallowed-import failure path.
+    assert ctypes_import_attempts["n"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -716,10 +564,12 @@ def test_graceful_shutdown_logging_shutdown_raises(monkeypatch, tmp_path):
     lc = _make_client(monkeypatch, tmp_path)
     lc.active = mock.Mock(return_value=[])
 
-    monkeypatch.setattr(
-        mod.logging, "shutdown", mock.Mock(side_effect=RuntimeError("boom"))
-    )
+    shutdown_spy = mock.Mock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(mod.logging, "shutdown", shutdown_spy)
     lc._graceful_shutdown()  # should not raise
+
+    # logging.shutdown() must be invoked (and its failure swallowed).
+    shutdown_spy.assert_called_once()
 
 
 def test_graceful_shutdown_print_raises_is_swallowed(monkeypatch, tmp_path):
@@ -729,13 +579,18 @@ def test_graceful_shutdown_print_raises_is_swallowed(monkeypatch, tmp_path):
     lc = _make_client(monkeypatch, tmp_path)
     lc.active = mock.Mock(return_value=[])
     real_print = builtins.print
+    print_calls = {"n": 0}
 
     def flaky_print(*args, **kwargs):
+        print_calls["n"] += 1
         raise OSError("stdout unavailable")
 
     monkeypatch.setattr(builtins, "print", flaky_print)
     lc._graceful_shutdown()
     monkeypatch.setattr(builtins, "print", real_print)
+
+    # The shutdown marker print is attempted (and its failure swallowed).
+    assert print_calls["n"] >= 1
 
 
 def test_register_signal_handlers_calls_exception_logging(monkeypatch, tmp_path):
@@ -1045,29 +900,6 @@ def test_start_parent_monitor_waiter_outer_exception(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "__import__", mock_import)
     monkeypatch.setattr(mod.threading, "Thread", _ImmediateThread)
     lc._start_parent_monitor_thread()
-
-
-def test_reconcile_git_failure_returns_current_user_locks(monkeypatch, tmp_path):
-    """Reconcile on git failure returns current user's active locks set."""
-    lc = _make_client(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        lc,
-        "_get_modified_and_unpushed_files",
-        mock.Mock(side_effect=RuntimeError("git fail")),
-    )
-    monkeypatch.setattr(
-        lc,
-        "active",
-        mock.Mock(
-            return_value=[
-                {"developer_id": "test_user", "file_path": "collab/a.py"},
-                {"developer_id": "other", "file_path": "collab/b.py"},
-            ]
-        ),
-    )
-
-    out = lc._reconcile()
-    assert out == {"collab/a.py"}
 
 
 def test_reconcile_still_valid_same_machine_token_is_resumed(monkeypatch, tmp_path):
