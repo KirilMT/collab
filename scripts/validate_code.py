@@ -988,6 +988,33 @@ def validate_python_backend(
     else:
         checks.append(("Template Linting", success))
 
+    # Validate hook template shebang consistency (all hooks must use #!/bin/sh).
+    # The packaging smoke test in CI asserts this, so catch it locally.
+    _project_root = Path(__file__).resolve().parent.parent
+    hook_template_dirs = [
+        _project_root / "collab" / "hook_templates",
+        _project_root / "scripts" / "git-hooks",
+    ]
+    hook_shebang_ok = True
+    for ht_dir in hook_template_dirs:
+        if not ht_dir.is_dir():
+            continue
+        for hook_path in sorted(ht_dir.iterdir()):
+            if hook_path.suffix and not hook_path.name.startswith("."):
+                try:
+                    first_line = hook_path.read_text(encoding="utf-8").split("\n")[0]
+                except Exception:
+                    continue
+                if first_line.strip() != "#!/bin/sh":
+                    print_error(
+                        f"Hook template shebang mismatch: {hook_path.relative_to(_project_root)} "
+                        f"uses {first_line!r} — expected #!/bin/sh"
+                    )
+                    hook_shebang_ok = False
+    if hook_shebang_ok:
+        print_success("Hook template shebangs consistent (#!/bin/sh)")
+    checks.append(("Hook Shebangs", hook_shebang_ok))
+
     _FULL_TESTPATHS = ["tests/backend", "tests/frontend"]
     _cov_sources = [
         "--cov=collab",

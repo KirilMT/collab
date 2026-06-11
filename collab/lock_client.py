@@ -1512,6 +1512,34 @@ class LockClient:
             logger.error("Failed to force_release_all: %s", e)
             return 0
 
+    def _warn_if_non_editable(self) -> None:
+        """Emit a warning if the package is installed non-editably in a source tree."""
+        # Only warn if we appear to be in a source checkout of collab itself
+        if not os.path.exists(os.path.join(_PROJECT_ROOT, "collab", "lock_client.py")):
+            return
+
+        is_editable = False
+        try:
+            import importlib.metadata
+
+            dist = importlib.metadata.distribution("collab-runtime")
+            data = dist.read_text("direct_url.json")
+            if data:
+                is_editable = (
+                    json.loads(data).get("dir_info", {}).get("editable", False)
+                )
+        except Exception:
+            pass
+
+        if not is_editable:
+            warning_msg = (
+                "WARNING: collab is installed as a non-editable package. "
+                "New dashboard assets and Python changes may not be visible. "
+                "Run: pip install -e .   (or: scripts/setup.ps1 -Force)"
+            )
+            logger.warning(warning_msg)
+            print(warning_msg)
+
     @staticmethod
     def _format_acquire_failure(message: str) -> str:
         """Add actionable context for common Supabase RPC / schema failures."""
@@ -1708,6 +1736,7 @@ class LockClient:
         self, interval: int = 5, timeout_mins: int = 0, open_dashboard: bool = False
     ) -> None:
         """Start the watcher as a background daemon process."""
+        self._warn_if_non_editable()
         pid = self._read_pid()
         if pid and self._is_process_alive(pid):
             # Check if the watcher is orphaned (parent process dead)
