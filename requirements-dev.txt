@@ -10,7 +10,7 @@ docformatter==1.7.8     # Docstring formatting (PEP 257 compliant)
 
 # Linting (ESSENTIAL - Run always)
 flake8==7.3.0
-ruff==0.15.15
+ruff==0.15.16
 pylint==3.3.9
 
 # Type Checking (OPTIONAL - Run periodically)
@@ -30,7 +30,7 @@ pluggy==1.6.0
 bandit==1.9.4
 radon==6.0.1
 yamllint==1.38.0        # YAML file validation
-djlint==1.36.4          # HTML/Jinja template formatting and linting
+djlint==1.39.0          # HTML/Jinja template formatting and linting
 
 # Pre-commit hooks (OPTIONAL - Configure later)
 pre-commit==4.6.0
