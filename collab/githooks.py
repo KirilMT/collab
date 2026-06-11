@@ -27,7 +27,14 @@ from typing import Optional
 
 from collab import overlap, safe_subprocess
 
-HOOK_NAMES = ("pre-commit", "post-commit", "pre-push", "commit-msg")
+HOOK_NAMES = (
+    "pre-commit",
+    "post-commit",
+    "pre-push",
+    "commit-msg",
+    "post-merge",
+    "post-checkout",
+)
 _TEMPLATE_PACKAGE = "collab"
 _TEMPLATE_DIR = "hook_templates"
 

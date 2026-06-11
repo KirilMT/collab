@@ -13,7 +13,7 @@ if [ ! -d "$SOURCE_DIR" ]; then
 fi
 
 mkdir -p "$TARGET_DIR"
-for hook in pre-commit post-commit pre-push commit-msg; do
+for hook in pre-commit post-commit pre-push commit-msg post-merge post-checkout; do
     if [ ! -f "$SOURCE_DIR/$hook" ]; then
         echo "[collab] Missing hook template: $SOURCE_DIR/$hook" >&2
         exit 1
@@ -22,4 +22,4 @@ for hook in pre-commit post-commit pre-push commit-msg; do
     chmod +x "$TARGET_DIR/$hook" 2>/dev/null || true
 done
 
-echo "[collab] Installed git hooks from scripts/git-hooks/ (pre-commit, post-commit, pre-push, commit-msg)"
+echo "[collab] Installed git hooks from scripts/git-hooks/ (pre-commit, post-commit, pre-push, commit-msg, post-merge, post-checkout)"

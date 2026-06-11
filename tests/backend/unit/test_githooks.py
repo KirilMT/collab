@@ -522,6 +522,21 @@ def test_read_template_returns_known_hooks():
     assert "collab.githooks acquire-staged" in githooks._read_template("pre-commit")
     assert "collab.githooks check-overlap" in githooks._read_template("pre-push")
     assert "collab.githooks release-all" in githooks._read_template("pre-push")
+    assert "install -e ." in githooks._read_template("post-merge")
+    assert "install -e ." in githooks._read_template("post-checkout")
+    # Verify orphan cleanup is present in both hooks
+    post_merge = githooks._read_template("post-merge")
+    post_checkout = githooks._read_template("post-checkout")
+    assert "daemon-stop" in post_merge
+    assert "daemon-stop" in post_checkout
+    assert "daemon-start" in post_merge
+    assert "daemon-start" in post_checkout
+    assert "rm -rf" in post_merge
+    assert "rm -rf" in post_checkout
+    assert "site_pkgs" in post_merge
+    assert "site_pkgs" in post_checkout
+    assert "~ollab_runtime" in post_merge
+    assert "~ollab_runtime" in post_checkout
 
 
 def test_hooks_dir_honors_core_hooks_path(monkeypatch, tmp_path):

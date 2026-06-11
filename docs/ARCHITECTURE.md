@@ -159,3 +159,47 @@ Source lives under `editors/vscode/collab-locks/`. PyCharm run-configuration tem
 | `docs/pypi/README.md`          | PyPI package readme                                         |
 | `editors/vscode/collab-locks/` | VS Code / Cursor extension                                  |
 | `editors/pycharm/`             | IDE run-configuration template                              |
+
+### Editable Install Auto-Repair
+
+Collab is designed to be installed in **editable mode** (`pip install -e .`) when used from a source
+checkout. This ensures the daemon serves live dashboard assets from the source tree, not a stale
+`site-packages` snapshot. The following mechanisms keep the install in sync automatically:
+
+| Mechanism                                 | Trigger                                     | Action                                                                                      |
+| ----------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **`post-merge` git hook**                 | `git pull` / `git merge`                    | Re-runs `pip install -e .` when `pyproject.toml`, `setup.py`, or `requirements*.txt` change |
+| **`post-checkout` git hook**              | `git checkout` / `git switch` (branch only) | Re-runs `pip install -e .` when package definition files differ between branches            |
+| **`setup.ps1` / `setup.sh` health check** | Every setup run                             | Detects non-editable installs via `direct_url.json` and reinstalls as `-e .`                |
+| **`daemon-start` self-check**             | `collab daemon-start`                       | Emits a clear warning if the running install is non-editable                                |
+
+#### Hook Lifecycle (post-merge and post-checkout)
+
+Before running `pip install -e .`, each hook performs a defensive cleanup:
+
+1. **Stop the daemon** — releases `collab.exe` file locks on Windows.
+2. **Remove stale `site-packages/collab/`** — a prior non-editable install leaves a copy that
+   takes priority over `.pth`-based editable installs.
+3. **Remove pip rename orphans** (`~ollab_runtime-*.dist-info/`) — left behind by interrupted
+   `pip install` operations.
+4. **Run `pip install -e .`** — restores editable mode.
+5. **Restart the daemon** — launched in background (`&`) so the hook never blocks.
+
+#### Health Check (Editable Detection)
+
+The `Test-SetupCollabInstallHealthy` (PowerShell) and `setup_collab_install_healthy` (bash)
+functions use `importlib.metadata` to read `direct_url.json` from the `collab-runtime` dist-info
+directory. This is the canonical way to detect editable installs:
+
+- **Editable**: `{"dir_info": {"editable": true}, "url": "file:///..."}`
+- **Non-editable**: `{"dir_info": {}, "url": "file:///..."}`
+
+This replaces the previous approach of checking `module.__file__`, which was unreliable because
+`python -c` adds the current directory to `sys.path`, masking stale `site-packages` copies.
+
+#### Orphan Cleanup in Setup Scripts
+
+Both `setup.ps1` and `setup.sh` include explicit cleanup of stale `site-packages/collab/`
+directories and `~ollab_runtime-*.dist-info` / `~collab-*.dist-info` rename orphans before
+every `pip install` run. This makes `setup.ps1 -Force` a reliable recovery tool for broken
+install states.

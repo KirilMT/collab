@@ -1623,3 +1623,65 @@ def test_validate_code_dunder_main(monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(str(script_path), run_name="__main__")
     assert exc_info.value.code == 0
+
+
+def _make_hook_dirs(root: Path) -> tuple[Path, Path]:
+    """Create the two hook-template directories under a fake project root."""
+    pkg_dir = root / "collab" / "hook_templates"
+    scripts_dir = root / "scripts" / "git-hooks"
+    pkg_dir.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
+    return pkg_dir, scripts_dir
+
+
+def test_validate_hook_shebangs_all_consistent(tmp_path, capsys):
+    """Every extensionless hook starting with #!/bin/sh passes (happy path)."""
+    pkg_dir, scripts_dir = _make_hook_dirs(tmp_path)
+    (pkg_dir / "post-merge").write_text("#!/bin/sh\necho merged\n", encoding="utf-8")
+    (scripts_dir / "post-checkout").write_text(
+        "#!/bin/sh\necho switched\n", encoding="utf-8"
+    )
+
+    assert validate_code._validate_hook_template_shebangs(tmp_path) is True
+    assert "Hook template shebangs consistent" in capsys.readouterr().out
+
+
+def test_validate_hook_shebangs_detects_mismatch(tmp_path, capsys):
+    """A hook with the wrong shebang fails and is reported by path."""
+    pkg_dir, _ = _make_hook_dirs(tmp_path)
+    (pkg_dir / "post-merge").write_text(
+        "#!/usr/bin/env sh\necho merged\n", encoding="utf-8"
+    )
+
+    assert validate_code._validate_hook_template_shebangs(tmp_path) is False
+    out = capsys.readouterr().out
+    assert "shebang mismatch" in out
+    assert "post-merge" in out
+
+
+def test_validate_hook_shebangs_missing_dir_is_ok(tmp_path, capsys):
+    """When no hook-template directories exist, validation is a no-op success."""
+    assert validate_code._validate_hook_template_shebangs(tmp_path) is True
+    assert "Hook template shebangs consistent" in capsys.readouterr().out
+
+
+def test_validate_hook_shebangs_skips_dirs_dotfiles_and_unreadable(tmp_path):
+    """Sub-directories, dotfiles, and unreadable files are skipped, not failed."""
+    pkg_dir, _ = _make_hook_dirs(tmp_path)
+    (pkg_dir / "nested").mkdir()  # directory entry -> skipped
+    (pkg_dir / ".keep").write_text("not a shebang\n", encoding="utf-8")  # dotfile
+    unreadable = pkg_dir / "post-merge"
+    unreadable.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    # Force the read to raise OSError to exercise the except branch.
+    real_read_text = Path.read_text
+
+    def boom(self, *a, **k):
+        if self == unreadable:
+            raise OSError("boom")
+        return real_read_text(self, *a, **k)
+
+    import unittest.mock as _mock
+
+    with _mock.patch.object(Path, "read_text", boom):
+        assert validate_code._validate_hook_template_shebangs(tmp_path) is True

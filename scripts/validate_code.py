@@ -807,6 +807,43 @@ def _frontend_validation_plan(
     }
 
 
+def _validate_hook_template_shebangs(project_root: Optional[Path] = None) -> bool:
+    """Verify every bundled git-hook template starts with ``#!/bin/sh``.
+
+    Mirrors the packaging smoke test (``tests/packaging/test_smoke_install.py``) so a
+    stray shebang is caught locally before it reaches CI. Returns ``True`` when all hook
+    templates are consistent (or none are present).
+    """
+    root = project_root or Path(__file__).resolve().parent.parent
+    hook_template_dirs = [
+        root / "collab" / "hook_templates",
+        root / "scripts" / "git-hooks",
+    ]
+    ok = True
+    for ht_dir in hook_template_dirs:
+        if not ht_dir.is_dir():
+            continue
+        for hook_path in sorted(ht_dir.iterdir()):
+            # Hook templates are extensionless executables (post-merge, pre-push, …);
+            # skip directories and hidden/dotfiles, validate every regular file.
+            if not hook_path.is_file() or hook_path.name.startswith("."):
+                continue
+            try:
+                first_line = hook_path.read_text(encoding="utf-8").split("\n")[0]
+            except OSError:
+                continue
+            if first_line.strip() != "#!/bin/sh":
+                rel_path = hook_path.relative_to(root)
+                print_error(
+                    f"Hook template shebang mismatch: {rel_path} "
+                    f"uses {first_line!r} — expected #!/bin/sh"
+                )
+                ok = False
+    if ok:
+        print_success("Hook template shebangs consistent (#!/bin/sh)")
+    return ok
+
+
 def validate_python_backend(
     quick: bool = False, force_all_apps: bool = True, files: Optional[List[str]] = None
 ) -> bool:
@@ -987,6 +1024,10 @@ def validate_python_backend(
         checks.append(("Template Linting", "skipped"))
     else:
         checks.append(("Template Linting", success))
+
+    # Validate hook template shebang consistency (all hooks must use #!/bin/sh).
+    # The packaging smoke test in CI asserts this, so catch it locally.
+    checks.append(("Hook Shebangs", _validate_hook_template_shebangs()))
 
     _FULL_TESTPATHS = ["tests/backend", "tests/frontend"]
     _cov_sources = [
