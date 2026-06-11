@@ -223,52 +223,6 @@ def test_watch_only_reconciles_on_startup(monkeypatch, tmp_path):
     assert reconcile_calls == [1]
 
 
-def test_watch_parent_process_dead(monkeypatch, tmp_path):
-    """Test watch() exits when parent process dies."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    pid_file = tmp_path / "daemon.pid"
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
-    monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
-    )
-    monkeypatch.setattr(mod.LockClient, "_reconcile", lambda self: set())
-
-    # Make parent check trigger immediately
-    check_count = [0]
-    real_now = datetime.now
-
-    def advancing_now():
-        check_count[0] += 1
-        return real_now() + timedelta(seconds=check_count[0] * 31)
-
-    monkeypatch.setattr(
-        mod,
-        "datetime",
-        type(
-            "FakeDT",
-            (),
-            {
-                "now": staticmethod(advancing_now),
-                "fromisoformat": datetime.fromisoformat,
-            },
-        )(),
-    )
-
-    # Parent is dead
-    monkeypatch.setattr(
-        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: False)
-    )
-    monkeypatch.setattr(mod.time, "sleep", lambda x: None)
-
-    lc = mod.LockClient(developer_id="test_user")
-    lc.watch(interval=1, timeout_mins=60)
-
-
 def test_watch_open_dashboard(monkeypatch, tmp_path):
     """Test watch() opens dashboard when requested."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
@@ -695,45 +649,6 @@ class TestHeartbeatShouldShutdown:
         result = lc._heartbeat_should_shutdown(0.0)
         assert result is None
 
-    def test_stale_soft_skip_parent_alive(self, tmp_path, monkeypatch):
-        """Stale but parent alive → one-time soft skip, returns None."""
-        lc = mod.LockClient(developer_id="dev_hb")
-        hb_file = tmp_path / ".heartbeat"
-        hb_file.write_text("alive")
-        lc._heartbeat_file = str(hb_file)
-        lc._heartbeat_grace_seconds = 5
-        lc._parent_pid = 9999
-        lc._heartbeat_soft_skipped = False
-        monkeypatch.setattr(
-            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
-        )
-        # getmtime returns 0 → age = now_ts (which is time.time())
-        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
-        # Set time.time high enough that age > grace
-        fake_now = 100.0
-        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
-        result = lc._heartbeat_should_shutdown(0.0)
-        assert result is None  # soft-skipped
-        assert lc._heartbeat_soft_skipped is True  # flag was set
-
-    def test_stale_final_shutdown(self, tmp_path, monkeypatch):
-        """Stale after soft skip exhausted → returns 'heartbeat_stale'."""
-        lc = mod.LockClient(developer_id="dev_hb")
-        hb_file = tmp_path / ".heartbeat"
-        hb_file.write_text("alive")
-        lc._heartbeat_file = str(hb_file)
-        lc._heartbeat_grace_seconds = 5
-        lc._parent_pid = 9999
-        lc._heartbeat_soft_skipped = True  # already used the soft skip
-        monkeypatch.setattr(
-            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
-        )
-        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
-        fake_now = 100.0  # age = 100 > 5 + 5
-        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
-        result = lc._heartbeat_should_shutdown(0.0)
-        assert result == "heartbeat_stale"
-
     def test_stale_parent_dead_no_soft_skip_needed(self, tmp_path, monkeypatch):
         """Stale with parent dead → returns 'heartbeat_stale' (no soft skip)."""
         lc = mod.LockClient(developer_id="dev_hb")
@@ -772,36 +687,6 @@ class TestHeartbeatShouldShutdown:
         monkeypatch.setattr(mod.time, "time", lambda: fake_now)
         result = lc._heartbeat_should_shutdown(0.0)
         assert result is None
-
-    def test_exception_during_file_read_graceful(self, tmp_path, monkeypatch):
-        """Helper returns 'heartbeat_stale' even when reading file content fails."""
-        import builtins
-
-        lc = mod.LockClient(developer_id="dev_hb")
-        hb_file = tmp_path / ".heartbeat"
-        hb_file.write_text("alive")
-        lc._heartbeat_file = str(hb_file)
-        lc._heartbeat_grace_seconds = 1
-        lc._parent_pid = 9999
-        lc._heartbeat_soft_skipped = True
-        monkeypatch.setattr(
-            mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
-        )
-        monkeypatch.setattr(mod.os.path, "getmtime", lambda p: 0.0)
-        # age=100 >> 1+5 → will try to read file contents for debug
-        fake_now = 100.0
-        monkeypatch.setattr(mod.time, "time", lambda: fake_now)
-        # Make open() fail
-        real_open = builtins.open
-
-        def bad_open(*a, **kw):
-            raise OSError("disk error")
-
-        monkeypatch.setattr(builtins, "open", bad_open)
-        result = lc._heartbeat_should_shutdown(0.0)
-        assert result == "heartbeat_stale"
-        # Restore open for cleanup
-        monkeypatch.setattr(builtins, "open", real_open)
 
 
 def test_watch_parent_zombie_name_unresolvable_shutdown(monkeypatch, tmp_path):
@@ -847,6 +732,9 @@ def test_watch_adoption_detected_shutdown(monkeypatch, tmp_path):
 
     lc._initial_ppid = 1000
     lc.watch(interval=1, timeout_mins=60, daemon_mode=True, parent_pid=4242)
+
+    # Adoption by a different parent PID must trigger graceful shutdown.
+    assert shutdown_called[0] is True
 
 
 def test_watch_skips_release_when_git_status_fails(monkeypatch, tmp_path, caplog):

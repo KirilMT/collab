@@ -298,6 +298,14 @@ function Remove-SetupCollabPipOrphans {
         return
     }
 
+    # Remove stale non-editable copy that takes priority over .pth files
+    $staleCollabDir = Join-Path $SitePackagesDir 'collab'
+    if (Test-Path $staleCollabDir) {
+        Write-Host "   Removing stale non-editable copy: collab\..." -ForegroundColor Yellow
+        Remove-Item -LiteralPath $staleCollabDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # Remove pip rename orphans (~ollab_runtime-*.dist-info, ~collab-*.dist-info)
     Get-ChildItem -LiteralPath $SitePackagesDir -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like '~ollab*' -or $_.Name -like '~collab*' } |
         ForEach-Object {
@@ -325,12 +333,8 @@ function Test-SetupCollabInstallHealthy {
     }
 
     if ($ExpectEditable) {
-        $moduleFile = (& $PythonExe -c "import collab.lock_client as m; print(m.__file__)" 2>$null)
-        if (-not $moduleFile) {
-            return $false
-        }
-        $rootNorm = (Resolve-Path $ProjectRoot).Path.TrimEnd('\')
-        if ($moduleFile -notlike "$rootNorm*") {
+        $isEditable = & $PythonExe -c "import json, importlib.metadata; dist = importlib.metadata.distribution('collab-runtime'); data = dist.read_text('direct_url.json'); print(json.loads(data).get('dir_info', {}).get('editable', False) if data else False)" 2>$null
+        if ($isEditable -ne "True") {
             return $false
         }
     }
@@ -831,7 +835,7 @@ if (Test-Path $preCommitExe) {
 
         $sourceHooksDir = Join-Path $projectRoot "scripts\git-hooks"
         $targetHooksDir = Join-Path $projectRoot ".git\hooks"
-        $hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg")
+        $hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg", "post-merge", "post-checkout")
         $overlayFailed = $false
 
         if (Test-Path $sourceHooksDir) {

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import runpy
+from pathlib import Path
 
 import pytest
+
+# tests/backend/unit/test_entrypoints_main_run.py -> repository root.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+RUN_PY = REPO_ROOT / "run.py"
 
 
 def test_run_py_imports_main_function(monkeypatch):
@@ -16,7 +21,7 @@ def test_run_py_imports_main_function(monkeypatch):
     # run.py delegates to collab.__main__.main
     monkeypatch.setattr("collab.__main__.main", _fake_main)
 
-    module_globals = runpy.run_path("run.py")
+    module_globals = runpy.run_path(str(RUN_PY))
     assert "main" in module_globals
 
     module_globals["main"]()
@@ -31,12 +36,25 @@ def test_run_py_dunder_main_executes(monkeypatch):
 
     # run.py delegates to collab.__main__.main
     monkeypatch.setattr("collab.__main__.main", _fake_main)
-    runpy.run_path("run.py", run_name="__main__")
+    runpy.run_path(str(RUN_PY), run_name="__main__")
     assert called["n"] == 1
 
 
 def test_collab_main_module_executes_as_script(monkeypatch):
+    # Mock the lazily-imported LockClient so daemon-status resolves to a fixed
+    # value, making the script's exit code deterministic (1 = not running).
+    import collab.lock_client as lc
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def daemon_status(self):
+            return False
+
+    monkeypatch.setattr(lc, "LockClient", _Client)
     monkeypatch.setattr("sys.argv", ["python", "daemon-status"])
+
     # Ensure package 'collab' is not present in sys.modules to avoid
     # runpy runtime-warning about pre-imported package state.
     import sys as _sys
@@ -49,14 +67,22 @@ def test_collab_main_module_executes_as_script(monkeypatch):
         if saved is not None:
             _sys.modules["collab"] = saved
 
-    assert exc.value.code in (0, 1)
+    # daemon_status() returned False -> daemon-status command exits with 1.
+    assert exc.value.code == 1
 
 
 def test_collab_main_success_path(monkeypatch):
     import collab.main as main_mod
 
-    monkeypatch.setattr(main_mod, "_run_cli", lambda: None)
+    # Spy on _run_cli to prove main() invokes it exactly once on the happy path.
+    called = {"n": 0}
+
+    def _spy():
+        called["n"] += 1
+
+    monkeypatch.setattr(main_mod, "_run_cli", _spy)
     main_mod.main()
+    assert called["n"] == 1
 
 
 def test_collab_main_exception_path(monkeypatch, capsys):

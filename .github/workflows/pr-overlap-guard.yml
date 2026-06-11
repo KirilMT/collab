@@ -1,0 +1,44 @@
+---
+name: "PR Overlap Guard"
+
+# Server-side counterpart to the client-side pre-push overlap check.
+# Fails when this PR's changed files overlap another OPEN PR targeting the
+# same base branch (likely merge conflict at merge time). Add this check to
+# the branch-protection "required status checks" to make it un-bypassable.
+
+"on":
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch: {}
+
+concurrency:
+  group: >-
+    pr-overlap-${{ github.workflow }}-${{
+      github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  overlap:
+    name: Cross-PR file overlap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check cross-PR file overlap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set to "1" to ignore draft PRs when computing overlap.
+          COLLAB_PR_OVERLAP_SKIP_DRAFTS: "0"
+        run: python -m collab.pr_overlap

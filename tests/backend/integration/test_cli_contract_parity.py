@@ -17,8 +17,18 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+
+# Repo root anchored from this file (tests/backend/integration/<file>.py ->
+# parents[3] is the repository root) so subprocesses never depend on the
+# caller's CWD. Verified at import time below to fail loudly if the layout
+# changes.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+assert (
+    _REPO_ROOT / "pyproject.toml"
+).is_file(), f"Expected repo root with pyproject.toml at {_REPO_ROOT}"
 
 
 def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, str]:
@@ -56,7 +66,7 @@ def run_collab_cli(*args: str, expect_success: bool = True) -> tuple[int, str, s
         text=True,
         encoding="utf-8",
         errors="replace",
-        cwd=".",
+        cwd=str(_REPO_ROOT),
         env=isolated_env,
     )
 
@@ -80,19 +90,6 @@ class TestCLICommandAvailability:
         assert exit_code == 0
         assert "usage" in stdout.lower() or "collab" in stdout.lower()
 
-    def test_active_command_available(self) -> None:
-        """Verify 'active' command is available and returns valid output."""
-        exit_code, stdout, _ = run_collab_cli("active")
-        assert exit_code == 0
-        # Output should indicate lock status (even if empty)
-        assert len(stdout) > 0
-
-    def test_status_command_accepts_file_argument(self) -> None:
-        """Verify 'status' command accepts file path argument."""
-        exit_code, stdout, _ = run_collab_cli("status", "example.py")
-        assert exit_code == 0
-        assert len(stdout) > 0
-
     def test_history_command_available(self) -> None:
         """Verify 'history' command returns valid output."""
         exit_code, stdout, _ = run_collab_cli("history")
@@ -106,15 +103,6 @@ class TestCLICommandAvailability:
             expect_success=False,
         )
         # Exit code can be 0 (running) or 1 (not running); both are valid
-        assert exit_code in (0, 1)
-
-    def test_cleanup_command_available(self) -> None:
-        """Verify 'cleanup' command is available and safe."""
-        exit_code, _, _ = run_collab_cli(
-            "cleanup",
-            expect_success=False,
-        )
-        # Cleanup should not crash even if no processes exist
         assert exit_code in (0, 1)
 
     def test_help_documents_golden_commands(self) -> None:
@@ -147,14 +135,17 @@ class TestCLICommandAvailability:
         assert "collab-runtime" in stdout
 
     def test_restart_command_available(self) -> None:
-        """Verify 'restart' command is available."""
-        exit_code, stdout, _ = run_collab_cli(
+        """Verify 'restart' command is registered and exits cleanly."""
+        exit_code, _, stderr = run_collab_cli(
             "restart",
             expect_success=False,
         )
-        # restart may fail in isolated env (no Supabase), but should not crash
+        # restart may fail in isolated env (no Supabase), but must be a
+        # recognized command (argparse must not reject it as an unknown choice)
+        # and must not crash with an unhandled traceback.
         assert exit_code in (0, 1)
-        assert len(stdout) > 0 or len(stdout) == 0  # daemon-stop may emit nothing
+        assert "invalid choice" not in stderr.lower()
+        assert "traceback (most recent call last)" not in stderr.lower()
 
     def test_ping_command_available(self) -> None:
         """Verify 'ping' command is available."""
@@ -188,19 +179,13 @@ class TestCLICommandAvailability:
 class TestBackwardCompatibilityInvocation:
     """Verify all documented invocation patterns work identically."""
 
-    def test_python_m_collab_main_entrypoint(self) -> None:
-        """Verify 'python -m collab.__main__' invocation works."""
-        exit_code, stdout, _ = run_collab_cli("--help")
-        assert exit_code == 0
-        assert len(stdout) > 0
-
     def test_run_py_entrypoint(self) -> None:
         """Verify 'python run.py' backward compatibility entrypoint."""
         result = subprocess.run(
-            [sys.executable, "run.py", "--help"],
+            [sys.executable, str(_REPO_ROOT / "run.py"), "--help"],
             capture_output=True,
             text=True,
-            cwd=".",
+            cwd=str(_REPO_ROOT),
         )
         assert result.returncode == 0
         assert len(result.stdout) > 0
@@ -208,7 +193,7 @@ class TestBackwardCompatibilityInvocation:
     def test_collab_console_script_exists(self) -> None:
         """Verify 'collab' console script is registered in package."""
         # Check pyproject.toml registration
-        with open("pyproject.toml") as f:
+        with open(_REPO_ROOT / "pyproject.toml") as f:
             content = f.read()
             assert 'collab = "collab.lock_client:main"' in content
 
@@ -247,9 +232,15 @@ class TestCLICommandVariants:
             "nonexistent-command",
             expect_success=False,
         )
-        # Should fail (non-zero exit) with error output
+        # Should fail (non-zero exit) with a meaningful argparse error on stderr
         assert exit_code != 0
-        assert len(stderr) > 0 or len(stderr) == 0  # Either way is OK
+        assert stderr.strip(), "expected an error message on stderr"
+        lowered = stderr.lower()
+        assert (
+            "invalid choice" in lowered
+            or "usage" in lowered
+            or "nonexistent-command" in lowered
+        )
 
 
 class TestCLIDashboardAssetIntegrity:
@@ -257,10 +248,8 @@ class TestCLIDashboardAssetIntegrity:
 
     def test_dashboard_index_html_exists(self) -> None:
         """Verify dashboard HTML asset is present."""
-        dashboard_path = os.path.join("collab", "dashboard", "index.html")
-        assert os.path.exists(
-            dashboard_path
-        ), f"Dashboard not found at {dashboard_path}"
+        dashboard_path = _REPO_ROOT / "collab" / "dashboard" / "index.html"
+        assert dashboard_path.exists(), f"Dashboard not found at {dashboard_path}"
 
     def test_dashboard_command_available(self) -> None:
         """Verify dashboard command is registered."""

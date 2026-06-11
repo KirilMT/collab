@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from . import agent_identity, platform_probe, safe_subprocess
+from . import agent_identity, overlap, platform_probe, safe_subprocess
 from .errors import (
     ConfigurationError,
     DaemonStartError,
@@ -1320,6 +1320,96 @@ class LockClient:
                     count += 1
         return count
 
+    def release_all_except(self, keep_paths: List[str], branch: Optional[str]) -> int:
+        """Release this developer's locks, retaining ``keep_paths`` as PR claims.
+
+        Used by the pre-push hook when ``COLLAB_PR_CLAIMS=1``: the files still part of
+        the pushed branch are promoted to persistent claims (tied to ``branch``)
+        instead of being released, so cross-developer edit-time protection extends to
+        the open PR. All other locks are released as usual. Returns the number of
+        locks released (claims retained are not counted).
+
+        Degrades gracefully: if ``keep_paths`` is empty, or the claim RPC is
+        unavailable (migration not applied) or errors, this falls back to the ordinary
+        :meth:`release_all` so behavior is never worse than today.
+        """
+        if getattr(self, "_is_ephemeral", False):
+            return 0
+
+        norm_keep = sorted({self._normalize_file_path(p) for p in keep_paths if p})
+        if not norm_keep:
+            return self.release_all()
+
+        try:
+            client = self._require_client()
+            res = _retry_on_network_error(
+                lambda: client.rpc(
+                    "release_all_except",
+                    {
+                        "p_developer_id": self.developer_id,
+                        "p_keep_paths": norm_keep,
+                        "p_branch": branch or "",
+                    },
+                ).execute()
+            )
+            _, data, error = self._parse_response(res)
+            if error:
+                raise RuntimeError(str(error))
+        except Exception as exc:
+            logger.warning(
+                "PR-claim retention unavailable (%s); releasing all locks instead",
+                exc,
+            )
+            return self.release_all()
+
+        count = data[0] if isinstance(data, list) and data else data
+        if isinstance(count, bool):
+            return 0
+        if isinstance(count, int):
+            return count
+        if isinstance(count, str) and count.strip().lstrip("-").isdigit():
+            return int(count)
+        return 0
+
+    def reconcile_pr_claims(self) -> int:
+        """Release this developer's PR claims whose branch is merged or gone.
+
+        Inert unless ``COLLAB_PR_CLAIMS=1``. Forces a pruning fetch and checks each
+        claim's branch via git (see :func:`overlap.stale_claim_branches`); a never-
+        running owner is still covered by the DB-side ``release_stale_claims`` expiry.
+        Returns the number of claims released.
+        """
+        if not overlap.is_pr_claims_enabled():
+            return 0
+        try:
+            locks = self.active()
+        except LockServiceUnavailableError as exc:
+            logger.debug("reconcile_pr_claims skipped — lock service down: %s", exc)
+            return 0
+
+        claims = [
+            lk
+            for lk in locks
+            if lk.get("developer_id") == self.developer_id and lk.get("is_pr_claim")
+        ]
+        if not claims:
+            return 0
+
+        branches = {
+            str(lk.get("claim_branch")) for lk in claims if lk.get("claim_branch")
+        }
+        stale = overlap.stale_claim_branches(_PROJECT_ROOT, list(branches))
+        if not stale:
+            return 0
+
+        released = 0
+        for lk in claims:
+            if lk.get("claim_branch") in stale:
+                file_path = lk.get("file_path", "")
+                if file_path and self._release_developer_scope(file_path):
+                    released += 1
+        return released
+
     def force_release(self, file_path: str) -> Tuple[bool, str]:
         """Force-release a lock on file_path.
 
@@ -1421,6 +1511,34 @@ class LockClient:
         except Exception as e:
             logger.error("Failed to force_release_all: %s", e)
             return 0
+
+    def _warn_if_non_editable(self) -> None:
+        """Emit a warning if the package is installed non-editably in a source tree."""
+        # Only warn if we appear to be in a source checkout of collab itself
+        if not os.path.exists(os.path.join(_PROJECT_ROOT, "collab", "lock_client.py")):
+            return
+
+        is_editable = False
+        try:
+            import importlib.metadata
+
+            dist = importlib.metadata.distribution("collab-runtime")
+            data = dist.read_text("direct_url.json")
+            if data:
+                is_editable = (
+                    json.loads(data).get("dir_info", {}).get("editable", False)
+                )
+        except Exception:
+            pass
+
+        if not is_editable:
+            warning_msg = (
+                "WARNING: collab is installed as a non-editable package. "
+                "New dashboard assets and Python changes may not be visible. "
+                "Run: pip install -e .   (or: scripts/setup.ps1 -Force)"
+            )
+            logger.warning(warning_msg)
+            print(warning_msg)
 
     @staticmethod
     def _format_acquire_failure(message: str) -> str:
@@ -1618,6 +1736,7 @@ class LockClient:
         self, interval: int = 5, timeout_mins: int = 0, open_dashboard: bool = False
     ) -> None:
         """Start the watcher as a background daemon process."""
+        self._warn_if_non_editable()
         pid = self._read_pid()
         if pid and self._is_process_alive(pid):
             # Check if the watcher is orphaned (parent process dead)

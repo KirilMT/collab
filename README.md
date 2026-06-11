@@ -77,18 +77,24 @@ The setup script automatically:
 After setup, your `.env` at the project root is ready to use. The team Supabase URL and
 anon key come pre-configured from `.env.example`:
 
-| Variable                    | Description                                                         |
-| --------------------------- | ------------------------------------------------------------------- |
-| `SUPABASE_URL`              | Your Supabase project URL (pre-configured from `.env.example`)      |
-| `SUPABASE_ANON_KEY`         | Anonymous/public key (pre-configured; safe to commit — see below)   |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (**required** for dashboard force-release)         |
-| `LOCK_STRICT`               | If `1`, git hooks block on lock errors. Default `0` (warn only)     |
-| `COLLAB_AGENT_ID`           | Optional stable id for an AI agent session (multi-agent locking)    |
-| `COLLAB_AGENT_LABEL`        | Optional task label shown on the dashboard (e.g. `refactor-auth`)   |
-| `COLLAB_AGENT_KIND`         | Optional AI runtime for the dashboard icon (auto-detected)          |
-| `COLLAB_AGENT_MODE`         | Set to `1` to auto-generate/persist an agent id when unset          |
-| `COLLAB_AGENT_HOOKS`        | Set to `1` to enable the IDE edit hook that auto-claims agent edits |
-| `COLLAB_WATCHER_AGENT_ID`   | Opt in to a dedicated agent watcher (default: watcher = human)      |
+| Variable                    | Description                                                           |
+| --------------------------- | --------------------------------------------------------------------- |
+| `SUPABASE_URL`              | Your Supabase project URL (pre-configured from `.env.example`)        |
+| `SUPABASE_ANON_KEY`         | Anonymous/public key (pre-configured; safe to commit — see below)     |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (**required** for dashboard force-release)           |
+| `LOCK_STRICT`               | If `1`, git hooks block on lock errors. Default `0` (warn only)       |
+| `COLLAB_AGENT_ID`           | Optional stable id for an AI agent session (multi-agent locking)      |
+| `COLLAB_AGENT_LABEL`        | Optional task label shown on the dashboard (e.g. `refactor-auth`)     |
+| `COLLAB_AGENT_KIND`         | Optional AI runtime for the dashboard icon (auto-detected)            |
+| `COLLAB_AGENT_MODE`         | Set to `1` to auto-generate/persist an agent id when unset            |
+| `COLLAB_AGENT_HOOKS`        | Set to `1` to enable the IDE edit hook that auto-claims agent edits   |
+| `COLLAB_WATCHER_AGENT_ID`   | Opt in to a dedicated agent watcher (default: watcher = human)        |
+| `COLLAB_OVERLAP_STRICT`     | If `1`, git push blocks on cross-branch overlap (implies the check)   |
+| `COLLAB_OVERLAP_CHECK`      | If `0`, disable overlap warnings entirely (ignored when strict)       |
+| `COLLAB_OVERLAP_FETCH`      | `auto` (default: fetch only in strict), or `1`/`0` to force/skip      |
+| `COLLAB_OVERLAP_LINE_LEVEL` | If `0`, use file-level overlap instead of `git merge-tree` (line)     |
+| `COLLAB_OVERLAP_REMOTE`     | Remote to compare against (default: auto-detected, e.g. `origin`)     |
+| `COLLAB_PR_CLAIMS`          | If `1`, keep a pushed branch's files claimed until merged (see below) |
 
 > **Important:** `SUPABASE_SERVICE_ROLE_KEY` is needed for the dashboard's Force Release button.
 > Without it, only your own locks can be released. Obtain it from a maintainer — **never commit it**.
@@ -479,9 +485,17 @@ collab daemon-status
 
 ### Conflict Prevention
 
-- File locks use a unique key on `file_path`
-- Only one developer can hold a lock per file
-- Merge conflicts prevented by design
+- File locks use a unique key on `file_path`.
+- Only one developer can hold a lock per file simultaneously.
+- **Lock Lifecycle**: Locks are held during local editing and committed changes. They are automatically released after a successful `git push` via the pre-push hook.
+- **Cross-Branch Overlap (client)**: By default, Collab warns if a change you are pushing would conflict with another unmerged branch. To **block** the push in this case, set `COLLAB_OVERLAP_STRICT=1`.
+  - **Line-level accuracy**: overlap is confirmed with a real in-memory merge (`git merge-tree`), so two branches editing **different regions** of the same file are not flagged. On git older than 2.38 it falls back to file-level. Force file-level with `COLLAB_OVERLAP_LINE_LEVEL=0`.
+  - **Remote-aware**: the remote to compare against is auto-detected (the push target, the branch upstream, `origin`, or the sole remote); override with `COLLAB_OVERLAP_REMOTE`.
+  - **Fresh state**: in strict mode the pre-push hook runs `git fetch` first so branches pushed from **other** clones are visible. This is **fail-closed** — if the fetch or check cannot complete, the push is blocked. `COLLAB_OVERLAP_FETCH` is `auto` by default (fetch only in strict, to avoid adding a fetch to every advisory push); set `1`/`0` to force or skip.
+  - Branches you are stacked on top of (ancestors of `HEAD`) are not flagged.
+  - When strict mode blocks you: rebase onto / coordinate merge order with the other branch, or override for a single push with `COLLAB_OVERLAP_STRICT=0` (last resort: `git push --no-verify`).
+- **Cross-PR Overlap (server, bulletproof)**: The [`PR Overlap Guard`](.github/workflows/pr-overlap-guard.yml) workflow fails a PR check when its changed files overlap another open PR targeting the same base. Because git hooks can be bypassed with `--no-verify`, add this check to your branch-protection **required status checks** for enforcement that cannot be skipped.
+- **Edit-time protection across open PRs (`COLLAB_PR_CLAIMS=1`, opt-in)**: Normally locks are released on push. With this enabled, the files changed on the pushed branch are instead **retained as persistent claims** until that branch is merged or deleted on the remote. Because a claim is an ordinary lock, another developer who edits those files gets the **existing edit-time warning** (watcher) and **commit block** (pre-commit) immediately — not a surprise conflict at merge time. Lifecycle: claim on push → released by the client reconciler when the branch is merged/deleted → guaranteed `release_stale_claims` expiry (default 30 days) as a safety net. **Requires the Supabase migration** (re-run [`supabase/schema.sql`](supabase/schema.sql); the columns/RPCs are added idempotently, and the runtime degrades to today's behavior if absent). Known limits: one owner per file (last push wins if you claim the same file from two branches); squash-merge relies on "delete branch on merge"; a PR closed without deleting its branch falls to the expiry.
 
 ### Dashboard
 

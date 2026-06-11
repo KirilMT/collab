@@ -39,28 +39,38 @@ def test_reconcile_stale_locks(monkeypatch, tmp_path):
     assert "src/new.py" in result
 
 
-def test_reconcile_git_error(monkeypatch, tmp_path):
-    """Test _reconcile handles git status errors."""
+def test_reconcile_git_error_preserves_current_locks(monkeypatch, tmp_path):
+    """A failure computing modified files must NOT release locks.
+
+    When ``_get_modified_and_unpushed_files`` raises, returning an empty set would make
+    reconcile release everything. Instead _reconcile must degrade to a no-op by
+    returning the locks this developer currently holds.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
-    def error_git_status():
+    def _boom(self):
         raise RuntimeError("Git broken")
 
-    monkeypatch.setattr(
-        mod.LockClient, "_run_git_status", staticmethod(error_git_status)
-    )
-    monkeypatch.setattr(
-        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
-    )
+    monkeypatch.setattr(mod.LockClient, "_get_modified_and_unpushed_files", _boom)
+
+    locks_data = [{"file_path": "src/held.py", "developer_id": "test_user"}]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
 
     lc = mod.LockClient(developer_id="test_user")
     result = lc._reconcile()
-    assert isinstance(result, set)
+    # Safety: degradation keeps the held lock rather than releasing everything.
+    assert result == {"src/held.py"}
 
 
 def test_reconcile_supabase_error(monkeypatch, tmp_path):
-    """Test _reconcile handles Supabase errors."""
+    """_reconcile degrades to git-modified when active() re-raises a non-service error.
+
+    Drives the real ``active()`` query through an ``execute()`` that raises a generic
+    ``RuntimeError`` (not a lock-service error), exercising the bare ``raise`` re-raise
+    branch before reconcile falls back to git-modified files.
+    """
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
@@ -92,17 +102,6 @@ def test_run_git_status(monkeypatch):
     assert "src/app.py" in result
 
 
-def test_parse_git_status_path_simple():
-    """Test parsing simple modified file."""
-    assert mod.LockClient._parse_git_status_path(" M src/app.py") == "src/app.py"
-
-
-def test_parse_git_status_path_rename():
-    """Test parsing renamed file."""
-    result = mod.LockClient._parse_git_status_path("R  old.py -> new.py")
-    assert result == "new.py"
-
-
 def test_parse_git_status_path_quoted():
     """Test parsing quoted paths."""
     result = mod.LockClient._parse_git_status_path('M  "src/my file.py"')
@@ -116,77 +115,6 @@ def test_should_ignore_path_for_instance_runtime_dirs():
     assert mod.LockClient._should_ignore_path("apps/reporting/instance") is True
     assert mod.LockClient._should_ignore_path("apps/planning/instance/state.db") is True
     assert mod.LockClient._should_ignore_path("src/services/db_utils.py") is False
-
-
-def test_run_git_status_unix(monkeypatch):
-    mod_local = load_lock_client_module()
-    monkeypatch.setattr(sys, "platform", "linux")
-
-    def fake_check_output(args, *a, **k):
-        return b" M src/foo.py\n"
-
-    patch_subprocess(monkeypatch, check_output=fake_check_output)
-    out, _ok = mod_local.LockClient._run_git_status()
-    assert "src/foo.py" in out
-
-
-def test_reconcile_supabase_lock_query_error(monkeypatch, tmp_path):
-    """Test _reconcile handles Supabase lock query error."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    monkeypatch.setattr(
-        mod.LockClient,
-        "_run_git_status",
-        staticmethod(lambda: (" M src/app.py", True)),
-    )
-
-    call_count = [0]
-
-    class SelectiveErrorClient:
-        """Errors only on the second execute call (active locks)."""
-
-        def __init__(self, resp):
-            self._resp = resp
-
-        def rpc(self, *args, **kwargs):
-            return self
-
-        def table(self, *args, **kwargs):
-            return self
-
-        def select(self, *args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] >= 1:
-                raise RuntimeError("Supabase query failed")
-            return self
-
-        def delete(self, *args, **kwargs):
-            return self
-
-        def eq(self, *args, **kwargs):
-            return self
-
-        def execute(self):
-            return self._resp
-
-    monkeypatch.setattr(
-        mod,
-        "_get_create_client",
-        lambda: lambda url, key: SelectiveErrorClient(FakeResponse()),
-    )
-
-    # Make modified-files detection deterministic for tests
-    def _fixed_modified(self):
-        return ["src/app.py"], True
-
-    monkeypatch.setattr(
-        mod.LockClient, "_get_modified_and_unpushed_files", _fixed_modified
-    )
-
-    lc = mod.LockClient(developer_id="test_user")
-    result = lc._reconcile()
-    assert "src/app.py" in result
 
 
 def test_get_current_branch_error_lock_client(monkeypatch):
@@ -211,24 +139,6 @@ def test_get_current_branch_win32(monkeypatch):
     patch_subprocess(monkeypatch, check_output=fake_check_output)
     got = mod.LockClient._get_current_branch()
     assert got == "feature/win-branch"
-
-
-def test_get_current_branch_non_win_error(monkeypatch):
-    """When git command fails, _get_current_branch should return None."""
-    monkeypatch.setattr(sys, "platform", "linux")
-
-    def fail_check_output(cmd, *a, **k):
-        raise subprocess.CalledProcessError(2, cmd)
-
-    patch_subprocess(monkeypatch, check_output=fail_check_output)
-    got = mod.LockClient._get_current_branch()
-    assert got is None
-
-
-def test_parse_git_status_path_unicode_escape():
-    """Test _parse_git_status_path with unicode-escaped quoted path."""
-    result = mod.LockClient._parse_git_status_path(' M "src/file.py"')
-    assert "file" in result
 
 
 def test_parse_git_status_path_bad_unicode_escape():

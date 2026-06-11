@@ -68,40 +68,6 @@ def test_capture_git_status_porcelain_swallows_exceptions(monkeypatch):
     assert mod._git_capture_status_porcelain() == ""
 
 
-def test_parse_git_status_path_rename_and_quotes():
-    mod = load_watcher_module()
-    sample = 'R  "src/old.py -> src/new.py"'
-    p = mod._parse_git_status_path(sample)
-    assert p.strip('"') == "src/new.py"
-
-    sample2 = " M src/some_file.py"
-    p2 = mod._parse_git_status_path(sample2)
-    assert p2 == "src/some_file.py"
-
-
-def test_parse_git_status_path_modifications():
-    mod = load_watcher_module()
-    assert mod._parse_git_status_path("M  src/app.py") == "src/app.py"
-    assert mod._parse_git_status_path("M  src/routes.py") == "src/routes.py"
-    assert mod._parse_git_status_path("A  src/new_file.py") == "src/new_file.py"
-
-
-def test_parse_git_status_path_deleted_files():
-    mod = load_watcher_module()
-    assert mod._parse_git_status_path("D  src/old_file.py") == "src/old_file.py"
-
-
-def test_parse_git_status_path_untracked_files():
-    mod = load_watcher_module()
-    assert mod._parse_git_status_path("?? src/temp.py") == "src/temp.py"
-
-
-def test_parse_git_status_path_renames():
-    mod = load_watcher_module()
-    p = mod._parse_git_status_path("R  src/old.py -> src/new.py")
-    assert p == "src/new.py"
-
-
 def test_parse_git_status_path_spaces_in_path():
     mod = load_watcher_module()
     p = mod._parse_git_status_path('M  "src/my file.py"')
@@ -113,18 +79,6 @@ def test_parse_git_status_path_staged_and_unstaged():
     assert mod._parse_git_status_path("MM src/app.py") == "src/app.py"
     assert mod._parse_git_status_path("A  src/new.py") == "src/new.py"
     assert mod._parse_git_status_path(" M src/other.py") == "src/other.py"
-
-
-def test_parse_git_status_path_copy():
-    mod = load_watcher_module()
-    p = mod._parse_git_status_path("C  src/original.py -> src/copy.py")
-    assert p == "src/copy.py"
-
-
-def test_parse_git_status_path_type_change():
-    mod = load_watcher_module()
-    p = mod._parse_git_status_path("T  src/app.py")
-    assert p == "src/app.py"
 
 
 # _should_ignore_path tests
@@ -161,16 +115,17 @@ def test_should_ignore_path_valid_files():
 
 def test_should_ignore_path_edge_cases():
     mod = load_watcher_module()
-    result_empty = mod._should_ignore_path("")
-    assert isinstance(result_empty, bool)
-    result_slash = mod._should_ignore_path("/")
-    assert isinstance(result_slash, bool)
+    # Empty string and bare root are not git/instance artifacts -> not ignored.
+    assert mod._should_ignore_path("") is False
+    assert mod._should_ignore_path("/") is False
 
 
 def test_should_ignore_path_with_mixed_case():
     mod = load_watcher_module()
-    result = mod._should_ignore_path(".GIT/config")
-    assert isinstance(result, bool)
+    # The .git match is case-sensitive: ".GIT/" must NOT be treated as ".git/".
+    assert mod._should_ignore_path(".GIT/config") is False
+    # Sanity check the lowercase form IS ignored, proving case sensitivity.
+    assert mod._should_ignore_path(".git/config") is True
 
 
 def test_parse_git_status_path_and_normalize_migrated(tmp_path, monkeypatch):

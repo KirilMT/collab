@@ -126,7 +126,7 @@ python scripts/validate_code.py --frontend
 
 Threshold policy:
 
-- Backend coverage floor: 85 percent.
+- Backend coverage floor: 92 percent.
 - Backend diff coverage floor: 95 percent for changed lines.
 - Frontend checks hard-fail on ESLint, Jest, and Playwright (no soft-skip on failure).
 

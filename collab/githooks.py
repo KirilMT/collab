@@ -27,7 +27,14 @@ from typing import Optional
 
 from collab import overlap, safe_subprocess
 
-HOOK_NAMES = ("pre-commit", "post-commit", "pre-push", "commit-msg")
+HOOK_NAMES = (
+    "pre-commit",
+    "post-commit",
+    "pre-push",
+    "commit-msg",
+    "post-merge",
+    "post-checkout",
+)
 _TEMPLATE_PACKAGE = "collab"
 _TEMPLATE_DIR = "hook_templates"
 
@@ -187,14 +194,37 @@ def acquire_staged() -> int:
     return 1
 
 
-def warn_cross_branch_overlap() -> int:
-    """Print cross-branch overlap warnings; always returns 0 (never blocks)."""
-    root = _git_toplevel()
-    return overlap.warn_cross_branch_overlap(root, emit=_hook_log)
+def warn_cross_branch_overlap(remote: Optional[str] = None) -> int:
+    """Print cross-branch overlap warnings; returns non-zero on strict overlap.
+
+    ``remote`` is the push target git passes to the pre-push hook (``$1``); it lets
+    the check compare against the correct remote instead of assuming ``origin``.
+
+    Returns ``overlap.EXIT_OVERLAP``/``EXIT_ERROR`` (non-zero) when strict mode
+    must block the push, otherwise ``overlap.EXIT_OK``. Resolving the repo root is
+    itself guarded so a failure there cannot crash the hook with a traceback: in
+    strict mode it fails closed, otherwise it fails open.
+    """
+    try:
+        root = _git_toplevel()
+    except Exception as exc:  # pragma: no cover - defensive
+        _hook_log(f"[collab] Warning: could not resolve repo root: {exc}")
+        return (
+            overlap.EXIT_ERROR
+            if overlap.is_overlap_strict_enabled()
+            else overlap.EXIT_OK
+        )
+    return overlap.warn_cross_branch_overlap(root, emit=_hook_log, remote=remote)
 
 
 def release_all() -> int:
-    """Release all locks held by this developer; used by the pre-push hook."""
+    """Release locks held by this developer; used by the pre-push hook.
+
+    Default behavior releases every lock (work is "in progress" only while local). When
+    ``COLLAB_PR_CLAIMS=1``, the files changed on the pushed branch are instead retained
+    as persistent PR claims so cross-developer edit-time protection extends to the open
+    PR; everything else is released as usual.
+    """
     root = _git_toplevel()
     _load_env(root)
 
@@ -202,13 +232,42 @@ def release_all() -> int:
 
     try:
         client = LockClient()
-        released = client.release_all()
+        if overlap.is_pr_claims_enabled():
+            released = _release_retaining_pr_claims(client, root)
+        else:
+            released = client.release_all()
     except Exception as exc:
         _hook_log(f"[collab] Warning: lock cleanup failed: {exc}")
         return 0
 
     _hook_log(f"[collab] Released {released} lock(s).")
     return 0
+
+
+def _release_retaining_pr_claims(client, root: Path) -> int:
+    """Reconcile stale claims, then retain the pushed branch's files as claims.
+
+    NOTE: the pre-push hook runs before the push transport completes, so claims may
+    briefly exist for a branch that did not reach the remote if the push then fails;
+    the next reconcile (branch-gone) or the DB-side expiry releases those.
+    """
+    try:
+        stale = client.reconcile_pr_claims()
+        if stale:
+            _hook_log(f"[collab] Released {stale} stale PR claim(s).")
+    except Exception as exc:
+        _hook_log(f"[collab] Warning: PR-claim reconcile failed: {exc}")
+
+    branch, changed = overlap.head_changed_files(root)
+    if not changed:
+        # No resolvable base / no changed files -> behave exactly as today.
+        return int(client.release_all())
+
+    _hook_log(
+        f"[collab] Retaining {len(changed)} file(s) as PR claim(s) for "
+        f"branch '{branch or '?'}' (COLLAB_PR_CLAIMS=1)."
+    )
+    return int(client.release_all_except(changed, branch))
 
 
 def _read_template(name: str) -> str:
@@ -302,7 +361,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if command == "release-all":
         return release_all()
     if command == "check-overlap":
-        return warn_cross_branch_overlap()
+        # Optional positional arg: the push remote git passes to pre-push ($1).
+        remote = args[1] if len(args) > 1 and not args[1].startswith("-") else None
+        return warn_cross_branch_overlap(remote)
     if command == "init":
         force = "--force" in args[1:]
         summary = install_hooks(force=force)

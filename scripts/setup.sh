@@ -111,6 +111,14 @@ setup_collab_remove_pip_orphans() {
     if [ -z "$site_pkgs" ] || [ ! -d "$site_pkgs" ]; then
         return 0
     fi
+
+    # Remove stale non-editable copy that takes priority over .pth files
+    if [ -d "$site_pkgs/collab" ]; then
+        echo "   Removing stale non-editable copy: collab/..." >&2
+        rm -rf "$site_pkgs/collab" 2>/dev/null || true
+    fi
+
+    # Remove pip rename orphans (~ollab_runtime-*.dist-info, ~collab-*.dist-info)
     for orphan in "$site_pkgs"/~ollab* "$site_pkgs"/~collab*; do
         if [ -e "$orphan" ]; then
             echo "   Removing broken pip artifact: $(basename "$orphan")..." >&2
@@ -132,16 +140,7 @@ setup_collab_install_healthy() {
         return 1
     fi
     if [ "$expect_editable" = true ]; then
-        if ! PROJECT_ROOT="$PROJECT_ROOT" "$VENV_PYTHON" -c '
-import os
-import collab.lock_client as mod
-from pathlib import Path
-
-root = Path(os.environ["PROJECT_ROOT"]).resolve()
-module_path = Path(mod.__file__).resolve()
-if not str(module_path).startswith(str(root)):
-    raise SystemExit(1)
-' 2>/dev/null; then
+        if ! "$VENV_PYTHON" -c "import json, importlib.metadata; dist = importlib.metadata.distribution('collab-runtime'); data = dist.read_text('direct_url.json'); exit(0 if data and json.loads(data).get('dir_info', {}).get('editable', False) else 1)" 2>/dev/null; then
             return 1
         fi
     fi
@@ -427,6 +426,7 @@ if command -v pre-commit >/dev/null 2>&1; then
     if [ $HOOK_INSTALL_FAILED -eq 0 ]; then
         print_success "Git hooks installed"
         if [ -f "$PROJECT_ROOT/scripts/install_hooks.sh" ]; then
+            # Ensure post-merge and post-checkout are also handled by the overlay
             if sh "$PROJECT_ROOT/scripts/install_hooks.sh" >/dev/null 2>&1; then
                 print_success "Collab hook overlay installed"
             else

@@ -338,8 +338,94 @@ def test_release_all_success(monkeypatch, tmp_path):
     assert "Released 3 lock(s)." in err.getvalue()
 
 
+def test_release_all_retains_pr_claims_when_enabled(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "1")
+    calls: dict = {}
+
+    class _Client:
+        def reconcile_pr_claims(self):
+            calls["reconcile"] = True
+            return 0
+
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 0
+
+        def release_all_except(self, keep, branch):
+            calls["except"] = (tuple(keep), branch)
+            return 2
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr(
+        githooks.overlap,
+        "head_changed_files",
+        lambda root: ("feat/x", ["a.py", "b.py"]),
+    )
+    err = io.StringIO()
+    with redirect_stderr(err):
+        assert githooks.release_all() == 0
+    assert calls.get("reconcile") is True
+    assert calls.get("except") == (("a.py", "b.py"), "feat/x")
+    assert "release_all" not in calls  # claims path, not plain release
+    assert "Released 2 lock(s)." in err.getvalue()
+
+
+def test_release_all_falls_back_when_no_changed_files(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "1")
+    calls: dict = {}
+
+    class _Client:
+        def reconcile_pr_claims(self):
+            return 0
+
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 4
+
+        def release_all_except(self, keep, branch):
+            calls["except"] = True
+            return 0
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr(
+        githooks.overlap, "head_changed_files", lambda root: ("feat/x", [])
+    )
+    with redirect_stderr(io.StringIO()):
+        assert githooks.release_all() == 0
+    assert calls.get("release_all") is True
+    assert "except" not in calls
+
+
+def test_release_all_disabled_uses_plain_release(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("COLLAB_PR_CLAIMS", raising=False)
+    calls: dict = {}
+
+    class _Client:
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 1
+
+        def release_all_except(self, *a):
+            calls["except"] = True
+            return 0
+
+        def reconcile_pr_claims(self):
+            calls["reconcile"] = True
+            return 0
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    with redirect_stderr(io.StringIO()):
+        assert githooks.release_all() == 0
+    assert calls.get("release_all") is True
+    assert "except" not in calls and "reconcile" not in calls
+
+
 def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_OVERLAP_FETCH", "0")
     monkeypatch.setattr(
         githooks.overlap,
         "detect_cross_branch_overlaps",
@@ -350,13 +436,69 @@ def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
     err = io.StringIO()
     with redirect_stderr(err):
         assert githooks.warn_cross_branch_overlap() == 0
-    assert "Cross-branch overlap" in err.getvalue()
+    assert "cross-branch overlap" in err.getvalue().lower()
 
 
 def test_main_check_overlap_command(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
-    monkeypatch.setattr(githooks, "warn_cross_branch_overlap", lambda: 0)
+    seen = {}
+
+    def fake(remote=None):
+        seen["remote"] = remote
+        return 0
+
+    monkeypatch.setattr(githooks, "warn_cross_branch_overlap", fake)
     assert githooks.main(["check-overlap"]) == 0
+    assert seen["remote"] is None
+    # The push remote ($1) is forwarded through to the overlap check.
+    assert githooks.main(["check-overlap", "upstream"]) == 0
+    assert seen["remote"] == "upstream"
+
+
+def test_warn_cross_branch_overlap_blocks_in_strict(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_OVERLAP_FETCH", "0")
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+    monkeypatch.setattr(
+        githooks.overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [
+            githooks.overlap.OverlapReport(branch="feat/x", files=("a.py",))
+        ],
+    )
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_OVERLAP
+    assert rc != 0
+
+
+def test_warn_cross_branch_overlap_toplevel_failure_fails_closed_in_strict(
+    monkeypatch,
+):
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("not a git repo")
+
+    monkeypatch.setattr(githooks, "_git_toplevel", boom)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_ERROR
+
+
+def test_warn_cross_branch_overlap_toplevel_failure_fails_open_advisory(monkeypatch):
+    monkeypatch.delenv("COLLAB_OVERLAP_STRICT", raising=False)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("not a git repo")
+
+    monkeypatch.setattr(githooks, "_git_toplevel", boom)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = githooks.warn_cross_branch_overlap()
+    assert rc == githooks.overlap.EXIT_OK
 
 
 def test_release_all_failure(monkeypatch, tmp_path):
@@ -380,6 +522,21 @@ def test_read_template_returns_known_hooks():
     assert "collab.githooks acquire-staged" in githooks._read_template("pre-commit")
     assert "collab.githooks check-overlap" in githooks._read_template("pre-push")
     assert "collab.githooks release-all" in githooks._read_template("pre-push")
+    assert "install -e ." in githooks._read_template("post-merge")
+    assert "install -e ." in githooks._read_template("post-checkout")
+    # Verify orphan cleanup is present in both hooks
+    post_merge = githooks._read_template("post-merge")
+    post_checkout = githooks._read_template("post-checkout")
+    assert "daemon-stop" in post_merge
+    assert "daemon-stop" in post_checkout
+    assert "daemon-start" in post_merge
+    assert "daemon-start" in post_checkout
+    assert "rm -rf" in post_merge
+    assert "rm -rf" in post_checkout
+    assert "site_pkgs" in post_merge
+    assert "site_pkgs" in post_checkout
+    assert "~ollab_runtime" in post_merge
+    assert "~ollab_runtime" in post_checkout
 
 
 def test_hooks_dir_honors_core_hooks_path(monkeypatch, tmp_path):
