@@ -190,7 +190,7 @@ def test_process_new_files_triggers_overlap_warning(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger=mod.logger.name):
         mod._process_new_files(Client(), "main", {"shared.py"})
 
-    assert "Cross-branch overlap" in caplog.text
+    assert "cross-branch overlap" in caplog.text.lower()
 
 
 def test_maybe_warn_cross_branch_overlap_import_failure(monkeypatch):

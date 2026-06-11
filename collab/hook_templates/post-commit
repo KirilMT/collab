@@ -4,7 +4,7 @@
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 
-echo "[collab] Commit detected. Locks remain active until files are pushed."
+echo "[collab] Commit detected. Locks remain active until files are pushed to remote."
 
 VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
 VENV_BIN="$PROJECT_ROOT/.venv/bin"

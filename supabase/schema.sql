@@ -76,12 +76,36 @@ update file_locks_history
   where origin is null or origin not in ('human', 'agent');
 
 -- ---------------------------------------------------------------------------
+-- PR-aware persistent claims (opt-in via COLLAB_PR_CLAIMS=1 on the client).
+-- A "claim" is an ordinary lock that survives ``git push``: instead of being
+-- released on push, the files changed on the pushed branch are retained as
+-- claims (``is_pr_claim = true``) tied to ``claim_branch`` until that branch is
+-- merged into the base or deleted on the remote (released by the client
+-- reconciler) -- or, as a guaranteed fallback, expired by ``release_stale_claims``
+-- below. This extends cross-developer edit-time protection to open, pushed PR
+-- branches. Adding these columns is safe and idempotent; the runtime tolerates
+-- them being absent and simply behaves as before.
+alter table file_locks
+  add column if not exists is_pr_claim boolean not null default false,
+  add column if not exists claim_branch text,
+  add column if not exists claimed_at timestamptz;
+
+alter table file_locks_history
+  add column if not exists is_pr_claim boolean,
+  add column if not exists claim_branch text,
+  add column if not exists claimed_at timestamptz;
+
+-- ---------------------------------------------------------------------------
 -- Indexes
 -- ---------------------------------------------------------------------------
 create index if not exists idx_file_locks_acquired_at
   on file_locks(acquired_at);
 create index if not exists idx_file_locks_owner
   on file_locks(developer_id, agent_id);
+-- Speeds up claim reconciliation and stale-claim expiry.
+create index if not exists idx_file_locks_pr_claims
+  on file_locks(claim_branch)
+  where is_pr_claim;
 -- Note: expiry semantics are intentionally disabled. Locks persist until
 -- explicitly released; no automatic time-based replacement is enforced.
 create index if not exists idx_file_locks_history_developer
@@ -200,6 +224,44 @@ end;
 $$ language plpgsql security definer;
 
 -- ---------------------------------------------------------------------------
+-- PR-claim retention on push (RPC)
+-- ---------------------------------------------------------------------------
+-- Used by the pre-push hook when COLLAB_PR_CLAIMS=1. Atomically:
+--   * retains (promotes to a PR claim) this developer's locks for the files that
+--     are still part of the pushed branch (``p_keep_paths``), tying them to
+--     ``p_branch`` and stamping ``claimed_at`` -- WITHOUT touching attribution
+--     columns (origin/agent_id/agent_label), so dashboard attribution is intact;
+--   * releases every other lock held by this developer (today's behavior for the
+--     rest). Returns the number of locks released (claims retained are not
+--     counted). Developer-scoped: never touches other developers' locks.
+create or replace function release_all_except(
+  p_developer_id text,
+  p_keep_paths text[],
+  p_branch text
+) returns integer as $$
+declare
+  v_released integer;
+begin
+  update file_locks
+    set is_pr_claim = true,
+        claim_branch = p_branch,
+        claimed_at = now()
+    where developer_id = p_developer_id
+      and file_path = any(coalesce(p_keep_paths, array[]::text[]));
+
+  with deleted as (
+    delete from file_locks
+    where developer_id = p_developer_id
+      and not (file_path = any(coalesce(p_keep_paths, array[]::text[])))
+    returning 1
+  )
+  select count(*) into v_released from deleted;
+
+  return coalesce(v_released, 0);
+end;
+$$ language plpgsql security definer;
+
+-- ---------------------------------------------------------------------------
 -- Auto-history trigger: log releases to history table
 -- ---------------------------------------------------------------------------
 create or replace function log_lock_release()
@@ -208,11 +270,11 @@ begin
   insert into file_locks_history(
     file_path, developer_id, lock_token, branch_name, reason,
     acquired_at, released_at, outcome, is_ephemeral, agent_id, agent_label,
-    origin, agent_kind
+    origin, agent_kind, is_pr_claim, claim_branch, claimed_at
   ) values (
     OLD.file_path, OLD.developer_id, OLD.lock_token, OLD.branch_name, OLD.reason,
     OLD.acquired_at, now(), 'released', OLD.is_ephemeral, OLD.agent_id, OLD.agent_label,
-    OLD.origin, OLD.agent_kind
+    OLD.origin, OLD.agent_kind, OLD.is_pr_claim, OLD.claim_branch, OLD.claimed_at
   );
 
   -- Automatic retention: keep history bounded without manual intervention.
@@ -271,3 +333,54 @@ exception
     null;
 end;
 $retention$;
+
+-- ---------------------------------------------------------------------------
+-- PR-claim expiry (guaranteed release path; default: 30 days)
+-- ---------------------------------------------------------------------------
+-- The client reconciler releases claims promptly when a branch is merged or
+-- deleted, but it only runs while an owner's daemon/pre-push runs. This DB-side
+-- expiry guarantees a claim can never block other developers forever even if its
+-- owner never comes back. Keyed on claimed_at (set when the claim is created and
+-- left untouched by ordinary lock renewals).
+create or replace function release_stale_claims(p_days integer default 30)
+returns bigint as $$
+declare
+  v_deleted bigint;
+begin
+  if p_days < 1 then
+    raise exception 'p_days must be >= 1';
+  end if;
+
+  with deleted as (
+    delete from file_locks
+    where is_pr_claim = true
+      and coalesce(claimed_at, acquired_at) < now() - make_interval(days => p_days)
+    returning 1
+  )
+  select count(*) into v_deleted from deleted;
+
+  return coalesce(v_deleted, 0);
+end;
+$$ language plpgsql security definer;
+
+-- Optional daily scheduler (pg_cron) for claim expiry. Safe to rerun.
+do $claims$
+begin
+  if to_regclass('cron.job') is not null then
+    perform cron.unschedule(jobid)
+    from cron.job
+    where jobname = 'release_stale_file_claims';
+
+    perform cron.schedule(
+      'release_stale_file_claims',
+      '23 3 * * *',
+      $job$select release_stale_claims(30);$job$
+    );
+  end if;
+exception
+  when undefined_function then
+    null;
+  when undefined_table then
+    null;
+end;
+$claims$;

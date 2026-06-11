@@ -80,6 +80,27 @@ may re-acquire any of their own locks regardless of `agent_id` (human commit aft
 agent claim after human auto-lock, etc.). A human may also `force-release` any lock held under their
 own `developer_id` (including other agents' locks) without an admin key.
 
+### Conflict Prevention and Lock Lifecycle
+
+Collab prevents merge conflicts by ensuring only one developer can modify a file at a time.
+
+- **Lock Acquisition**: Automatically acquired by the background watcher on local edit, or manually via CLI.
+- **Lock Release**: By default, locks are released automatically after a successful `git push` (via the pre-push hook). This ensures that files are only locked while work is "in progress" locally.
+- **PR-aware persistent claims (edit-time cross-PR protection, `COLLAB_PR_CLAIMS=1`, opt-in)**: extends the lock lifecycle beyond "in progress locally" to "open PR on the remote". On push, instead of releasing, the files changed on the pushed branch (vs the base) are retained as **claims** — ordinary `file_locks` rows with `is_pr_claim=true`, `claim_branch`, `claimed_at` — so the _existing_ cross-developer machinery (watcher warning + pre-commit block) protects them at **edit time** for any other developer. Implementation notes:
+  - The `acquire_lock` RPC does not touch the claim columns on renewal, so an owner re-editing a claimed file does not demote the claim (sticky).
+  - Retention is atomic via the `release_all_except(developer_id, keep_paths, branch)` RPC, which preserves attribution columns (`origin`/`agent_id`).
+  - **Release is git-only** (no GitHub token): the client reconciler (`reconcile_pr_claims` → `overlap.stale_claim_branches`) force-prunes-fetches and releases a claim when its branch is **deleted on the remote** (primary, squash-merge-safe) or **merged** into the base. A DB-side `release_stale_claims` pg_cron (default 30 days) guarantees liberation even if the owner's daemon never runs.
+  - Single-owner-per-file (PK `file_path`) ⇒ **last-writer-wins**; squash-merge relies on delete-on-merge; a closed-but-not-deleted PR falls to the expiry; the migration is manual and the runtime degrades to today's behavior if the columns/RPCs are absent.
+- **Cross-Branch Overlap Detection (client)**: Collab detects when changes on the current branch would conflict with other unmerged branches (local or remote-tracking).
+  - **Advisory (Default)**: Warnings are issued during `git push` but do not block the operation.
+  - **Strict Mode**: When `COLLAB_OVERLAP_STRICT=1` is set, `git push` is blocked if an overlap is detected. Strict mode implies the check, so it cannot be silently disabled by `COLLAB_OVERLAP_CHECK=0`.
+  - **Line-level accuracy**: a file-level overlap is confirmed with `git merge-tree` (a real in-memory 3-way merge, git >= 2.38). Edits to _different_ regions of the same file do not conflict and are not flagged; on older git it falls back to file-level. Toggle with `COLLAB_OVERLAP_LINE_LEVEL`.
+  - **Remote-agnostic**: the comparison remote is resolved dynamically — the push target git passes to the pre-push hook (`$1`), then the branch upstream, then `origin`, then the sole remote. Override with `COLLAB_OVERLAP_REMOTE`. Base ref, candidate refs, and the fetch all use the resolved remote.
+  - **Remote refresh**: in strict mode the pre-push hook runs `git fetch --prune <remote>` first (`COLLAB_OVERLAP_FETCH` is `auto`, i.e. strict-only, by default) so a branch pushed from another clone is visible — closing the gap where stale tracking refs hid an overlap.
+  - **Fail-closed**: In strict mode, an unexpected error or an inability to refresh remote state blocks the push (`exit 1` = overlap, `exit 3` = could-not-verify). Advisory mode always fails open.
+  - **False-positive guard**: branches that `HEAD` is stacked on top of (ancestors of `HEAD`) are excluded. The warning text is plain ASCII so it renders on a Windows cp1252 console without raising `UnicodeEncodeError`.
+- **Cross-PR Overlap Detection (server)**: `collab.pr_overlap`, run by the `PR Overlap Guard` GitHub Action on `pull_request`, fails the check when a PR's changed files overlap another open PR targeting the same base. This is the enforcement layer that `git push --no-verify` cannot bypass; require it via branch protection. The overlap math is a pure, unit-tested function with network access isolated behind an injectable HTTP getter.
+
 ### Strict attribution (who actually edited)
 
 `origin` is the source of truth for the dashboard and is decided by an **explicit** signal, never by
