@@ -9,6 +9,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0](https://github.com/KirilMT/collab/compare/v0.7.0...v0.8.0) (2026-06-11)
+
+
+### Features
+
+* add strict cross-branch overlap prevention on push ([#130](https://github.com/KirilMT/collab/issues/130)) ([6843921](https://github.com/KirilMT/collab/commit/68439214f2407ca64f43ac65dc1fde776efc7e11))
+* auto-repair editable install on pull/checkout with post-merge and post-checkout git hooks ([#133](https://github.com/KirilMT/collab/issues/133)) ([99900ae](https://github.com/KirilMT/collab/commit/99900aeb55ad72bce864a6b5615087a6a9d1b109))
+* **dashboard:** richer metrics, filtering UX, interactive charts, dark theme, and row details ([#121](https://github.com/KirilMT/collab/issues/121)) ([23b87d8](https://github.com/KirilMT/collab/commit/23b87d8abd333d69793af3cfad9e9b5d8f535110))
+* **dashboard:** richer metrics, filtering UX, interactive charts, dark theme, and row details (replaces [#121](https://github.com/KirilMT/collab/issues/121)) ([#125](https://github.com/KirilMT/collab/issues/125)) ([84e74a0](https://github.com/KirilMT/collab/commit/84e74a06dcaf0625edbf0a869b7fe68bdf31e637))
+* **overlap:** warn on cross-branch file overlap before merge conflicts ([#124](https://github.com/KirilMT/collab/issues/124)) ([a857896](https://github.com/KirilMT/collab/commit/a857896dae4887540016328d04e40dcc0bb8b11f))
+
+
+### Bug Fixes
+
+* **daemon:** refresh PID file mtime for dashboard watcher-health ([#123](https://github.com/KirilMT/collab/issues/123)) ([c90ab74](https://github.com/KirilMT/collab/commit/c90ab7463cffdcb8843aecbd84411ecf1c87dc9a)), closes [#120](https://github.com/KirilMT/collab/issues/120)
+
+
+### Code Refactoring
+
+* **lock_client:** simplify heartbeat grace logic to reduce false shutdowns ([#118](https://github.com/KirilMT/collab/issues/118)) ([3f39c57](https://github.com/KirilMT/collab/commit/3f39c5795cb31d226861779e12c24e4cae919eb7)), closes [#74](https://github.com/KirilMT/collab/issues/74)
+
 ## [0.7.0](https://github.com/KirilMT/collab/compare/v0.6.2...v0.7.0) (2026-06-07)
 
 ### Features
