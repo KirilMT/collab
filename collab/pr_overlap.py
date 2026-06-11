@@ -107,14 +107,21 @@ def format_overlap_report(current_number: int, hits: list[OverlapHit]) -> str:
 
 
 def _default_http(url: str, token: Optional[str]) -> object:
-    """Fetch and parse JSON from the GitHub REST API."""
-    req = urllib.request.Request(url)  # noqa: S310 - fixed https GitHub API host
+    """Fetch and parse JSON from the GitHub REST API.
+
+    Only GitHub-API HTTPS URLs are accepted; this guard makes the urlopen provably
+    scheme/host-safe (no local-file or custom schemes) -- the concern behind bandit B310
+    / ruff S310, which are suppressed below because this guard enforces it.
+    """
+    if not url.startswith(GITHUB_API + "/"):
+        raise ValueError(f"refusing to open non-GitHub-API URL: {url!r}")
+    req = urllib.request.Request(url)  # noqa: S310  # nosec B310
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     req.add_header("User-Agent", "collab-pr-overlap-guard")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
         return json.loads(resp.read().decode("utf-8"))
 
 
