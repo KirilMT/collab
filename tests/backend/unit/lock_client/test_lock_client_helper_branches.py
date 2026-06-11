@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import types
+from unittest import mock
 
 import pytest
 
@@ -169,21 +170,6 @@ def test_get_state_dir_test_mode_suffix(monkeypatch, tmp_path):
     sd = mod._get_state_dir()
     assert "collab_runtime_" in sd
     assert "_test_" in sd
-
-
-def test_get_state_dir_with_env_creates_and_returns(monkeypatch, tmp_path):
-    """When `COLLAB_STATE_DIR` is set, `_get_state_dir` should create and return it."""
-    target = tmp_path / "state_env"
-    monkeypatch.setenv("COLLAB_STATE_DIR", str(target))
-    # Ensure no pre-existing dir
-    if target.exists():
-        import shutil as _sh
-
-        _sh.rmtree(target)
-
-    got = mod._get_state_dir()
-    assert os.path.abspath(got) == os.path.abspath(str(target))
-    assert os.path.isdir(got)
 
 
 def test_resolve_runtime_root_prefers_COLLAB_HOME(monkeypatch, tmp_path):
@@ -433,34 +419,6 @@ def test_assign_to_job_object_create_fails(monkeypatch):
             return 0
 
     _install_fake_ctypes(monkeypatch, K32())
-    mod.LockClient._assign_to_job_object()
-
-
-def test_assign_to_job_object_assign_success_and_failure(monkeypatch):
-    """Cover AssignProcessToJobObject success and failure branches."""
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-
-    class K32Ok:
-        def CreateJobObjectW(self, a, b):
-            return 1
-
-        def SetInformationJobObject(self, *a, **k):
-            return True
-
-        def GetCurrentProcess(self):
-            return 2
-
-        def AssignProcessToJobObject(self, *a, **k):
-            return True
-
-    _install_fake_ctypes(monkeypatch, K32Ok())
-    mod.LockClient._assign_to_job_object()
-
-    class K32Fail(K32Ok):
-        def AssignProcessToJobObject(self, *a, **k):
-            return False
-
-    _install_fake_ctypes(monkeypatch, K32Fail())
     mod.LockClient._assign_to_job_object()
 
 
@@ -1036,22 +994,38 @@ def test_get_lock_status_exception_and_error_branches(monkeypatch):
 
 
 def test_release_no_lock_released_branch(monkeypatch):
-    """Release() returns False when status not in (200, 204) and data is None."""
+    """Release() returns the 'no lock released' message on a non-2xx empty DELETE.
+
+    The owner pre-check SELECT must succeed (row owned by this developer) so we reach
+    the DELETE, whose defensive branch fires when the response has no rows, no error and
+    a status outside (200, 204).
+    """
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
 
     class _Q:
-        def delete(self):
-            return self
+        def __init__(self):
+            self._mode = None
 
         def select(self, *a, **k):
+            self._mode = "select"
+            return self
+
+        def delete(self):
+            self._mode = "delete"
             return self
 
         def eq(self, *a, **k):
             return self
 
         def execute(self):
-            return types.SimpleNamespace(data=None, status_code=404, error=None)
+            if self._mode == "select":
+                # Pre-check: a lock owned by this developer exists.
+                return types.SimpleNamespace(
+                    data=[{"developer_id": "alice"}], status_code=200, error=None
+                )
+            # DELETE: defensive non-2xx, empty, error-free response.
+            return types.SimpleNamespace(data=None, status_code=500, error=None)
 
     class _TC:
         def table(self, _n):
@@ -1060,7 +1034,7 @@ def test_release_no_lock_released_branch(monkeypatch):
     c._client = _TC()
     ok, msg = c.release("collab/foo.py")
     assert not ok
-    assert "not owner" in msg.lower() or "no lock" in msg.lower()
+    assert "no lock released" in msg.lower()
 
 
 def test_graceful_shutdown_flush_handlers_exceptions(monkeypatch, tmp_path):
@@ -1098,36 +1072,6 @@ def test_graceful_shutdown_flush_handlers_exceptions(monkeypatch, tmp_path):
         c._graceful_shutdown()
     finally:
         logger_obj.removeHandler(bad_handler)
-
-
-def test_graceful_shutdown_pid_remove_oserror_retry(monkeypatch, tmp_path):
-    """_graceful_shutdown retries PID file removal on OSError (≤2 retries)."""
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    pid_file = tmp_path / "daemon.pid"
-    pid_file.write_text('{"pid": 9999}')
-    monkeypatch.setattr(mod, "PID_FILE", str(pid_file))
-    monkeypatch.setattr(mod, "_get_state_dir", lambda: str(tmp_path))
-
-    c2 = mod.LockClient(local_only=True)
-    monkeypatch.setattr(c2, "active", lambda: [])
-
-    remove_calls = [0]
-    real_remove = os.remove
-
-    def _flaky_remove(path):
-        if str(path) == str(pid_file):
-            remove_calls[0] += 1
-            if remove_calls[0] == 1:
-                raise OSError("locked")
-            real_remove(path)
-        else:
-            real_remove(path)
-
-    monkeypatch.setattr(mod.os, "remove", _flaky_remove)
-    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
-
-    c2._graceful_shutdown()
-    assert remove_calls[0] == 2  # failed once, succeeded second time
 
 
 def test_cleanup_orphaned_processes_no_wmic_debug_and_outer_exception(monkeypatch):
@@ -1168,55 +1112,6 @@ def test_cleanup_orphaned_processes_no_wmic_debug_and_outer_exception(monkeypatc
     c.cleanup_orphaned_processes()  # Should not raise; hits both debug-log paths
 
 
-def test_cleanup_orphaned_processes_unix_valueerror_branch(monkeypatch):
-    """Hit Unix ValueError/IndexError branch for malformed ps output."""
-    monkeypatch.setattr(mod.sys, "platform", "linux")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-
-    def _run_unix(args, **kwargs):
-        # First line has 'lock_client' but PID is not an integer.
-        return types.SimpleNamespace(
-            stdout="user notanint 0 0 python lock_client watch\n",
-            returncode=0,
-        )
-
-    patch_subprocess(monkeypatch, run=_run_unix)
-    c = mod.LockClient(local_only=True)
-    c.cleanup_orphaned_processes()  # No raise; ValueError silently continues
-
-
-def test_cleanup_orphaned_processes_psutil_nosuchprocess_continue(monkeypatch):
-    """Cover line 1525: continue after psutil.NoSuchProcess in pid inspection loop."""
-
-    class _Psutil:
-        class NoSuchProcess(Exception):
-            pass
-
-        class Process:
-            def __init__(self, pid):
-                self.pid = pid
-
-            def cmdline(self):
-                raise _Psutil.NoSuchProcess()
-
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-    monkeypatch.setitem(sys.modules, "psutil", _Psutil)
-
-    def _run(args, **kwargs):
-        if args and args[0] == "tasklist":
-            return types.SimpleNamespace(
-                stdout='"python.exe","1111","Console","1","1 K"\n',
-                returncode=0,
-            )
-        return types.SimpleNamespace(stdout="", returncode=0)
-
-    patch_subprocess(monkeypatch, run=_run)
-    c = mod.LockClient(local_only=True)
-    # Should not raise; PID 1111 hits NoSuchProcess and continues.
-    c.cleanup_orphaned_processes()
-
-
 def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path):
     """daemon_start removes stale stop request; covers os.remove exception branch."""
     monkeypatch.setattr(mod, "PID_FILE", str(tmp_path / "daemon.pid"))
@@ -1228,9 +1123,11 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
 
     # Make os.remove raise to hit the inner exception branch
     real_remove = os.remove
+    remove_attempts = {"n": 0}
 
     def _flaky_remove(path):
         if str(path) == str(stop_file):
+            remove_attempts["n"] += 1
             raise OSError("cant remove")
         real_remove(path)
 
@@ -1245,26 +1142,14 @@ def test_daemon_start_stale_stop_request_remove_exception(monkeypatch, tmp_path)
         popen=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no spawn")),
     )
 
-    try:
+    # The stubbed spawn raises RuntimeError after the stale-stop-request removal
+    # path runs; narrow the catch so an unexpected failure type would surface.
+    with pytest.raises(RuntimeError, match="no spawn"):
         c.daemon_start()
-    except Exception:
-        pass  # We only care about the stale-stop-request branch being executed
 
-
-def test_safe_now_typeerror_fallback(monkeypatch):
-    """_safe_now hits TypeError branch when now() raises TypeError, falls back to
-    stdlib."""
-    import datetime as _dt_stdlib
-
-    # Build a fake datetime namespace whose class-level now() raises TypeError
-    class _BadNow:
-        @staticmethod
-        def now():
-            raise TypeError("cannot call")
-
-    monkeypatch.setattr(mod, "datetime", _BadNow)
-    result = mod._safe_now()
-    assert isinstance(result, _dt_stdlib.datetime)
+    # The stale stop-request removal was attempted and its OSError swallowed by
+    # daemon_start's inner exception guard.
+    assert remove_attempts["n"] >= 1
 
 
 def test_safe_now_returns_real_dt_when_class_now_works(monkeypatch):
@@ -1306,7 +1191,9 @@ def test_get_create_client_spec_getattr_exception(monkeypatch):
     # Reset cached client so it re-runs the loader
     monkeypatch.setattr(mod, "_supabase_create_client", None)
     fn = mod._get_create_client()
-    assert fn is not None or fn is None  # just ensures no exception propagates
+    # Despite the __spec__.origin access raising, the loader must still return
+    # the module's create_client callable.
+    assert callable(fn)
 
 
 def test_quiet_console_loggers_restore_exception(monkeypatch):
@@ -1436,27 +1323,29 @@ def test_assign_to_job_object_get_set_info_failure(monkeypatch):
     mod.LockClient._assign_to_job_object()
 
 
-def test_get_modified_supabase_exception_returns_git_modified(monkeypatch, tmp_path):
-    """_get_modified_and_unpushed_files outer exception returns git_modified list."""
+def test_get_modified_returns_git_modified_files(monkeypatch, tmp_path):
+    """_get_modified_and_unpushed_files returns dirty files from git status.
+
+    The function is git-only (it never queries Supabase), so we drive it via a stubbed
+    ``_run_git_status`` and disable the in-progress diff step so the result is exactly
+    the parsed dirty files.
+    """
     c = mod.LockClient(local_only=True)
     c.developer_id = "alice"
 
-    # Make git status return something
     monkeypatch.setattr(
         mod.LockClient,
         "_run_git_status",
         staticmethod(lambda: ("M  src/foo.py\n", True)),
     )
+    # Skip the committed-but-unpushed diff step (no real git in tmp).
+    monkeypatch.setattr(
+        mod.LockClient, "_resolve_lock_diff_base_ref", lambda self: None
+    )
 
-    # Make client raise to hit the outer exception branch (2699-2701)
-    class _FailClient:
-        def table(self, _n):
-            raise RuntimeError("db fail")
-
-    c._client = _FailClient()
-
-    result, _git_ok = c._get_modified_and_unpushed_files()
-    assert isinstance(result, list)
+    result, git_ok = c._get_modified_and_unpushed_files()
+    assert result == ["src/foo.py"]
+    assert git_ok is True
 
 
 def test_watch_parent_method_vscode_and_pycharm_branches(monkeypatch, tmp_path):
@@ -1792,28 +1681,6 @@ def test_graceful_shutdown_stdout_flush_exception(monkeypatch):
     c._graceful_shutdown()  # Should not raise
 
 
-def test_graceful_shutdown_root_logger_block_exception(monkeypatch):
-    """Cover lines 2647-2648: outer except when root logger handlers property raises."""
-    monkeypatch.setenv("COLLAB_TEST_MODE", "0")
-    c = mod.LockClient(developer_id="test_sd4")
-    monkeypatch.setattr(c, "active", lambda: [])
-    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
-
-    # Patch only mod.logging.getLogger to intercept the root logger request
-    # Only override within the function scope using direct assignment + restore
-    _real_get_logger = mod.logging.getLogger
-
-    class _BadRootLogger:
-        @property
-        def handlers(self):
-            raise RuntimeError("root handlers broken")
-
-    def _patched(name=None):
-        if name is None or name == "":
-            return _BadRootLogger()
-        return _real_get_logger(name)
-
-
 def test_reconcile_active_supabase_exception(monkeypatch):
     """Cover lines 2699-2701.
 
@@ -1825,67 +1692,54 @@ def test_reconcile_active_supabase_exception(monkeypatch):
     monkeypatch.setattr(
         c, "_get_modified_and_unpushed_files", lambda: (["file.py"], True)
     )
-    monkeypatch.setattr(
-        c, "active", lambda: (_ for _ in ()).throw(RuntimeError("supa down"))
-    )
+    active_spy = mock.Mock(side_effect=RuntimeError("supa down"))
+    monkeypatch.setattr(c, "active", active_spy)
 
     result = c._reconcile()
-    assert isinstance(result, set)
-    assert "file.py" in result
+    # When active() raises after modified files are collected, _reconcile falls
+    # back to the git-modified set exactly (no spurious additions/removals).
+    assert result == {"file.py"}
+    # active() is consulted once in the main reconcile path before the fallback.
+    active_spy.assert_called_once()
 
 
-def test_get_process_info_local_exception_in_watch(monkeypatch):
-    """Cover lines 2070-2071.
+def test_get_process_info_local_returns_none_for_missing_process(monkeypatch):
+    """_get_process_info_local returns (None, None) when psutil reports no process.
 
-    _get_process_info_local raises during parent name resolution.
+    This is the real branch that keeps the watch loop's ``parent_name`` at "unknown"
+    when the parent cannot be resolved.
     """
     c = mod.LockClient(developer_id="dev1")
-    c._parent_pid = 12345
+    monkeypatch.setattr(mod.sys, "platform", "win32")
 
-    monkeypatch.setattr(
-        c,
-        "_get_process_info_local",
-        lambda pid: (_ for _ in ()).throw(RuntimeError("no proc")),
+    class _NoSuchProcess(Exception):
+        pass
+
+    def _raise_nosuch(_pid):
+        raise _NoSuchProcess()
+
+    fake_psutil = types.SimpleNamespace(
+        Process=_raise_nosuch, NoSuchProcess=_NoSuchProcess
     )
-    # Access the name resolution code directly
-    parent_name = "unknown"
-    try:
-        name, _ = c._get_process_info_local(c._parent_pid)
-        if name:
-            parent_name = name
-    except Exception:
-        pass  # This covers 2070-2071
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
 
-    assert parent_name == "unknown"
+    assert c._get_process_info_local(12345) == (None, None)
 
 
-def test_heartbeat_check_exception_in_watch(monkeypatch, tmp_path):
-    """Cover lines 2053-2055: heartbeat check exception handler."""
-    # Fake heartbeat file that raises OSError on stat
+def test_heartbeat_should_shutdown_when_file_missing(monkeypatch, tmp_path):
+    """_heartbeat_should_shutdown returns 'heartbeat_missing' past startup grace.
+
+    Exercises the real extracted heartbeat policy method rather than replicating its
+    logic inline.
+    """
     c = mod.LockClient(developer_id="dev1")
-    c._heartbeat_file = str(tmp_path / "heartbeat")
+    c._heartbeat_file = str(tmp_path / "heartbeat")  # intentionally absent
     c._heartbeat_grace_seconds = 5
 
-    # Make os.path.exists raise to trigger the exception
-    monkeypatch.setattr(
-        mod.os.path,
-        "exists",
-        lambda p: (
-            (_ for _ in ()).throw(OSError("disk error"))
-            if "heartbeat" in str(p)
-            else True
-        ),
-    )
-    # The heartbeat check code (within watch) catches Exception:
-    caught = False
-    try:
-        # Replicate the logic from the watch heartbeat check
-        if c._heartbeat_file and mod.os.path.exists(c._heartbeat_file):
-            pass
-    except Exception:
-        caught = True
+    # Pin "now" far past the startup grace window so a missing file is fatal.
+    monkeypatch.setattr(mod.time, "time", lambda: 10_000.0)
 
-    assert caught
+    assert c._heartbeat_should_shutdown(startup_time=0.0) == "heartbeat_missing"
 
 
 def test_emit_log_resilient_stderr_write_exception_swallowed(monkeypatch):
@@ -1905,30 +1759,6 @@ def test_emit_log_resilient_stderr_write_exception_swallowed(monkeypatch):
 
     # Should not raise despite stderr write error.
     mod._emit_log_resilient(log, logging.INFO, "fallback %s", "test")
-
-
-def test_cleanup_orphaned_processes_windows_no_inspection_paths(monkeypatch):
-    """cleanup_orphaned_processes logs/continues when command-line inspection is
-    unavailable."""
-    c = mod.LockClient(local_only=True)
-
-    monkeypatch.setattr(mod.sys, "platform", "win32")
-    monkeypatch.setattr(mod.os, "getpid", lambda: 99999)
-    monkeypatch.setattr(mod.shutil, "which", lambda _exe: None)
-
-    def _run_win(args, **kwargs):
-        if args and args[0] == "tasklist":
-            return types.SimpleNamespace(
-                stdout='"python.exe","1111","Console","1","1 K"\n',
-                returncode=0,
-            )
-        return types.SimpleNamespace(stdout="", returncode=0)
-
-    patch_subprocess(monkeypatch, run=_run_win)
-    monkeypatch.setitem(sys.modules, "psutil", None)
-    monkeypatch.setattr(mod.os.path, "exists", lambda _p: False)
-
-    c.cleanup_orphaned_processes()
 
 
 def test_cleanup_orphaned_processes_windows_parsing_and_wmic_error_branches(

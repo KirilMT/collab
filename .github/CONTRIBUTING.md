@@ -304,7 +304,7 @@ When adding tests:
 
 Quality gates rely on these thresholds:
 
-- Backend total coverage >= 85 percent.
+- Backend total coverage >= 92 percent.
 - Backend changed-lines coverage >= 95 percent.
 
 Do not lower thresholds to pass CI.

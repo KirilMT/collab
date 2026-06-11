@@ -54,7 +54,14 @@ def hook_repo(tmp_path: Path) -> Path:
     (repo / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
     (repo / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
 
-    for hook_name in ("pre-commit", "post-commit", "pre-push", "commit-msg"):
+    for hook_name in (
+        "pre-commit",
+        "post-commit",
+        "pre-push",
+        "commit-msg",
+        "post-merge",
+        "post-checkout",
+    ):
         source = ROOT / "scripts" / "git-hooks" / hook_name
         target = repo / "scripts" / "git-hooks" / hook_name
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
@@ -177,7 +184,14 @@ def test_install_hooks_copies_templates_into_git_hooks(hook_repo: Path, git_sh: 
 
     assert result.returncode == 0
     assert "Installed git hooks from scripts/git-hooks/" in result.stdout
-    for hook_name in ("pre-commit", "post-commit", "pre-push", "commit-msg"):
+    for hook_name in (
+        "pre-commit",
+        "post-commit",
+        "pre-push",
+        "commit-msg",
+        "post-merge",
+        "post-checkout",
+    ):
         expected = (hook_repo / "scripts" / "git-hooks" / hook_name).read_text(
             encoding="utf-8"
         )

@@ -80,6 +80,27 @@ may re-acquire any of their own locks regardless of `agent_id` (human commit aft
 agent claim after human auto-lock, etc.). A human may also `force-release` any lock held under their
 own `developer_id` (including other agents' locks) without an admin key.
 
+### Conflict Prevention and Lock Lifecycle
+
+Collab prevents merge conflicts by ensuring only one developer can modify a file at a time.
+
+- **Lock Acquisition**: Automatically acquired by the background watcher on local edit, or manually via CLI.
+- **Lock Release**: By default, locks are released automatically after a successful `git push` (via the pre-push hook). This ensures that files are only locked while work is "in progress" locally.
+- **PR-aware persistent claims (edit-time cross-PR protection, `COLLAB_PR_CLAIMS=1`, opt-in)**: extends the lock lifecycle beyond "in progress locally" to "open PR on the remote". On push, instead of releasing, the files changed on the pushed branch (vs the base) are retained as **claims** — ordinary `file_locks` rows with `is_pr_claim=true`, `claim_branch`, `claimed_at` — so the _existing_ cross-developer machinery (watcher warning + pre-commit block) protects them at **edit time** for any other developer. Implementation notes:
+  - The `acquire_lock` RPC does not touch the claim columns on renewal, so an owner re-editing a claimed file does not demote the claim (sticky).
+  - Retention is atomic via the `release_all_except(developer_id, keep_paths, branch)` RPC, which preserves attribution columns (`origin`/`agent_id`).
+  - **Release is git-only** (no GitHub token): the client reconciler (`reconcile_pr_claims` → `overlap.stale_claim_branches`) force-prunes-fetches and releases a claim when its branch is **deleted on the remote** (primary, squash-merge-safe) or **merged** into the base. A DB-side `release_stale_claims` pg_cron (default 30 days) guarantees liberation even if the owner's daemon never runs.
+  - Single-owner-per-file (PK `file_path`) ⇒ **last-writer-wins**; squash-merge relies on delete-on-merge; a closed-but-not-deleted PR falls to the expiry; the migration is manual and the runtime degrades to today's behavior if the columns/RPCs are absent.
+- **Cross-Branch Overlap Detection (client)**: Collab detects when changes on the current branch would conflict with other unmerged branches (local or remote-tracking).
+  - **Advisory (Default)**: Warnings are issued during `git push` but do not block the operation.
+  - **Strict Mode**: When `COLLAB_OVERLAP_STRICT=1` is set, `git push` is blocked if an overlap is detected. Strict mode implies the check, so it cannot be silently disabled by `COLLAB_OVERLAP_CHECK=0`.
+  - **Line-level accuracy**: a file-level overlap is confirmed with `git merge-tree` (a real in-memory 3-way merge, git >= 2.38). Edits to _different_ regions of the same file do not conflict and are not flagged; on older git it falls back to file-level. Toggle with `COLLAB_OVERLAP_LINE_LEVEL`.
+  - **Remote-agnostic**: the comparison remote is resolved dynamically — the push target git passes to the pre-push hook (`$1`), then the branch upstream, then `origin`, then the sole remote. Override with `COLLAB_OVERLAP_REMOTE`. Base ref, candidate refs, and the fetch all use the resolved remote.
+  - **Remote refresh**: in strict mode the pre-push hook runs `git fetch --prune <remote>` first (`COLLAB_OVERLAP_FETCH` is `auto`, i.e. strict-only, by default) so a branch pushed from another clone is visible — closing the gap where stale tracking refs hid an overlap.
+  - **Fail-closed**: In strict mode, an unexpected error or an inability to refresh remote state blocks the push (`exit 1` = overlap, `exit 3` = could-not-verify). Advisory mode always fails open.
+  - **False-positive guard**: branches that `HEAD` is stacked on top of (ancestors of `HEAD`) are excluded. The warning text is plain ASCII so it renders on a Windows cp1252 console without raising `UnicodeEncodeError`.
+- **Cross-PR Overlap Detection (server)**: `collab.pr_overlap`, run by the `PR Overlap Guard` GitHub Action on `pull_request`, fails the check when a PR's changed files overlap another open PR targeting the same base. This is the enforcement layer that `git push --no-verify` cannot bypass; require it via branch protection. The overlap math is a pure, unit-tested function with network access isolated behind an injectable HTTP getter.
+
 ### Strict attribution (who actually edited)
 
 `origin` is the source of truth for the dashboard and is decided by an **explicit** signal, never by
@@ -138,3 +159,47 @@ Source lives under `editors/vscode/collab-locks/`. PyCharm run-configuration tem
 | `docs/pypi/README.md`          | PyPI package readme                                         |
 | `editors/vscode/collab-locks/` | VS Code / Cursor extension                                  |
 | `editors/pycharm/`             | IDE run-configuration template                              |
+
+### Editable Install Auto-Repair
+
+Collab is designed to be installed in **editable mode** (`pip install -e .`) when used from a source
+checkout. This ensures the daemon serves live dashboard assets from the source tree, not a stale
+`site-packages` snapshot. The following mechanisms keep the install in sync automatically:
+
+| Mechanism                                 | Trigger                                     | Action                                                                                      |
+| ----------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **`post-merge` git hook**                 | `git pull` / `git merge`                    | Re-runs `pip install -e .` when `pyproject.toml`, `setup.py`, or `requirements*.txt` change |
+| **`post-checkout` git hook**              | `git checkout` / `git switch` (branch only) | Re-runs `pip install -e .` when package definition files differ between branches            |
+| **`setup.ps1` / `setup.sh` health check** | Every setup run                             | Detects non-editable installs via `direct_url.json` and reinstalls as `-e .`                |
+| **`daemon-start` self-check**             | `collab daemon-start`                       | Emits a clear warning if the running install is non-editable                                |
+
+#### Hook Lifecycle (post-merge and post-checkout)
+
+Before running `pip install -e .`, each hook performs a defensive cleanup:
+
+1. **Stop the daemon** — releases `collab.exe` file locks on Windows.
+2. **Remove stale `site-packages/collab/`** — a prior non-editable install leaves a copy that
+   takes priority over `.pth`-based editable installs.
+3. **Remove pip rename orphans** (`~ollab_runtime-*.dist-info/`) — left behind by interrupted
+   `pip install` operations.
+4. **Run `pip install -e .`** — restores editable mode.
+5. **Restart the daemon** — launched in background (`&`) so the hook never blocks.
+
+#### Health Check (Editable Detection)
+
+The `Test-SetupCollabInstallHealthy` (PowerShell) and `setup_collab_install_healthy` (bash)
+functions use `importlib.metadata` to read `direct_url.json` from the `collab-runtime` dist-info
+directory. This is the canonical way to detect editable installs:
+
+- **Editable**: `{"dir_info": {"editable": true}, "url": "file:///..."}`
+- **Non-editable**: `{"dir_info": {}, "url": "file:///..."}`
+
+This replaces the previous approach of checking `module.__file__`, which was unreliable because
+`python -c` adds the current directory to `sys.path`, masking stale `site-packages` copies.
+
+#### Orphan Cleanup in Setup Scripts
+
+Both `setup.ps1` and `setup.sh` include explicit cleanup of stale `site-packages/collab/`
+directories and `~ollab_runtime-*.dist-info` / `~collab-*.dist-info` rename orphans before
+every `pip install` run. This makes `setup.ps1 -Force` a reliable recovery tool for broken
+install states.

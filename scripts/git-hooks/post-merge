@@ -1,0 +1,42 @@
+#!/bin/sh
+# Re-sync editable install when package definition changes after a pull/merge.
+#
+# Detects changes to package definition files (pyproject.toml, setup.py, etc.)
+# and triggers an editable reinstall.  Before reinstalling, the hook:
+#   1. Stops the daemon (releases collab.exe lock on Windows)
+#   2. Removes any stale non-editable copy  (site-packages/collab/)
+#   3. Removes any pip rename orphans        (~ollab_runtime-*.dist-info/)
+#   4. Runs pip install -e .
+#   5. Restarts the daemon (background, non-blocking).
+changed=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null)
+needs_reinstall=false
+for f in $changed; do
+  case "$f" in
+    pyproject.toml|setup.py|setup.cfg|requirements*.txt) needs_reinstall=true; break ;;
+  esac
+done
+if $needs_reinstall; then
+  pip_bin=".venv/bin/pip"
+  [ -f ".venv/Scripts/pip.exe" ] && pip_bin=".venv/Scripts/pip.exe"
+  if [ -f "$pip_bin" ]; then
+    # Stop daemon to release collab.exe lock on Windows
+    python_bin=".venv/bin/python"
+    [ -f ".venv/Scripts/python.exe" ] && python_bin=".venv/Scripts/python.exe"
+    if [ -f "$python_bin" ]; then
+      "$python_bin" -m collab daemon-stop 2>/dev/null || true
+    fi
+    # Clean up stale non-editable copy and pip orphans before editable install
+    site_pkgs=$("$pip_bin" show collab-runtime 2>/dev/null | grep Location | cut -d' ' -f2)
+    if [ -n "$site_pkgs" ] && [ -d "$site_pkgs" ]; then
+      rm -rf "$site_pkgs/collab" 2>/dev/null || true
+      rm -rf "$site_pkgs/~ollab_runtime"-*.dist-info 2>/dev/null || true
+    fi
+    if "$pip_bin" install -e . --quiet; then
+      echo "collab: editable install refreshed (post-merge)"
+      # Restart daemon in background (non-blocking)
+      if [ -f "$python_bin" ]; then
+        "$python_bin" -m collab daemon-start 2>/dev/null &
+      fi
+    fi
+  fi
+fi

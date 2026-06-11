@@ -4,6 +4,8 @@
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 LOCK_STRICT="${LOCK_STRICT:-0}"
+# git passes the push target as $1 (remote name) and $2 (URL) to pre-push.
+PUSH_REMOTE="$1"
 
 VENV_SCRIPTS="$PROJECT_ROOT/.venv/Scripts"
 VENV_BIN="$PROJECT_ROOT/.venv/bin"
@@ -52,7 +54,17 @@ if ! "$PYTHON" -c "import collab.githooks" >/dev/null 2>&1; then
     exit 0
 fi
 
-"$PYTHON" -m collab.githooks check-overlap
+"$PYTHON" -m collab.githooks check-overlap "$PUSH_REMOTE"
+OVERLAP_EXIT=$?
+# 0 = ok; 1 = overlap detected; 3 = strict check could not verify state.
+# Locks are intentionally NOT released on a strict block so work stays "in progress".
+if [ $OVERLAP_EXIT -eq 1 ]; then
+    echo "[collab] Pre-push aborted: cross-branch overlap detected (COLLAB_OVERLAP_STRICT=1). See the guidance above." >&2
+    exit $OVERLAP_EXIT
+elif [ $OVERLAP_EXIT -ne 0 ]; then
+    echo "[collab] Pre-push aborted: overlap check could not verify remote state under COLLAB_OVERLAP_STRICT=1 (fail-closed). See the guidance above." >&2
+    exit $OVERLAP_EXIT
+fi
 
 echo "[collab] Releasing all locks after successful pre-push validation..." >&2
 "$PYTHON" -m collab.githooks release-all

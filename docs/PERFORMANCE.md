@@ -9,7 +9,7 @@ Guidance for keeping local development fast and the watcher efficient.
 | Mode           | Command                                   | When to use                               |
 | -------------- | ----------------------------------------- | ----------------------------------------- |
 | Quick (staged) | `python scripts/validate_code.py --quick` | Pre-commit; changed files only            |
-| Full CI        | `python scripts/validate_code.py`         | Before push; enforces ≥85% total coverage |
+| Full CI        | `python scripts/validate_code.py`         | Before push; enforces ≥92% total coverage |
 
 Pre-push hook runs **full** validation. Expect several minutes on a cold run.
 

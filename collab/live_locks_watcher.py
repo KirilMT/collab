@@ -116,7 +116,7 @@ class _ReconfigurableStream(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# UTF-8 encoding (Windows fix — same pattern as validate_code.py / run.py)
+# UTF-8 encoding (Windows fix - same pattern as validate_code.py / run.py)
 # ---------------------------------------------------------------------------
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -220,7 +220,7 @@ except Exception:
 if _ply_spec is None:
     desktop_notify = None
     logger.warning(
-        "plyer not installed — desktop notifications disabled. Run: pip install plyer"
+        "plyer not installed - desktop notifications disabled. Run: pip install plyer"
     )
 else:
     _ply = import_module("plyer")
@@ -318,7 +318,7 @@ def _get_developer_id() -> str:
 def _get_session_token(dev_id: str, agent_id: Optional[str] = None) -> str:
     """Return a stable session token for the current machine, project, user, and agent.
 
-    Must NEVER fall back to a random value — a random token breaks cross-IDE re-adoption
+    Must NEVER fall back to a random value - a random token breaks cross-IDE re-adoption
     because it cannot be reconstructed. If derivation fails for any component, use a
     safe fallback value for that component rather than giving up entirely.
     """
@@ -563,7 +563,7 @@ def _scan_remote_locks(client) -> None:
         data = getattr(res, "data", None) or []
     except Exception as exc:
         logger.warning(
-            "Remote lock scan failed — conflict warnings may be stale: %s", exc
+            "Remote lock scan failed - conflict warnings may be stale: %s", exc
         )
         return
 
@@ -591,7 +591,7 @@ def _scan_remote_locks(client) -> None:
             if fp not in _known_remote_locks:
                 br = lock.get("branch_name") or "main"
                 reason = lock.get("reason") or "No reason"
-                msg = f"🔒 [LOCKED] {fp} — @{owner} (branch: {br}, reason: {reason})"
+                msg = f"[LOCKED] {fp} - @{owner} (branch: {br}, reason: {reason})"
                 logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
             continue
 
@@ -600,9 +600,7 @@ def _scan_remote_locks(client) -> None:
             _warned_remote_locks.add(fp)
             br = lock.get("branch_name") or "main"
             reason = lock.get("reason") or "No reason"
-            warn_msg = (
-                f"⚠️ REMOTE LOCK: {fp} — @{owner} (branch: {br}, reason: {reason})"
-            )
+            warn_msg = f"REMOTE LOCK: {fp} - @{owner} (branch: {br}, reason: {reason})"
             logger.warning(warn_msg)
             notify_msg = (
                 f"{fp} is locked by @{owner}.\n"
@@ -617,11 +615,11 @@ def _scan_remote_locks(client) -> None:
     if released_warned:
         _warned_remote_locks.difference_update(released_warned)
         for fp in released_warned:
-            logger.info("✅ Remote lock cleared: %s", fp)
+            logger.info("Remote lock cleared: %s", fp)
 
     # Surface add/remove activity for remote locks (excluding those owned
     # by this watcher which we suppressed above). Do not re-report locks
-    # that we already logged above (same-developer) — filter them out.
+    # that we already logged above (same-developer) - filter them out.
     added = current_remote_all - _known_remote_locks
     removed = _known_remote_locks - current_remote_all
     # Filter out additions that correspond to locks we just acquired locally
@@ -647,7 +645,7 @@ def _scan_remote_locks(client) -> None:
             # terminal. Use yellow when colorama is available (matches
             # WARNING/CONFLICT color), otherwise plain info text.
             msg = (
-                f"🔔 Remote lock added: {fp} — @{owner} "
+                f"Remote lock added: {fp} - @{owner} "
                 f"(branch: {br}, reason: {reason})"
             )
             log_msg = _color(msg, Fore.YELLOW) if _HAS_COLORAMA else msg
@@ -658,7 +656,7 @@ def _scan_remote_locks(client) -> None:
             if fp in _local_owned_locks:
                 _local_owned_locks.discard(fp)
             # Use the same RELEASED log style as the watcher uses for local releases
-            release_msg = f"🔓 [RELEASED] {fp}"
+            release_msg = f"[RELEASED] {fp}"
             # Use a distinct color for remote releases so they are visually
             # different from local releases in the terminal output.
             log_msg = _color(release_msg, Fore.CYAN) if _HAS_COLORAMA else release_msg
@@ -704,7 +702,7 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
     for fp in new_files:
         try:
             if _is_ephemeral_dev(DEVELOPER_ID):
-                msg = f"🔒 [EPHEMERAL] {fp} (not written to DB)"
+                msg = f"[EPHEMERAL] {fp} (not written to DB)"
                 logger.info(_color(msg, Fore.CYAN) if _HAS_COLORAMA else msg)
                 # skip remote RPC for ephemeral/dev prefixes
                 continue
@@ -725,7 +723,7 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                 )
                 _active_conflicts.add(fp)
                 msg = (
-                    f"⚠️ CONFLICT: {fp} is locked by {owner_display} -- "
+                    f"CONFLICT: {fp} is locked by {owner_display} -- "
                     "your changes may cause a merge conflict."
                 )
                 log_msg = _color(msg, Fore.YELLOW) if _HAS_COLORAMA else msg
@@ -738,7 +736,7 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                 br_local = branch or "main"
                 reason_local = "Auto-Watch"
                 msg = (
-                    f"🔒 [LOCKED] {fp} — @{DEVELOPER_ID} "
+                    f"[LOCKED] {fp} - @{DEVELOPER_ID} "
                     f"(branch: {br_local}, reason: {reason_local})"
                 )
                 log_msg = _color(msg, Fore.GREEN) if _HAS_COLORAMA else msg
@@ -761,18 +759,18 @@ def _process_releases(client, released: set[str]) -> None:
         # Was this file in conflict?
         if fp in _active_conflicts:
             _active_conflicts.discard(fp)
-            msg = f"✅ Conflict cleared: {fp} (file reverted or resolved)"
+            msg = f"Conflict cleared: {fp} (file reverted or resolved)"
             logger.info(_color(msg, Fore.BLUE) if _HAS_COLORAMA else msg)
         else:
             try:
                 if _is_ephemeral_dev(DEVELOPER_ID):
-                    logger.info("🔓 [EPHEMERAL-RELEASE] %s", fp)
+                    logger.info("[EPHEMERAL-RELEASE] %s", fp)
                 else:
                     client.table("file_locks").delete().eq("file_path", fp).eq(
                         "developer_id", DEVELOPER_ID
                     ).execute()
                     logger.info(
-                        _color(f"🔓 [RELEASED] {fp}", Fore.MAGENTA)
+                        _color(f"[RELEASED] {fp}", Fore.MAGENTA)
                         if _HAS_COLORAMA
                         else f"[RELEASED] {fp}"
                     )
@@ -862,7 +860,7 @@ def _filter_agent_held_new_files(client, new_files: set[str]) -> set[str]:
     if not skipped:
         return new_files
     for fp in sorted(skipped):
-        logger.debug("Skipping auto-lock for %s — held by this developer's agent", fp)
+        logger.debug("Skipping auto-lock for %s - held by this developer's agent", fp)
     return new_files - dev_agent_held
 
 
@@ -955,7 +953,7 @@ def _get_modified_and_unpushed_files() -> set[str]:
                     if p and not _should_ignore_path(p):
                         result.add(p)
     except Exception:
-        # No base ref or diff failed — fall back to status-only. This is safe: we
+        # No base ref or diff failed - fall back to status-only. This is safe: we
         # just won't lock committed-but-unpushed files, which beats crashing.
         pass
 
@@ -979,7 +977,7 @@ def _reconcile_on_startup(client) -> None:
     restart conflicts.
     """
     if _is_ephemeral_dev(DEVELOPER_ID):
-        logger.info("Ephemeral developer — skipping startup reconciliation.")
+        logger.info("Ephemeral developer - skipping startup reconciliation.")
         return
 
     logger.debug("Starting lock reconciliation...")
@@ -1020,7 +1018,7 @@ def _reconcile_on_startup(client) -> None:
         stored_token = lock.get("lock_token", "")
 
         if fp in dirty_files:
-            # File is still dirty — potential re-adopt
+            # File is still dirty - potential re-adopt
             if stored_token and stored_token != SESSION_TOKEN:
                 # Before treating as multi-session, check if the lock was acquired on
                 # THIS machine by verifying the stored token matches what this machine
@@ -1038,21 +1036,21 @@ def _reconcile_on_startup(client) -> None:
                         ).execute()
                     except Exception as exc:
                         logger.warning(
-                            "Failed to update lock_token for %s — "
+                            "Failed to update lock_token for %s - "
                             "future restarts may re-trigger MULTI-SESSION: %s",
                             fp,
                             exc,
                         )
                     _local_owned_locks.add(fp)
                     n_readopted += 1
-                    msg = f"🔒 [RESUMED] {fp} — lock re-adopted from this machine"
+                    msg = f"[RESUMED] {fp} - lock re-adopted from this machine"
                     logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
                 else:
-                    # Different session token — possible multi-machine scenario
+                    # Different session token - possible multi-machine scenario
                     n_multi_session += 1
                     _handle_multi_session_lock(client, fp, stored_token)
             else:
-                # Same session or no token mismatch — safe to re-adopt
+                # Same session or no token mismatch - safe to re-adopt
                 # Update the lock_token to the current session so future restarts can
                 # re-adopt this lock without hitting MULTI-SESSION.
                 try:
@@ -1063,24 +1061,24 @@ def _reconcile_on_startup(client) -> None:
                     ).execute()
                 except Exception as exc:
                     logger.warning(
-                        "Failed to refresh lock_token for %s — "
+                        "Failed to refresh lock_token for %s - "
                         "future restarts may re-trigger MULTI-SESSION: %s",
                         fp,
                         exc,
                     )
                 _local_owned_locks.add(fp)
                 n_readopted += 1
-                msg = f"🔒 [RESUMED] {fp} — lock re-adopted from this machine"
+                msg = f"[RESUMED] {fp} - lock re-adopted from this machine"
                 logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         else:
-            # File is clean — stale lock, release it
+            # File is clean - stale lock, release it
             try:
                 _scoped_owned_query(
                     client.table("file_locks").delete().eq("file_path", fp)
                 ).execute()
                 n_stale_released += 1
                 msg = (
-                    f"🔓 [STALE-RELEASED] {fp} — locked but file is "
+                    f"[STALE-RELEASED] {fp} - locked but file is "
                     "now clean, releasing"
                 )
                 logger.info(_color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg)
@@ -1099,10 +1097,7 @@ def _reconcile_on_startup(client) -> None:
         for fp in sorted(set(dev_other) - dirty_files):
             if _release_developer_scope(client, fp):
                 n_stale_released += 1
-                msg = (
-                    f"🔓 [STALE-RELEASED] {fp} — agent lock for clean file, "
-                    "releasing"
-                )
+                msg = f"[STALE-RELEASED] {fp} - agent lock for clean file, " "releasing"
                 logger.info(_color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg)
 
     for fp in sorted(unlocked_dirty):
@@ -1120,7 +1115,7 @@ def _reconcile_on_startup(client) -> None:
             else:
                 _local_owned_locks.add(fp)
                 n_newly_locked += 1
-                msg = f"🔒 [LOCKED] {fp} — acquired lock for dirty file at startup"
+                msg = f"[LOCKED] {fp} - acquired lock for dirty file at startup"
                 logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         except Exception:
             logger.exception("Failed to acquire lock for %s during reconciliation", fp)
@@ -1134,7 +1129,7 @@ def _reconcile_on_startup(client) -> None:
         f"  Conflicts: {n_conflicts} file(s)"
     )
     if n_conflicts > 0:
-        summary += " — review required"
+        summary += " - review required"
     if n_multi_session > 0:
         summary += (
             f"\n  Multi-session: {n_multi_session} lock(s) "
@@ -1142,7 +1137,7 @@ def _reconcile_on_startup(client) -> None:
         )
         logger.info(summary)
         info_msg = (
-            f"ℹ️  {n_multi_session} lock(s) left under different session tokens. "
+            f"{n_multi_session} lock(s) left under different session tokens. "
             "Run 'collab active' to review."
         )
         logger.info(_color(info_msg, Fore.CYAN) if _HAS_COLORAMA else info_msg)
@@ -1150,7 +1145,7 @@ def _reconcile_on_startup(client) -> None:
         logger.info(summary)
 
     # Single batched notification for all startup reconciliation activity
-    notification_title = "Collab Locks — Startup Summary"
+    notification_title = "Collab Locks - Startup Summary"
     notification_msg = (
         f"Re-adopted: {n_readopted} lock(s)\n"
         f"Stale released: {n_stale_released} lock(s)\n"
@@ -1160,7 +1155,7 @@ def _reconcile_on_startup(client) -> None:
     if n_multi_session > 0:
         notification_msg += f"\nMulti-session: {n_multi_session} lock(s)"
     if n_conflicts > 0:
-        notification_msg += " — review required"
+        notification_msg += " - review required"
     _notify(notification_title, notification_msg)
 
 
@@ -1168,18 +1163,18 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
     """Handle a lock held by the same developer but from a different session.
 
     Interactive mode prompts the developer to decide; non-interactive defaults to
-    leaving the lock untouched (safe default — the other session may still be active).
+    leaving the lock untouched (safe default - the other session may still be active).
     """
     if sys.stdin.isatty():
-        print(f"\n⚠️  [MULTI-SESSION] {fp}")
+        print(f"\n[MULTI-SESSION] {fp}")
         print(
             f"    Lock held by @{DEVELOPER_ID} from a different session "
             f"(token: {stored_token[:8]}...)"
         )
         print("    Are you running the watcher on multiple machines?\n")
         print("    [1] Re-adopt this lock for the current session")
-        print("    [2] Leave it — another machine may still be active")
-        print("    [3] Release it — the other session is no longer active")
+        print("    [2] Leave it - another machine may still be active")
+        print("    [3] Release it - the other session is no longer active")
         try:
             choice = input("    Enter choice [1/2/3]: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1195,11 +1190,11 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
             except Exception:
                 logger.exception("Failed to update lock_token for %s", fp)
             _local_owned_locks.add(fp)
-            msg = f"🔒 [RESUMED] {fp} — lock re-adopted from different session"
+            msg = f"[RESUMED] {fp} - lock re-adopted from different session"
             logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
             _notify(
                 "Lock Resumed",
-                f"{fp} — lock re-adopted from different session",
+                f"{fp} - lock re-adopted from different session",
             )
         elif choice == "3":
             try:
@@ -1208,20 +1203,20 @@ def _handle_multi_session_lock(client, fp: str, stored_token: str) -> None:
                 ).execute()
             except Exception:
                 logger.exception("Failed to release lock for %s", fp)
-            msg = f"🔓 [RELEASED] {fp} — released per user request"
+            msg = f"[RELEASED] {fp} - released per user request"
             logger.info(_color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg)
         else:
             msg = (
-                f"⚠️ [MULTI-SESSION] {fp} — left to other session "
+                f"[MULTI-SESSION] {fp} - left to other session "
                 f"(token: {stored_token[:8]}...)"
             )
             logger.warning(msg)
     else:
-        # Non-interactive: default to leave (option 2 — safe default)
+        # Non-interactive: default to leave (option 2 - safe default)
         msg = (
-            f"⚠️ [MULTI-SESSION] {fp} — token mismatch "
+            f"[MULTI-SESSION] {fp} - token mismatch "
             f"(stored: {stored_token[:8]}..., current: {SESSION_TOKEN[:8]}...). "
-            f"Could not confirm same-machine origin. Lock left untouched — "
+            f"Could not confirm same-machine origin. Lock left untouched - "
             f"use 'collab release-all' if this is stale."
         )
         logger.warning(msg)
@@ -1238,7 +1233,7 @@ def _handle_post_restart_conflict(client, fp: str, lock_data: dict) -> None:
     lock_reason = lock_data.get("reason", "N/A")
 
     conflict_msg = (
-        f"⚠️ [POST-RESTART CONFLICT] {fp} — dirty locally, "
+        f"[POST-RESTART CONFLICT] {fp} - dirty locally, "
         f"locked by @{owner}.\n"
         "   Your local edits may conflict. Manual review required."
     )
@@ -1250,23 +1245,23 @@ def _handle_post_restart_conflict(client, fp: str, lock_data: dict) -> None:
         owner_display = f"@{owner}"[:48]
         branch_display = str(lock_branch)[:50]
         reason_display = str(lock_reason)[:50]
-        print(f"\n╔{'═' * 62}╗")
-        print(f"║  ⚠️  POST-RESTART CONFLICT DETECTED{' ' * 26}║")
-        print(f"║{' ' * 63}║")
-        print(f"║  File    : {fp_display:<51}║")
-        print(f"║  Locked by: {owner_display:<50}║")
-        print(f"║  Branch  : {branch_display:<51}║")
-        print(f"║  Reason  : {reason_display:<51}║")
-        print(f"║{' ' * 63}║")
-        print(f"║  This file has local uncommitted edits AND is now{' ' * 12}║")
-        print(f"║  locked by another developer.{' ' * 33}║")
-        print(f"║{' ' * 63}║")
-        print(f"║  Options:{' ' * 53}║")
-        print(f"║  [1] Continue — keep my edits, add to conflicts{' ' * 14}║")
-        print(f"║  [2] Show diff — run `git diff`{' ' * 31}║")
-        print(f"║  [3] Open dashboard — view all active locks{' ' * 18}║")
-        print(f"║  [4] Abort watcher startup{' ' * 36}║")
-        print(f"╚{'═' * 62}╝")
+        print(f"\n+{'=' * 62}+")
+        print(f"|  POST-RESTART CONFLICT DETECTED{' ' * 30}|")
+        print(f"|{' ' * 63}|")
+        print(f"|  File    : {fp_display:<51}|")
+        print(f"|  Locked by: {owner_display:<50}|")
+        print(f"|  Branch  : {branch_display:<51}|")
+        print(f"|  Reason  : {reason_display:<51}|")
+        print(f"|{' ' * 63}|")
+        print(f"|  This file has local uncommitted edits AND is now{' ' * 12}|")
+        print(f"|  locked by another developer.{' ' * 33}|")
+        print(f"|{' ' * 63}|")
+        print(f"|  Options:{' ' * 53}|")
+        print(f"|  [1] Continue - keep my edits, add to conflicts{' ' * 14}|")
+        print(f"|  [2] Show diff - run `git diff`{' ' * 31}|")
+        print(f"|  [3] Open dashboard - view all active locks{' ' * 18}|")
+        print(f"|  [4] Abort watcher startup{' ' * 36}|")
+        print(f"+{'=' * 62}+")
 
         while True:
             try:
@@ -1352,14 +1347,14 @@ def _graceful_shutdown() -> None:
                 n_kept = len(_local_owned_locks)
                 logger.warning(
                     (
-                        "Git status failed during shutdown — "
+                        "Git status failed during shutdown - "
                         "preserving %d lock(s) rather than releasing. "
                         "Locks will remain until next successful sync."
                     ),
                     n_kept,
                 )
                 for fp in sorted(_local_owned_locks):
-                    logger.debug("🔒 [KEPT] %s — git unavailable, lock preserved", fp)
+                    logger.debug("[KEPT] %s - git unavailable, lock preserved", fp)
             else:
                 # Smart release: only release locks for clean files
                 n_kept = 0
@@ -1369,7 +1364,7 @@ def _graceful_shutdown() -> None:
                 for fp in list(_local_owned_locks):
                     if fp in still_dirty:
                         n_kept += 1
-                        msg = f"🔒 [KEPT] {fp} — still has local edits, lock preserved"
+                        msg = f"[KEPT] {fp} - still has local edits, lock preserved"
                         logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
                     else:
                         try:
@@ -1380,7 +1375,7 @@ def _graceful_shutdown() -> None:
                                 .eq("developer_id", dev_id)
                             ).execute()
                             n_released += 1
-                            msg = f"🔓 [RELEASED] {fp}"
+                            msg = f"[RELEASED] {fp}"
                             logger.info(
                                 _color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg
                             )
@@ -1412,14 +1407,14 @@ def _graceful_shutdown() -> None:
                                     .eq("developer_id", dev_id)
                                 ).execute()
                                 n_released += 1
-                                msg = f"🔓 [RELEASED] {fp}"
+                                msg = f"[RELEASED] {fp}"
                                 logger.info(
                                     _color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg
                                 )
                             elif fp:
                                 n_kept += 1
                                 msg = (
-                                    f"🔒 [KEPT] {fp} — still has "
+                                    f"[KEPT] {fp} - still has "
                                     "local edits, lock preserved"
                                 )
                                 logger.debug(
@@ -1708,7 +1703,7 @@ def _existing_watcher_running() -> tuple[bool, int | None, str | None, str | Non
 
         # Always verify the process is actually alive before trusting any cmdline data.
         if not _is_process_alive(pid):
-            # Stale PID file — clean it up proactively so the next startup is fast.
+            # Stale PID file - clean it up proactively so the next startup is fast.
             try:
                 if os.path.exists(PID_FILE):
                     if isinstance(obj, dict):
@@ -1750,7 +1745,7 @@ def _existing_watcher_running() -> tuple[bool, int | None, str | None, str | Non
             stored_parent_pid = obj.get("parent_pid")
             if stored_parent_pid and not _is_process_alive(stored_parent_pid):
                 logger.debug(
-                    "Watcher PID %d is alive but its parent PID %d is dead — "
+                    "Watcher PID %d is alive but its parent PID %d is dead - "
                     "treating as orphaned",
                     pid,
                     stored_parent_pid,
@@ -1809,8 +1804,8 @@ def main() -> None:
     AGENT_ID = agent_identity.resolve_agent_id(_COLLAB_ROOT)
     AGENT_LABEL = agent_identity.resolve_agent_label()
     AGENT_KIND = agent_identity.resolve_agent_kind(agent_id=AGENT_ID)
-    # Strict attribution (parity with ``collab watch``): the background watcher —
-    # including this PyCharm entrypoint — attributes bulk git-status auto-locks to
+    # Strict attribution (parity with ``collab watch``): the background watcher -
+    # including this PyCharm entrypoint - attributes bulk git-status auto-locks to
     # the HUMAN developer, never to an AI agent, even when launched from a terminal
     # that exported COLLAB_AGENT_ID/COLLAB_AGENT_MODE. A dedicated agent watcher
     # can opt in explicitly via COLLAB_WATCHER_AGENT_ID.
@@ -1873,7 +1868,7 @@ def main() -> None:
                 label = _shorten_process_label(existing_cmd)
 
             if label:
-                first_line = f"Watcher already running (PID: {existing_pid}) — {label}."
+                first_line = f"Watcher already running (PID: {existing_pid}) - {label}."
             else:
                 first_line = f"Watcher already running (PID: {existing_pid})."
 
@@ -1884,7 +1879,7 @@ def main() -> None:
                 + "To stop: collab daemon-stop"
             )
             logger.info(msg)
-            # Avoid printing a duplicate concise line to the console — the logger
+            # Avoid printing a duplicate concise line to the console - the logger
             # output is sufficient and prevents double messages in IDE Run windows.
             sys.exit(0)
 
@@ -1944,7 +1939,7 @@ def main() -> None:
     logger.info("Interval: %ds | Timeout: %s", args.interval, timeout_label)
     if args.timeout > 0:
         logger.warning(
-            "⚠️  --timeout is deprecated. With lock-persistence semantics,\n"
+            "--timeout is deprecated. With lock-persistence semantics,\n"
             "    idle timeout means locks are kept alive with no active watcher.\n"
             "    Consider removing --timeout to run the watcher indefinitely,\n"
             "    or use `collab release-all` to manually clean up."
@@ -1974,7 +1969,7 @@ def main() -> None:
         last_modified = _run_git_status_porcelain()
     except Exception as exc:
         logger.warning(
-            "Initial git-status snapshot failed — "
+            "Initial git-status snapshot failed - "
             "first poll may lock unexpected files: %s",
             exc,
         )
@@ -2022,7 +2017,7 @@ def main() -> None:
                 # New files to lock
                 new_files = current_modified - last_modified
                 # Strict attribution: never auto-lock (as the human) a file that
-                # this developer's AI agent already holds — that would create
+                # this developer's AI agent already holds - that would create
                 # false CONFLICT noise and fight the agent.
                 new_files = _filter_agent_held_new_files(client, new_files)
                 # Delegate acquire/release logic to helper functions to allow
@@ -2047,7 +2042,7 @@ def main() -> None:
                         kept_locks = set(_local_owned_locks)
                     if kept_locks:
                         logger.warning(
-                            "⚠️  IDLE TIMEOUT REACHED (%dm of inactivity)\n"
+                            "IDLE TIMEOUT REACHED (%dm of inactivity)\n"
                             "    The watcher is stopping, but %d lock(s) are "
                             "being PRESERVED in Supabase\n"
                             "    because the following files still have local "

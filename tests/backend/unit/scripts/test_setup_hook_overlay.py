@@ -20,7 +20,8 @@ def test_setup_ps1_overlays_collab_hooks_after_pre_commit_install():
     assert overlay_index > install_index
     assert '$targetHooksDir = Join-Path $projectRoot ".git\\hooks"' in text
     assert (
-        '$hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg")' in text
+        '$hookNames = @("pre-commit", "post-commit", "pre-push", "commit-msg", '
+        '"post-merge", "post-checkout")' in text
     )
     assert "Copy-Item -Path $src -Destination $dst -Force" in text
     assert "Collab hook overlay installed " in text
@@ -103,7 +104,7 @@ def test_install_hooks_sh_includes_commit_msg():
     text = _script_text("scripts/install_hooks.sh")
 
     assert "commit-msg" in text
-    assert "pre-commit post-commit pre-push commit-msg" in text
+    assert "pre-commit post-commit pre-push commit-msg post-merge post-checkout" in text
 
 
 def test_setup_ps1_skips_collab_reinstall_when_healthy():
@@ -138,3 +139,54 @@ def test_setup_dev_sh_forwards_force_to_production_setup():
     assert "SETUP_ARGS=(--called-from-dev)" in text
     assert "SETUP_ARGS+=(--force)" in text
     assert './scripts/setup.sh "${SETUP_ARGS[@]}"' in text
+
+
+def test_remove_setup_collab_pip_orphans_cleans_stale_collab_dir():
+    """Verify Remove-SetupCollabPipOrphans in setup.ps1 removes stale collab/ dir."""
+    text = _script_text("scripts/setup.ps1")
+
+    assert "function Remove-SetupCollabPipOrphans" in text
+    assert "stale non-editable copy" in text
+    assert "Join-Path $SitePackagesDir 'collab'" in text
+    assert "Remove-Item -LiteralPath $staleCollabDir -Recurse -Force" in text
+    # Still handles rename orphans too
+    assert "~ollab*" in text
+    assert "~collab*" in text
+
+
+def test_setup_collab_remove_pip_orphans_cleans_stale_collab_dir():
+    """Verify setup_collab_remove_pip_orphans in setup.sh removes stale collab/ dir."""
+    text = _script_text("scripts/setup.sh")
+
+    assert "setup_collab_remove_pip_orphans()" in text
+    assert "stale non-editable copy" in text
+    assert 'rm -rf "$site_pkgs/collab"' in text
+    # Still handles rename orphans too
+    assert "~ollab*" in text
+    assert "~collab*" in text
+
+
+def test_post_merge_hook_has_orphan_cleanup():
+    """Verify post-merge hook template includes daemon stop + orphan cleanup."""
+    text = _script_text("collab/hook_templates/post-merge")
+
+    assert "daemon-stop" in text
+    assert "site_pkgs" in text
+    assert "rm -rf" in text
+    assert "~ollab_runtime" in text
+    assert "install -e ." in text
+    # Daemon is restarted after reinstall (background, non-blocking)
+    assert "collab daemon-start" in text
+
+
+def test_post_checkout_hook_has_orphan_cleanup():
+    """Verify post-checkout hook template includes daemon stop + orphan cleanup."""
+    text = _script_text("collab/hook_templates/post-checkout")
+
+    assert "daemon-stop" in text
+    assert "site_pkgs" in text
+    assert "rm -rf" in text
+    assert "~ollab_runtime" in text
+    assert "install -e ." in text
+    # Daemon is restarted after reinstall (background, non-blocking)
+    assert "collab daemon-start" in text

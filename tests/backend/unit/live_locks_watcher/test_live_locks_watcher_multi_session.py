@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from ._helpers import load_watcher_module, patch_subprocess
+from ._helpers import load_watcher_module
 
 
 def test_handle_multi_session_interactive_readopt_choice_1(monkeypatch):
@@ -153,8 +153,10 @@ def test_handle_post_restart_conflict_interactive_abort_choice_4(monkeypatch):
     assert exit_called == [1]
 
 
-def test_handle_post_restart_conflict_interactive_show_diff_then_continue(monkeypatch):
-    """Choice 2 shows git diff, then choice 1 continues and tracks conflict."""
+def test_handle_post_restart_conflict_interactive_show_diff_then_continue(
+    monkeypatch, capsys
+):
+    """Choice 2 runs git diff for the file and prints it; choice 1 then continues."""
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(sys, "stdin", type("F", (), {"isatty": lambda s: True})())
@@ -164,24 +166,43 @@ def test_handle_post_restart_conflict_interactive_show_diff_then_continue(monkey
     import builtins
 
     monkeypatch.setattr(builtins, "input", lambda p: next(inputs))
-    diff_bytes = b"diff --git a/src/conflict.py b/src/conflict.py\n"
-    patch_subprocess(monkeypatch, check_output=lambda *a, **k: diff_bytes)
-    monkeypatch.setattr(mod, "_notify", lambda t, m: None)
 
-    mod._active_conflicts.clear()
+    diff_calls = []
+
+    class _Captured:
+        stdout = b"diff --git a/collab/conflict.py b/collab/conflict.py\n+changed\n"
+        returncode = 0
+        timed_out = False
+
+        @property
+        def ok(self):
+            return True
+
+    def fake_capture(argv, **kwargs):
+        diff_calls.append(list(argv))
+        return _Captured()
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", fake_capture)
+    monkeypatch.setattr(mod, "_notify", lambda t, m: None)
+    monkeypatch.setattr(mod, "_active_conflicts", set())
+
     mod._handle_post_restart_conflict(
         None,
         "collab/conflict.py",
         {"owner": "bob", "branch": "main", "reason": "test"},
     )
 
+    # A git diff was invoked for the conflicting file and printed to the console.
+    assert ["git", "diff", "collab/conflict.py"] in diff_calls
+    out = capsys.readouterr().out
+    assert "git diff collab/conflict.py" in out
     assert "collab/conflict.py" in mod._active_conflicts
 
 
 def test_handle_post_restart_conflict_interactive_diff_failure_then_continue(
-    monkeypatch,
+    monkeypatch, capsys
 ):
-    """Choice 2 handles git diff failure and still allows continue."""
+    """Choice 2 prints the git diff failure message and choice 1 still continues."""
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(sys, "stdin", type("F", (), {"isatty": lambda s: True})())
@@ -192,15 +213,17 @@ def test_handle_post_restart_conflict_interactive_diff_failure_then_continue(
 
     monkeypatch.setattr(builtins, "input", lambda p: next(inputs))
 
-    def _boom(*args, **kwargs):
+    def boom_capture(argv, **kwargs):
         raise RuntimeError("git diff unavailable")
 
-    patch_subprocess(monkeypatch, check_output=_boom)
+    monkeypatch.setattr(mod.safe_subprocess, "capture", boom_capture)
     monkeypatch.setattr(mod, "_notify", lambda t, m: None)
+    monkeypatch.setattr(mod, "_active_conflicts", set())
 
-    mod._active_conflicts.clear()
     mod._handle_post_restart_conflict(None, "collab/conflict.py", {"owner": "bob"})
 
+    out = capsys.readouterr().out
+    assert "(git diff failed:" in out
     assert "collab/conflict.py" in mod._active_conflicts
 
 
@@ -289,11 +312,14 @@ def test_handle_multi_session_choice1_update_exception(monkeypatch):
     assert "collab/err_update.py" in mod._local_owned_locks
 
 
-def test_handle_multi_session_choice3_delete_exception(monkeypatch):
-    """Delete failure on choice 3 should be caught without crashing."""
+def test_handle_multi_session_choice3_delete_exception(monkeypatch, caplog):
+    """Delete failure on choice 3 is logged and the lock is not adopted locally."""
+    import logging
+
     mod = load_watcher_module()
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(sys, "stdin", type("F", (), {"isatty": lambda s: True})())
+    monkeypatch.setattr(mod, "_local_owned_locks", set())
 
     import builtins
 
@@ -313,5 +339,11 @@ def test_handle_multi_session_choice3_delete_exception(monkeypatch):
         def table(self, name):
             return FakeTable()
 
-    # no raise expected
-    mod._handle_multi_session_lock(FakeClient(), "collab/err_delete.py", "old-token")
+    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+        # no raise expected
+        mod._handle_multi_session_lock(
+            FakeClient(), "collab/err_delete.py", "old-token"
+        )
+
+    assert "collab/err_delete.py" not in mod._local_owned_locks
+    assert "Failed to release lock for collab/err_delete.py" in caplog.text

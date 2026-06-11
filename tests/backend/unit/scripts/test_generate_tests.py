@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import runpy
 import sys
+from pathlib import Path
 
 import pytest
 
 from tests.backend.unit.scripts._helpers import load_script_module
 
 gen = load_script_module("generate_tests.py", "generate_tests_under_test")
+
+# tests/backend/unit/scripts/test_generate_tests.py -> repository root.
+REPO_ROOT = Path(__file__).resolve().parents[4]
+GENERATE_TESTS_SCRIPT = REPO_ROOT / "scripts" / "generate_tests.py"
 
 
 class TestCodeAnalyzer:
@@ -199,10 +204,22 @@ class TestDiscovery:
 
 class TestMain:
     def test_scan_mode(self, monkeypatch, capsys):
+        # Mock discovery so the exact bullet output is deterministic. The empty
+        # ("All modules have tests") case is covered by the sibling test
+        # test_scan_mode_all_modules_have_tests_branch.
+        monkeypatch.setattr(
+            gen.TestDiscovery,
+            "find_untested",
+            lambda self, src_dir=None: ["collab/alpha.py", "scripts/beta.py"],
+        )
         monkeypatch.setattr(sys, "argv", ["generate_tests.py", "--scan"])
         gen.main()
         out = capsys.readouterr().out
-        assert "Untested modules" in out or "All modules have tests" in out
+        assert "Untested modules in repository" in out
+        assert "  • collab/alpha.py" in out
+        assert "  • scripts/beta.py" in out
+        assert "Run: python scripts/generate_tests.py" in out
+        assert "All modules have tests" not in out
 
     def test_no_source_file_prints_help(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["generate_tests.py"])
@@ -300,8 +317,40 @@ class TestMain:
         assert "File exists" in capsys.readouterr().out
 
 
-def test_generate_tests_dunder_main(monkeypatch, tmp_path):
+class TestDiscoveryHelperBranches:
+    def test_iter_repo_source_files_yields_root_level_modules(self, tmp_path):
+        """Repo-root scan yields top-level ``*.py`` candidates (lines 398-399)."""
+        (tmp_path / "run.py").write_text("x = 1\n", encoding="utf-8")
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        files = list(disc._iter_repo_source_files(disc.repo_root))
+        assert (tmp_path / "run.py") in files
+
+    def test_should_skip_dir_excluded_and_normal(self, tmp_path):
+        """Excluded/egg-info dirs skip; ordinary dirs do not (lines 427, 430)."""
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        assert disc._should_skip_dir(tmp_path / "build") is True
+        assert disc._should_skip_dir(tmp_path / "pkg.egg-info") is True
+        assert disc._should_skip_dir(tmp_path / "ordinary") is False
+
+    def test_is_candidate_source_rejects_non_py_and_special_names(self, tmp_path):
+        """Non-.py and dunder/test/private files are rejected (lines 435, 437)."""
+        disc = gen.TestDiscovery(repo_root=tmp_path)
+        assert disc._is_candidate_source(tmp_path / "notes.txt") is False
+        assert disc._is_candidate_source(tmp_path / "__init__.py") is False
+        assert disc._is_candidate_source(tmp_path / "test_mod.py") is False
+        assert disc._is_candidate_source(tmp_path / "_private.py") is False
+
+
+def test_generate_tests_dunder_main(monkeypatch, tmp_path, capsys):
+    # Exercise the ``if __name__ == "__main__": main()`` guard via an absolute,
+    # CWD-independent path and assert the dry-run output main() actually prints.
     src = tmp_path / "sample_mod.py"
     src.write_text("def hello():\n    return 1\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["generate_tests.py", str(src), "--dry-run"])
-    runpy.run_path("scripts/generate_tests.py", run_name="__main__")
+
+    runpy.run_path(str(GENERATE_TESTS_SCRIPT), run_name="__main__")
+
+    out = capsys.readouterr().out
+    assert "Found 1 testable entities" in out
+    assert "Generated test template" in out
+    assert "Preview mode - no files created" in out
