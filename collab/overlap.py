@@ -106,6 +106,17 @@ def is_line_level_enabled() -> bool:
     return raw not in _FALSE_VALUES
 
 
+def is_pr_claims_enabled() -> bool:
+    """Return True when ``COLLAB_PR_CLAIMS`` opt-in is enabled.
+
+    When enabled, the pre-push hook retains the pushed branch's files as persistent
+    claims (instead of releasing them) so cross-developer edit-time protection extends
+    to open, pushed PR branches. Default OFF.
+    """
+    raw = os.getenv("COLLAB_PR_CLAIMS", "0").strip().lower()
+    return raw in _TRUE_VALUES
+
+
 def _default_git_capture(cwd: str, args: Sequence[str]) -> tuple[int, str]:
     timeout = _FETCH_TIMEOUT_S if args and args[0] == "fetch" else 30.0
     result = safe_subprocess.capture(
@@ -411,6 +422,84 @@ def detect_cross_branch_overlaps(
 
     reports.sort(key=lambda item: item.branch)
     return reports
+
+
+def stale_claim_branches(
+    repo_root: str | Path,
+    branches: Sequence[str],
+    *,
+    remote: Optional[str] = None,
+    git_capture: Optional[GitCapture] = None,
+    fetch: bool = True,
+) -> frozenset[str]:
+    """Return the subset of ``branches`` whose PR claims should be released.
+
+    A claim's branch is considered stale (safe to release) when, on the remote, the
+    branch is **gone** (merged-and-deleted, or deleted) -- the primary, squash-merge-
+    safe signal -- or fully **merged** into the base ref. Forces a pruning ``git fetch``
+    first (unconditionally, unlike the advisory path) so deletions are seen. Git-only;
+    never raises (returns what it could determine).
+    """
+    wanted = {b for b in branches if b}
+    if not wanted:
+        return frozenset()
+
+    cwd = str(Path(repo_root).resolve())
+
+    def capture(args: Sequence[str]) -> tuple[int, str]:
+        runner = git_capture or (lambda a: _default_git_capture(cwd, a))
+        return runner(args)
+
+    try:
+        if remote is None:
+            remote = resolve_remote(capture)
+        if fetch:
+            try:
+                capture(["fetch", "--prune", "--quiet", remote])
+            except Exception:
+                logger.debug("prune-fetch for claim reconcile failed", exc_info=True)
+
+        base_ref = resolve_base_ref(capture, remote)
+        stale: set[str] = set()
+        for branch in wanted:
+            ref = f"{remote}/{branch}"
+            if not _ref_exists(capture, ref):
+                stale.add(branch)  # gone on remote (deleted / merged-and-deleted)
+                continue
+            if base_ref and not _is_unmerged(capture, ref, base_ref):
+                stale.add(branch)  # fully merged into the base
+        return frozenset(stale)
+    except Exception:
+        logger.debug("stale_claim_branches failed", exc_info=True)
+        return frozenset()
+
+
+def head_changed_files(
+    repo_root: str | Path,
+    *,
+    remote: Optional[str] = None,
+    git_capture: Optional[GitCapture] = None,
+) -> tuple[Optional[str], list[str]]:
+    """Return ``(branch, files)`` changed on HEAD vs the resolved base ref.
+
+    ``files`` is the sorted set of paths that make up the current branch's diff from the
+    base (i.e. what an open PR for this branch would contain) -- the set to retain as PR
+    claims on push. ``files`` is empty when no base ref resolves (caller should then
+    fall back to ordinary release). ``branch`` is None on a detached HEAD.
+    """
+    cwd = str(Path(repo_root).resolve())
+
+    def capture(args: Sequence[str]) -> tuple[int, str]:
+        runner = git_capture or (lambda a: _default_git_capture(cwd, a))
+        return runner(args)
+
+    if remote is None:
+        remote = resolve_remote(capture)
+    branch, _ = _current_branch(capture)
+    base_ref = resolve_base_ref(capture, remote)
+    if not base_ref:
+        return branch, []
+    return branch, sorted(_changed_files_since_base(capture, "HEAD", base_ref))
 
 
 # Plain-ASCII so the message renders identically on a Windows cp1252 console and a

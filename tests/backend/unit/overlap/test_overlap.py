@@ -709,6 +709,172 @@ def test_refresh_remote_state_handles_exception(monkeypatch, tmp_path):
     assert overlap.refresh_remote_state(tmp_path, git_capture=boom) is False
 
 
+# --- PR claims: env + git helpers ------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "ON"])
+def test_is_pr_claims_enabled_truthy(monkeypatch, value):
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", value)
+    assert overlap.is_pr_claims_enabled() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "maybe"])
+def test_is_pr_claims_disabled(monkeypatch, value):
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", value)
+    assert overlap.is_pr_claims_enabled() is False
+
+
+def test_is_pr_claims_default_off(monkeypatch):
+    monkeypatch.delenv("COLLAB_PR_CLAIMS", raising=False)
+    assert overlap.is_pr_claims_enabled() is False
+
+
+def test_stale_claim_branches_empty_input():
+    assert (
+        overlap.stale_claim_branches("/x", [], git_capture=lambda _a: (1, ""))
+        == frozenset()
+    )
+
+
+def test_stale_claim_branches_classifies(monkeypatch):
+    cap = _capture_from_map(
+        {
+            ("fetch", "--prune", "--quiet", "origin"): (0, ""),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            # gone: ref does not resolve
+            ("rev-parse", "--verify", "origin/feat/gone"): (1, ""),
+            # merged: ref resolves, 0 commits beyond base
+            ("rev-parse", "--verify", "origin/feat/merged"): (0, "sha-m"),
+            ("rev-list", "--count", "origin/main..origin/feat/merged"): (0, "0"),
+            # open: ref resolves, commits beyond base
+            ("rev-parse", "--verify", "origin/feat/open"): (0, "sha-o"),
+            ("rev-list", "--count", "origin/main..origin/feat/open"): (0, "4"),
+        }
+    )
+    stale = overlap.stale_claim_branches(
+        "/x",
+        ["feat/gone", "feat/merged", "feat/open"],
+        remote="origin",
+        git_capture=cap,
+    )
+    assert stale == frozenset({"feat/gone", "feat/merged"})
+
+
+def test_stale_claim_branches_fetches_by_default():
+    seen: list[tuple[str, ...]] = []
+
+    def cap(args):
+        seen.append(tuple(args))
+        if args[:2] == ["rev-parse", "--verify"]:
+            return (1, "")  # everything gone -> stale
+        return (0, "")
+
+    overlap.stale_claim_branches("/x", ["feat/x"], remote="origin", git_capture=cap)
+    assert ("fetch", "--prune", "--quiet", "origin") in seen
+
+
+def test_stale_claim_branches_skip_fetch():
+    seen: list[tuple[str, ...]] = []
+
+    def cap(args):
+        seen.append(tuple(args))
+        return (1, "")
+
+    overlap.stale_claim_branches(
+        "/x", ["feat/x"], remote="origin", git_capture=cap, fetch=False
+    )
+    assert not any(a and a[0] == "fetch" for a in seen)
+
+
+def test_stale_claim_branches_resolves_remote_when_none(monkeypatch):
+    monkeypatch.delenv("COLLAB_OVERLAP_REMOTE", raising=False)
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): (
+                0,
+                "origin/main",
+            ),
+            ("fetch", "--prune", "--quiet", "origin"): (0, ""),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "--verify", "origin/feat/gone"): (1, ""),
+        }
+    )
+    # remote not passed -> resolve_remote() is exercised.
+    result = overlap.stale_claim_branches("/x", ["feat/gone"], git_capture=cap)
+    assert result == frozenset({"feat/gone"})
+
+
+def test_stale_claim_branches_swallows_errors():
+    def boom(_args):
+        raise RuntimeError("git down")
+
+    # Any failure -> empty set (never raises, never wrongly releases a claim).
+    assert (
+        overlap.stale_claim_branches("/x", ["feat/x"], git_capture=boom) == frozenset()
+    )
+
+
+def test_stale_claim_branches_tolerates_fetch_error():
+    def cap(args):
+        if args and args[0] == "fetch":
+            raise RuntimeError("fetch boom")
+        return (1, "")  # refs do not resolve -> gone -> stale
+
+    result = overlap.stale_claim_branches(
+        "/x", ["feat/x"], remote="origin", git_capture=cap
+    )
+    assert result == frozenset({"feat/x"})
+
+
+def test_head_changed_files_returns_branch_and_sorted_files():
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/cur"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base"),
+            ("diff", "--name-only", "base...HEAD"): (0, "z.py\na.py"),
+        }
+    )
+    branch, files = overlap.head_changed_files("/x", remote="origin", git_capture=cap)
+    assert branch == "feat/cur"
+    assert files == ["a.py", "z.py"]
+
+
+def test_head_changed_files_resolves_remote_when_none(monkeypatch):
+    monkeypatch.delenv("COLLAB_OVERLAP_REMOTE", raising=False)
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): (
+                0,
+                "origin/main",
+            ),
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/cur"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base"),
+            ("diff", "--name-only", "base...HEAD"): (0, "a.py"),
+        }
+    )
+    # remote not passed -> resolve_remote() path exercised.
+    branch, files = overlap.head_changed_files("/x", git_capture=cap)
+    assert branch == "feat/cur"
+    assert files == ["a.py"]
+
+
+def test_head_changed_files_empty_when_no_base():
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/cur"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("rev-parse", "--verify", "origin/main"): (1, ""),
+            ("rev-parse", "--verify", "origin/master"): (1, ""),
+        }
+    )
+    branch, files = overlap.head_changed_files("/x", remote="origin", git_capture=cap)
+    assert files == []
+
+
 # --- resolve_remote ---------------------------------------------------------
 
 
@@ -857,7 +1023,7 @@ def test_detect_line_level_keeps_real_conflict(monkeypatch):
 
 
 def test_detect_line_level_falls_back_when_unsupported(monkeypatch):
-    """merge-tree unavailable -> keep file-level overlap (no silent miss)."""
+    """Merge-tree unavailable -> keep file-level overlap (no silent miss)."""
     cap = _line_level_map((128, ""))
     reports = overlap.detect_cross_branch_overlaps(
         "/x", git_capture=cap, remote="origin", line_level=True

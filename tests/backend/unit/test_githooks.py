@@ -338,6 +338,91 @@ def test_release_all_success(monkeypatch, tmp_path):
     assert "Released 3 lock(s)." in err.getvalue()
 
 
+def test_release_all_retains_pr_claims_when_enabled(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "1")
+    calls: dict = {}
+
+    class _Client:
+        def reconcile_pr_claims(self):
+            calls["reconcile"] = True
+            return 0
+
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 0
+
+        def release_all_except(self, keep, branch):
+            calls["except"] = (tuple(keep), branch)
+            return 2
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr(
+        githooks.overlap,
+        "head_changed_files",
+        lambda root: ("feat/x", ["a.py", "b.py"]),
+    )
+    err = io.StringIO()
+    with redirect_stderr(err):
+        assert githooks.release_all() == 0
+    assert calls.get("reconcile") is True
+    assert calls.get("except") == (("a.py", "b.py"), "feat/x")
+    assert "release_all" not in calls  # claims path, not plain release
+    assert "Released 2 lock(s)." in err.getvalue()
+
+
+def test_release_all_falls_back_when_no_changed_files(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "1")
+    calls: dict = {}
+
+    class _Client:
+        def reconcile_pr_claims(self):
+            return 0
+
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 4
+
+        def release_all_except(self, keep, branch):
+            calls["except"] = True
+            return 0
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    monkeypatch.setattr(
+        githooks.overlap, "head_changed_files", lambda root: ("feat/x", [])
+    )
+    with redirect_stderr(io.StringIO()):
+        assert githooks.release_all() == 0
+    assert calls.get("release_all") is True
+    assert "except" not in calls
+
+
+def test_release_all_disabled_uses_plain_release(monkeypatch, tmp_path):
+    _patch_acquire_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("COLLAB_PR_CLAIMS", raising=False)
+    calls: dict = {}
+
+    class _Client:
+        def release_all(self, **k):
+            calls["release_all"] = True
+            return 1
+
+        def release_all_except(self, *a):
+            calls["except"] = True
+            return 0
+
+        def reconcile_pr_claims(self):
+            calls["reconcile"] = True
+            return 0
+
+    monkeypatch.setattr("collab.lock_client.LockClient", lambda: _Client())
+    with redirect_stderr(io.StringIO()):
+        assert githooks.release_all() == 0
+    assert calls.get("release_all") is True
+    assert "except" not in calls and "reconcile" not in calls
+
+
 def test_warn_cross_branch_overlap_emits_warnings(monkeypatch, tmp_path):
     _patch_acquire_env(monkeypatch, tmp_path)
     monkeypatch.setenv("COLLAB_OVERLAP_FETCH", "0")

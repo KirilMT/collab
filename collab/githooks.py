@@ -211,7 +211,13 @@ def warn_cross_branch_overlap(remote: Optional[str] = None) -> int:
 
 
 def release_all() -> int:
-    """Release all locks held by this developer; used by the pre-push hook."""
+    """Release locks held by this developer; used by the pre-push hook.
+
+    Default behavior releases every lock (work is "in progress" only while local). When
+    ``COLLAB_PR_CLAIMS=1``, the files changed on the pushed branch are instead retained
+    as persistent PR claims so cross-developer edit-time protection extends to the open
+    PR; everything else is released as usual.
+    """
     root = _git_toplevel()
     _load_env(root)
 
@@ -219,13 +225,42 @@ def release_all() -> int:
 
     try:
         client = LockClient()
-        released = client.release_all()
+        if overlap.is_pr_claims_enabled():
+            released = _release_retaining_pr_claims(client, root)
+        else:
+            released = client.release_all()
     except Exception as exc:
         _hook_log(f"[collab] Warning: lock cleanup failed: {exc}")
         return 0
 
     _hook_log(f"[collab] Released {released} lock(s).")
     return 0
+
+
+def _release_retaining_pr_claims(client, root: Path) -> int:
+    """Reconcile stale claims, then retain the pushed branch's files as claims.
+
+    NOTE: the pre-push hook runs before the push transport completes, so claims may
+    briefly exist for a branch that did not reach the remote if the push then fails;
+    the next reconcile (branch-gone) or the DB-side expiry releases those.
+    """
+    try:
+        stale = client.reconcile_pr_claims()
+        if stale:
+            _hook_log(f"[collab] Released {stale} stale PR claim(s).")
+    except Exception as exc:
+        _hook_log(f"[collab] Warning: PR-claim reconcile failed: {exc}")
+
+    branch, changed = overlap.head_changed_files(root)
+    if not changed:
+        # No resolvable base / no changed files -> behave exactly as today.
+        return int(client.release_all())
+
+    _hook_log(
+        f"[collab] Retaining {len(changed)} file(s) as PR claim(s) for "
+        f"branch '{branch or '?'}' (COLLAB_PR_CLAIMS=1)."
+    )
+    return int(client.release_all_except(changed, branch))
 
 
 def _read_template(name: str) -> str:

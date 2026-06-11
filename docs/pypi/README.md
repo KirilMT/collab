@@ -73,6 +73,7 @@ COLLAB_OVERLAP_STRICT=0                            # 1 = block git push on cross
 COLLAB_OVERLAP_FETCH=auto                          # auto = fetch only in strict; 1/0 to force/skip
 COLLAB_OVERLAP_LINE_LEVEL=1                        # 0 = file-level instead of git merge-tree (line-level)
 COLLAB_OVERLAP_REMOTE=                             # override the auto-detected remote (e.g. upstream)
+COLLAB_PR_CLAIMS=0                                 # 1 = keep a pushed branch's files claimed until merged
 ```
 
 > **Keep `SUPABASE_SERVICE_ROLE_KEY` private — never commit it to version control.**
@@ -123,7 +124,10 @@ when overlaps are detected (fail-closed, and the hook first runs `git fetch` so 
 from other clones are seen). Overlap is confirmed at line level via `git merge-tree`, so edits to
 different regions of the same file are not flagged, and the comparison remote is auto-detected.
 For enforcement that cannot be bypassed with `git push --no-verify`,
-add the `PR Overlap Guard` GitHub Action to your branch-protection required checks. The hooks
+add the `PR Overlap Guard` GitHub Action to your branch-protection required checks.
+For **edit-time** protection across open PRs, set `COLLAB_PR_CLAIMS=1`: a pushed branch's
+files stay claimed (so other developers are warned/blocked as they edit) until the branch is
+merged or deleted — this requires re-running `supabase/schema.sql` (idempotent migration). The hooks
 resolve the project `.venv` first,
 so **commits from VS Code / Cursor Source Control behave the same as a venv-activated terminal**.
 
