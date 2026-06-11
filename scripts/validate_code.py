@@ -1006,8 +1006,9 @@ def validate_python_backend(
                 except Exception:
                     continue
                 if first_line.strip() != "#!/bin/sh":
+                    rel_path = hook_path.relative_to(_project_root)
                     print_error(
-                        f"Hook template shebang mismatch: {hook_path.relative_to(_project_root)} "
+                        f"Hook template shebang mismatch: {rel_path} "
                         f"uses {first_line!r} — expected #!/bin/sh"
                     )
                     hook_shebang_ok = False
