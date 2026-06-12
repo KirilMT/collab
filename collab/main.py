@@ -207,9 +207,9 @@ def _run_cli() -> None:
     # daemon-status
     sub.add_parser("daemon-status", help="Check watcher daemon status")
 
-    # restart
+    # daemon-restart
     rst = sub.add_parser(
-        "restart",
+        "daemon-restart",
         help="Restart the watcher daemon (stop + start)",
     )
     rst.add_argument("--interval", type=int, default=5, help="Poll interval (seconds)")
@@ -585,7 +585,7 @@ def _run_cli() -> None:
             running = client.daemon_status()
             sys.exit(0 if running else 1)
 
-        elif args.command == "restart":
+        elif args.command == "daemon-restart":
             open_flag = getattr(args, "open_dashboard", False)
             auto_env = os.getenv("AUTO_OPEN_DASHBOARD", "0").lower() in (
                 "1",

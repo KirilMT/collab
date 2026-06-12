@@ -15,7 +15,7 @@ not yet have an issue:
 1. Restate the task to confirm scope.
 2. Search [existing issues](https://github.com/KirilMT/collab/issues) for duplicates.
 3. If none found, **create the issue now** — before touching any code — with:
-   - Title: `type: description` (e.g., `feat: add restart and --version CLI commands`)
+   - Title: `type: description` (e.g., `feat: add daemon-restart and --version CLI commands`)
    - Labels: `type:*`, `priority:*`, `scope:*`, `status: in-progress`
    - Assignee: yourself
    - Project: [Collab Roadmap](https://github.com/users/KirilMT/projects/2), Status → `In Progress`

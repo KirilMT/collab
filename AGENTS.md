@@ -338,7 +338,7 @@ stands.
 1. **Understand the task** — restate it back to the user to confirm scope.
 2. **Search existing issues** — is there already an issue for this? If yes, use it.
 3. **If no issue exists → create one NOW**, before touching any code:
-   - Title: concise, action-oriented (e.g., `feat: add --version and restart CLI commands`)
+   - Title: concise, action-oriented (e.g., `feat: add --version and daemon-restart CLI commands`)
    - Body: brief description of what's being done and why
    - Labels: `type:*` + `priority:*` + `scope:*` + `status: in-progress`
    - Assignee: the developer responsible for the task (e.g., the repo owner, GitHub user that is working on this task or whoever requested the work)

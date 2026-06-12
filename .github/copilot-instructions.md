@@ -55,7 +55,7 @@ existing Issues:
 1. **Restate the task** to the user to confirm scope.
 2. **Search** [existing issues](https://github.com/KirilMT/collab/issues) for duplicates.
 3. **If no issue exists → create one NOW**, before touching any code:
-   - Title: concise, action-oriented (e.g., `feat: add --version and restart CLI commands`)
+   - Title: concise, action-oriented (e.g., `feat: add --version and daemon-restart CLI commands`)
    - Body: brief description of what's being done
    - Labels: `type:*` + `priority:*` + `scope:*` + `status: in-progress`
    - Assignee: yourself
