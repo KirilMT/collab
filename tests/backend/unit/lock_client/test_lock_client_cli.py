@@ -776,11 +776,11 @@ def test_cli_history_formatted_output(monkeypatch, capsys):
     assert "@alice" in captured.out
 
 
-# ── restart / ping / info / logs CLI command tests ──
+# ── daemon-restart / ping / info / logs CLI command tests ──
 
 
-def test_cli_restart(monkeypatch, tmp_path, capsys):
-    """``collab restart`` calls daemon_stop then daemon_start."""
+def test_cli_daemon_restart(monkeypatch, tmp_path, capsys):
+    """``collab daemon-restart`` calls daemon_stop then daemon_start."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
@@ -806,7 +806,7 @@ def test_cli_restart(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(mod, "LockClient", LocalLockClient)
     patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "restart"])
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-restart"])
 
     mod._run_cli()
     assert calls == ["stop", "start"]
@@ -891,8 +891,8 @@ def test_cli_ping_connection_failure(monkeypatch, capsys):
     assert "Cannot reach" in out
 
 
-def test_cli_restart_with_auto_open(monkeypatch, tmp_path, capsys):
-    """``collab restart`` passes open_dashboard when AUTO_OPEN_DASHBOARD=1."""
+def test_cli_daemon_restart_with_auto_open(monkeypatch, tmp_path, capsys):
+    """``collab daemon-restart`` passes open_dashboard when AUTO_OPEN_DASHBOARD=1."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
     monkeypatch.setenv("AUTO_OPEN_DASHBOARD", "1")
@@ -919,7 +919,7 @@ def test_cli_restart_with_auto_open(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(mod, "LockClient", LocalLockClient)
     patch_subprocess(monkeypatch, popen=lambda *a, **k: FakeProc())
-    monkeypatch.setattr(sys, "argv", ["lock_client.py", "restart"])
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "daemon-restart"])
 
     mod._run_cli()
     assert start_kwargs.get("open_dashboard") is True

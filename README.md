@@ -237,6 +237,9 @@ collab daemon-status
 # Stop the daemon
 collab daemon-stop
 
+# Restart the daemon
+collab daemon-restart
+
 # Foreground watcher (internal/diagnostics)
 collab watch --interval 5 --timeout 0
 

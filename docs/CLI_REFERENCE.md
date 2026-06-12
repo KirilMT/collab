@@ -110,21 +110,21 @@ additions (runtime fingerprinting, extra install guidance, etc.) on top.
 
 ## Daemon and watcher
 
-| Command         | Options                                                                    | Description                                      |
-| --------------- | -------------------------------------------------------------------------- | ------------------------------------------------ |
-| `daemon-start`  | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Start background watcher                         |
-| `daemon-stop`   | —                                                                          | Stop watcher                                     |
-| `daemon-status` | —                                                                          | Print running/stopped; exit code reflects state  |
-| `restart`       | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Stop and restart the watcher daemon              |
-| `cleanup`       | —                                                                          | Kill orphaned watcher processes; preserves locks |
-| `watch`         | See [watch options](#watch-internal)                                       | Foreground watcher (used by daemon-start)        |
+| Command          | Options                                                                    | Description                                      |
+| ---------------- | -------------------------------------------------------------------------- | ------------------------------------------------ |
+| `daemon-start`   | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Start background watcher                         |
+| `daemon-stop`    | —                                                                          | Stop watcher                                     |
+| `daemon-status`  | —                                                                          | Print running/stopped; exit code reflects state  |
+| `daemon-restart` | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Stop and restart the watcher daemon              |
+| `cleanup`        | —                                                                          | Kill orphaned watcher processes; preserves locks |
+| `watch`          | See [watch options](#watch-internal)                                       | Foreground watcher (used by daemon-start)        |
 
 **Examples:**
 
 ```bash
 collab daemon-start --interval 10
 collab daemon-status
-collab restart --interval 10
+collab daemon-restart --interval 10
 collab daemon-stop
 ```
 

@@ -117,7 +117,7 @@ class TestCLICommandAvailability:
             "daemon-start",
             "daemon-stop",
             "daemon-status",
-            "restart",
+            "daemon-restart",
             "history",
             "reconcile",
             "ping",
@@ -134,13 +134,13 @@ class TestCLICommandAvailability:
         assert exit_code == 0
         assert "collab-runtime" in stdout
 
-    def test_restart_command_available(self) -> None:
-        """Verify 'restart' command is registered and exits cleanly."""
+    def test_daemon_restart_command_available(self) -> None:
+        """Verify 'daemon-restart' command is registered and exits cleanly."""
         exit_code, _, stderr = run_collab_cli(
-            "restart",
+            "daemon-restart",
             expect_success=False,
         )
-        # restart may fail in isolated env (no Supabase), but must be a
+        # daemon-restart may fail in isolated env (no Supabase), but must be a
         # recognized command (argparse must not reject it as an unknown choice)
         # and must not crash with an unhandled traceback.
         assert exit_code in (0, 1)
