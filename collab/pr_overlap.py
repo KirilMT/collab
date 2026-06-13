@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional
 
-GITHUB_API = "https://api.github.com"
+GITHUB_API = (os.getenv("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
 
 # Exit codes (consumed by the workflow / branch protection).
 EXIT_OK = 0

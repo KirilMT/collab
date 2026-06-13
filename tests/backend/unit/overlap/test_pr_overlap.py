@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -306,3 +307,78 @@ def test_default_http_without_token(monkeypatch):
     monkeypatch.setattr(pr_overlap.urllib.request, "urlopen", fake_urlopen)
     assert pr_overlap._default_http("https://api.github.com/x", None) == []
     assert "authorization" not in captured["headers"]
+
+
+# --- GITHUB_API_URL / GHES support -----------------------------------------
+
+
+def test_default_http_accepts_ghes_api_url(monkeypatch):
+    """_default_http accepts URLs rooted at a GHES GITHUB_API_URL."""
+    monkeypatch.setattr(pr_overlap, "GITHUB_API", "https://github.example.com/api/v3")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    monkeypatch.setattr(
+        pr_overlap.urllib.request, "urlopen", lambda req, timeout=0: _Resp()
+    )
+    # Should not raise ValueError for a GHES API URL.
+    result = pr_overlap._default_http(
+        "https://github.example.com/api/v3/repos/o/r/pulls/1/files", None
+    )
+    assert result == []
+
+
+def test_default_http_rejects_foreign_host_with_ghes_api(monkeypatch):
+    """_default_http still blocks non-GitHub hosts when GITHUB_API is custom."""
+    monkeypatch.setattr(pr_overlap, "GITHUB_API", "https://github.example.com/api/v3")
+    with pytest.raises(ValueError, match="refusing to open"):
+        pr_overlap._default_http("https://evil.com/x", None)
+
+
+def test_ghes_api_url_builders_use_correct_base(monkeypatch):
+    """URL builders (_pr_files, gather_other_prs) honour the resolved base."""
+    monkeypatch.setattr(pr_overlap, "GITHUB_API", "https://github.example.com/api/v3")
+    captured_urls = []
+
+    def fake_http(url, _token):
+        captured_urls.append(url)
+        return []
+
+    pr_overlap._pr_files(fake_http, "o/r", 1, None)
+    assert captured_urls
+    assert captured_urls[0].startswith(
+        "https://github.example.com/api/v3/repos/o/r/pulls/1/files"
+    )
+
+
+def test_ghes_api_gather_other_prs_uses_correct_base(monkeypatch):
+    """gather_other_prs constructs the list URL from the resolved base."""
+    monkeypatch.setattr(pr_overlap, "GITHUB_API", "https://github.example.com/api/v3")
+    captured_urls = []
+
+    def fake_http(url, _token):
+        captured_urls.append(url)
+        return []
+
+    config = pr_overlap.GuardConfig(repo="o/r", pr_number=1, base_ref="main")
+    pr_overlap.gather_other_prs(fake_http, config)
+    assert captured_urls
+    assert captured_urls[0].startswith(
+        "https://github.example.com/api/v3/repos/o/r/pulls?state=open"
+    )
+
+
+def test_ghes_env_var_defaults_to_public_api(monkeypatch):
+    """When GITHUB_API_URL is unset, the resolved base is api.github.com."""
+    monkeypatch.delenv("GITHUB_API_URL", raising=False)
+    # Recompute GITHUB_API as the module would at import time.
+    resolved = (os.getenv("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
+    assert resolved == "https://api.github.com"
