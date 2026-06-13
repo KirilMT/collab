@@ -59,8 +59,9 @@ function logToCollab(message, level = "INFO") {
     const logFile = path.join(logDir, "collab.log");
 
     const now = new Date();
-    // Format: YYYY-MM-DD HH:MM:SS
-    const dateStr = now.toISOString().replace(/T/, " ").replace(/\..+/, "");
+    // Format: YYYY-MM-DD HH:MM:SS in local time (matching Python's asctime default)
+    const pad = (n) => String(n).padStart(2, "0");
+    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
     const entry = `[${dateStr}] ${level} collab.extension: ${message}\n`;
     fs.appendFileSync(logFile, entry);
   } catch (e) {
@@ -72,7 +73,8 @@ function logToCollab(message, level = "INFO") {
     if (workspaceRoot) {
       const debugLog = path.join(workspaceRoot, "logs", "extension_debug.log");
       const now = new Date();
-      const dateStr = now.toISOString().replace(/T/, " ").replace(/\..+/, "");
+      const pad = (n) => String(n).padStart(2, "0");
+      const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
       fs.appendFileSync(debugLog, `[${dateStr}] ${level} ${message}\n`);
     }
   } catch (e) {
@@ -807,6 +809,8 @@ function startWatcher() {
   try {
     const staleStopFile = path.join(stateDir, ".stop_request");
     const staleShutdownFile = path.join(stateDir, ".shutdown_complete");
+    const staleStartupSummary = path.join(stateDir, ".startup_summary.json");
+    const repoStartupSummary = path.join(workspaceRoot, ".startup_summary.json");
     if (fs.existsSync(staleStopFile)) {
       fs.unlinkSync(staleStopFile);
       if (outputChannel)
@@ -821,11 +825,38 @@ function startWatcher() {
           `[collab] Removed stale shutdown marker before startup`,
         );
     }
+    // Remove stale startup summary files to prevent false notifications
+    // from a previous watcher instance (e.g. showing "Newly locked: 8" when
+    // those locks have already been released).
+    if (fs.existsSync(staleStartupSummary)) {
+      fs.unlinkSync(staleStartupSummary);
+      if (outputChannel)
+        outputChannel.appendLine(
+          `[collab] Removed stale startup summary before new watcher start`,
+        );
+    }
+    if (fs.existsSync(repoStartupSummary)) {
+      fs.unlinkSync(repoStartupSummary);
+      logToCollab(`Removed stale repo startup summary before new watcher start`, "DEBUG");
+    }
   } catch (e) {
     if (outputChannel)
       outputChannel.appendLine(
         `[collab] WARNING: failed stale marker cleanup: ${e.message}`,
       );
+  }
+
+  // Clear any in-flight summary collection from a stale watcher's output.
+  // This prevents false "Startup Summary" notifications when the extension
+  // reads leftover reconciliation lines from a watcher that was force-killed.
+  if (collectingSummary) {
+    collectingSummary = false;
+    summaryBuffer = [];
+    if (summaryTimeout) {
+      clearTimeout(summaryTimeout);
+      summaryTimeout = null;
+    }
+    logToCollab(`Cleared stale summary collection buffer`, "DEBUG");
   }
 
   // Gracefully stop any existing watcher from a previous session.
