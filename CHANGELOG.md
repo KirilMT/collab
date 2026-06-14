@@ -11,16 +11,14 @@ and this project adheres to
 
 ## [0.8.1](https://github.com/KirilMT/collab/compare/v0.8.0...v0.8.1) (2026-06-14)
 
-
 ### Bug Fixes
 
-* **logging:** use local time in extension, prevent false startup notifications, quiet upstream log ([#139](https://github.com/KirilMT/collab/issues/139)) ([c1648d9](https://github.com/KirilMT/collab/commit/c1648d98562f4548fd2bb4e02c67657d7ae2ed2b))
-* **pr_overlap:** honor GITHUB_API_URL for GitHub Enterprise Server (GHES) support ([#138](https://github.com/KirilMT/collab/issues/138)) ([c8605db](https://github.com/KirilMT/collab/commit/c8605db984adad3721331f4ba3eaff7afef499d4)), closes [#137](https://github.com/KirilMT/collab/issues/137)
-
+- **logging:** use local time in extension, prevent false startup notifications, quiet upstream log ([#139](https://github.com/KirilMT/collab/issues/139)) ([c1648d9](https://github.com/KirilMT/collab/commit/c1648d98562f4548fd2bb4e02c67657d7ae2ed2b))
+- **pr_overlap:** honor GITHUB_API_URL for GitHub Enterprise Server (GHES) support ([#138](https://github.com/KirilMT/collab/issues/138)) ([c8605db](https://github.com/KirilMT/collab/commit/c8605db984adad3721331f4ba3eaff7afef499d4)), closes [#137](https://github.com/KirilMT/collab/issues/137)
 
 ### Code Refactoring
 
-* **cli:** rename restart to daemon-restart ([#135](https://github.com/KirilMT/collab/issues/135)) ([2f8fe5f](https://github.com/KirilMT/collab/commit/2f8fe5fc04b1eece6cc991bd79ee083e636c0b79)), closes [#134](https://github.com/KirilMT/collab/issues/134)
+- **cli:** rename restart to daemon-restart ([#135](https://github.com/KirilMT/collab/issues/135)) ([2f8fe5f](https://github.com/KirilMT/collab/commit/2f8fe5fc04b1eece6cc991bd79ee083e636c0b79)), closes [#134](https://github.com/KirilMT/collab/issues/134)
 
 ## [0.8.0](https://github.com/KirilMT/collab/compare/v0.7.0...v0.8.0) (2026-06-11)
 
