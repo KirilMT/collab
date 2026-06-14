@@ -3810,7 +3810,7 @@ class LockClient:
             base_ref = self._resolve_lock_diff_base_ref()
             if base_ref:
                 if base_ref != "@{u}":
-                    logger.info(
+                    logger.debug(
                         "No upstream (@{u}); locking in-progress files vs %s",
                         base_ref,
                     )
