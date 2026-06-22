@@ -5,6 +5,10 @@ name: "PR Overlap Guard"
 # Fails when this PR's changed files overlap another OPEN PR targeting the
 # same base branch (likely merge conflict at merge time). Add this check to
 # the branch-protection "required status checks" to make it un-bypassable.
+#
+# As of v0.9.0 this guard uses git merge-tree for line-level conflict
+# confirmation (default on).  Set COLLAB_PR_OVERLAP_LINE_LEVEL=0 to revert
+# to file-level-only detection.
 
 "on":
   pull_request:
@@ -30,15 +34,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history required for merge-base + merge-tree.
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Verify git supports merge-tree
+        run: git merge-tree -h || true
+
       - name: Check cross-PR file overlap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set to "0" to revert to file-level-only overlap detection.
+          COLLAB_PR_OVERLAP_LINE_LEVEL: "1"
           # Set to "1" to ignore draft PRs when computing overlap.
           COLLAB_PR_OVERLAP_SKIP_DRAFTS: "0"
+          # Maximum number of open PRs to analyze (rate-limit guard).
+          COLLAB_PR_OVERLAP_MAX_PRS: "50"
         run: python -m collab.pr_overlap
