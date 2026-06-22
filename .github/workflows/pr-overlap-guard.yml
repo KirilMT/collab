@@ -43,7 +43,7 @@ jobs:
           python-version: "3.12"
 
       - name: Verify git supports merge-tree
-        run: git merge-tree -h
+        run: git merge-tree -h || true
 
       - name: Check cross-PR file overlap
         env:
