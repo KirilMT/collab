@@ -877,6 +877,116 @@ def test_head_changed_files_empty_when_no_base():
     assert files == []
 
 
+# ============================================================================
+# Tests for functions merged from overlap_merge.py
+# ============================================================================
+
+
+# --- is_pr_line_level_enabled ----------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
+def test_is_pr_line_level_disabled(monkeypatch, value):
+    monkeypatch.setenv("COLLAB_PR_OVERLAP_LINE_LEVEL", value)
+    assert overlap.is_pr_line_level_enabled() is False
+
+
+def test_is_pr_line_level_defaults_on(monkeypatch):
+    monkeypatch.delenv("COLLAB_PR_OVERLAP_LINE_LEVEL", raising=False)
+    assert overlap.is_pr_line_level_enabled() is True
+
+
+# --- git_version_supports_merge_tree ---------------------------------------
+
+
+def test_git_supports_merge_tree_yes():
+    cap = _capture_from_map(
+        {("merge-tree", "-h"): (0, "usage: git merge-tree ...\n  --write-tree")}
+    )
+    assert overlap.git_version_supports_merge_tree(cap) is True
+
+
+def test_git_supports_merge_tree_no_flag():
+    cap = _capture_from_map(
+        {("merge-tree", "-h"): (0, "usage: git merge-tree ...\n  --trivial-merge")}
+    )
+    assert overlap.git_version_supports_merge_tree(cap) is False
+
+
+def test_git_supports_merge_tree_error():
+    cap = _capture_from_map({("merge-tree", "-h"): (128, "")})
+    assert overlap.git_version_supports_merge_tree(cap) is False
+
+
+# --- fetch_pr_ref ----------------------------------------------------------
+
+
+def test_fetch_pr_ref_success():
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "abc123"),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"
+
+
+def test_fetch_pr_ref_fails_on_fetch_error():
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (1, "fatal"),
+        }
+    )
+    assert overlap.fetch_pr_ref(cap, "origin", 7, "abc123") is None
+
+
+def test_fetch_pr_ref_fails_on_verify_error():
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (1, ""),
+        }
+    )
+    assert overlap.fetch_pr_ref(cap, "origin", 7, "abc123") is None
+
+
+def test_fetch_pr_ref_sha_mismatch_still_returns_ref():
+    """SHA mismatch logs warning but still returns the ref (usable)."""
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "different-sha"),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"  # Still returned despite mismatch
+
+
 # --- resolve_remote ---------------------------------------------------------
 
 
@@ -929,7 +1039,7 @@ def test_resolve_remote_fallback_origin(monkeypatch):
     assert overlap.resolve_remote(lambda _a: (1, "")) == "origin"
 
 
-# --- _merge_tree_conflicts --------------------------------------------------
+# --- merge_tree_conflicts --------------------------------------------------
 
 
 def test_merge_tree_clean_returns_empty():
@@ -941,7 +1051,7 @@ def test_merge_tree_clean_returns_empty():
             )
         }
     )
-    assert overlap._merge_tree_conflicts(cap, "HEAD", "feat/x") == frozenset()
+    assert overlap.merge_tree_conflicts(cap, "HEAD", "feat/x") == frozenset()
 
 
 def test_merge_tree_conflict_lists_files():
@@ -953,7 +1063,7 @@ def test_merge_tree_conflict_lists_files():
             )
         }
     )
-    assert overlap._merge_tree_conflicts(cap, "HEAD", "feat/x") == frozenset(
+    assert overlap.merge_tree_conflicts(cap, "HEAD", "feat/x") == frozenset(
         {"foo.py", "bar.py"}
     )
 
@@ -963,7 +1073,7 @@ def test_merge_tree_conflict_unparseable_returns_none():
     cap = _capture_from_map(
         {("merge-tree", "--write-tree", "--name-only", "HEAD", "feat/x"): (1, "")}
     )
-    assert overlap._merge_tree_conflicts(cap, "HEAD", "feat/x") is None
+    assert overlap.merge_tree_conflicts(cap, "HEAD", "feat/x") is None
 
 
 def test_merge_tree_unsupported_returns_none():
@@ -971,7 +1081,7 @@ def test_merge_tree_unsupported_returns_none():
     cap = _capture_from_map(
         {("merge-tree", "--write-tree", "--name-only", "HEAD", "feat/x"): (128, "")}
     )
-    assert overlap._merge_tree_conflicts(cap, "HEAD", "feat/x") is None
+    assert overlap.merge_tree_conflicts(cap, "HEAD", "feat/x") is None
 
 
 # --- line-level refinement in detect ---------------------------------------

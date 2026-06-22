@@ -250,6 +250,275 @@ def test_bool_env_default_when_unset(monkeypatch):
     assert pr_overlap._bool_env("X_FLAG", True) is True
 
 
+# ============================================================================
+# Line-level / merge-tree tests
+# ============================================================================
+
+
+def _capture_from_map(responses):
+    def capture(args):
+        key = tuple(args)
+        return responses.get(key, (1, ""))
+
+    return capture
+
+
+# --- _current_head_sha -----------------------------------------------------
+
+
+def test_current_head_sha_resolves():
+    cap = _capture_from_map({("rev-parse", "HEAD"): (0, "abc123\n")})
+    assert pr_overlap._current_head_sha(cap) == "abc123"
+
+
+def test_current_head_sha_unavailable():
+    cap = _capture_from_map({("rev-parse", "HEAD"): (1, "")})
+    assert pr_overlap._current_head_sha(cap) is None
+
+
+def test_current_head_sha_empty_output():
+    cap = _capture_from_map({("rev-parse", "HEAD"): (0, "")})
+    assert pr_overlap._current_head_sha(cap) is None
+
+
+# --- _refine_line_overlaps --------------------------------------------------
+
+
+def _make_merge_tree_capture(head_sha="abc", pr_sha="def", conflicts=None):
+    """Build a git capture that simulates fetch + merge-tree for one PR."""
+    fetch_key = ("fetch", "--force", "--quiet", "origin", "pull/7/head:collab/pr/7")
+    verify_key = ("rev-parse", "--verify", "collab/pr/7^{commit}")
+    merge_key = ("merge-tree", "--write-tree", "--name-only", head_sha, "collab/pr/7")
+    fetches = {}
+    if conflicts is None:
+        # Inconclusive merge-tree (rc=2)
+        fetches = {
+            fetch_key: (0, ""),
+            verify_key: (0, pr_sha),
+            merge_key: (2, ""),
+        }
+    elif conflicts == frozenset():
+        fetches = {
+            fetch_key: (0, ""),
+            verify_key: (0, pr_sha),
+            merge_key: (0, "treeoid"),
+        }
+    else:
+        names = "\n".join(conflicts)
+        fetches = {
+            fetch_key: (0, ""),
+            verify_key: (0, pr_sha),
+            merge_key: (1, f"treeoid\n{names}\n"),
+        }
+    return _capture_from_map(fetches)
+
+
+def test_refine_line_overlaps_clean_merge_drops_hit():
+    """Merge-tree reports clean -> the file-level hit is removed."""
+    hit = pr_overlap.OverlapHit(number=7, branch="feat/x", files=("a.py", "b.py"))
+    pr = _pr(7, ["a.py", "b.py"], branch="feat/x")
+    pr = pr_overlap.PullRequest(
+        number=7, branch="feat/x", files=frozenset(["a.py", "b.py"]), head_sha="def"
+    )
+    cap = _make_merge_tree_capture(conflicts=frozenset())
+    refined = pr_overlap._refine_line_overlaps([hit], [pr], "abc", capture=cap)
+    assert refined == []
+
+
+def test_refine_line_overlaps_real_conflict_keeps_hit():
+    """Merge-tree reports conflict -> refined hit with line-level-confirmed type."""
+    hit = pr_overlap.OverlapHit(number=7, branch="feat/x", files=("a.py", "b.py"))
+    pr = pr_overlap.PullRequest(
+        number=7, branch="feat/x", files=frozenset(["a.py", "b.py"]), head_sha="def"
+    )
+    cap = _make_merge_tree_capture(conflicts=frozenset({"a.py"}))
+    refined = pr_overlap._refine_line_overlaps([hit], [pr], "abc", capture=cap)
+    assert len(refined) == 1
+    assert refined[0].number == 7
+    assert refined[0].files == ("a.py",)
+    assert refined[0].conflict_type == "line-level-confirmed"
+
+
+def test_refine_line_overlaps_inconclusive_keeps_hit():
+    """Merge-tree inconclusive (rc=2) -> keep file-level hit (fail-closed)."""
+    hit = pr_overlap.OverlapHit(number=7, branch="feat/x", files=("a.py",))
+    pr = pr_overlap.PullRequest(
+        number=7, branch="feat/x", files=frozenset(["a.py"]), head_sha="def"
+    )
+    cap = _make_merge_tree_capture(conflicts=None)  # inconclusive
+    refined = pr_overlap._refine_line_overlaps([hit], [pr], "abc", capture=cap)
+    assert len(refined) == 1
+    assert refined[0].conflict_type == "file-level"
+
+
+def test_refine_line_overlaps_no_head_sha_keeps_hit():
+    """PR without head_sha -> keep file-level hit (fail-closed)."""
+    hit = pr_overlap.OverlapHit(number=7, branch="feat/x", files=("a.py",))
+    pr = pr_overlap.PullRequest(
+        number=7, branch="feat/x", files=frozenset(["a.py"]), head_sha=None
+    )
+    cap = _capture_from_map({})
+    refined = pr_overlap._refine_line_overlaps([hit], [pr], "abc", capture=cap)
+    assert len(refined) == 1
+    assert refined[0].conflict_type == "file-level"
+
+
+def test_refine_line_overlaps_fetch_failed_keeps_hit():
+    """Fetch failure -> keep file-level hit (fail-closed)."""
+    hit = pr_overlap.OverlapHit(number=7, branch="feat/x", files=("a.py",))
+    pr = pr_overlap.PullRequest(
+        number=7, branch="feat/x", files=frozenset(["a.py"]), head_sha="def"
+    )
+    fetch_key = ("fetch", "--force", "--quiet", "origin", "pull/7/head:collab/pr/7")
+    cap = _capture_from_map({fetch_key: (1, "fatal")})
+    refined = pr_overlap._refine_line_overlaps([hit], [pr], "abc", capture=cap)
+    assert len(refined) == 1
+    assert refined[0].conflict_type == "file-level"
+
+
+def test_refine_line_overlaps_sorts_by_number():
+    """Refined hits are sorted by PR number."""
+    hit9 = pr_overlap.OverlapHit(number=9, branch="feat/z", files=("a.py",))
+    hit3 = pr_overlap.OverlapHit(number=3, branch="feat/a", files=("a.py",))
+    pr9 = pr_overlap.PullRequest(
+        number=9, branch="feat/z", files=frozenset(["a.py"]), head_sha="sha9"
+    )
+    pr3 = pr_overlap.PullRequest(
+        number=3, branch="feat/a", files=frozenset(["a.py"]), head_sha="sha3"
+    )
+    f9 = ("fetch", "--force", "--quiet", "origin", "pull/9/head:collab/pr/9")
+    v9 = ("rev-parse", "--verify", "collab/pr/9^{commit}")
+    m9 = ("merge-tree", "--write-tree", "--name-only", "abc", "collab/pr/9")
+    f3 = ("fetch", "--force", "--quiet", "origin", "pull/3/head:collab/pr/3")
+    v3 = ("rev-parse", "--verify", "collab/pr/3^{commit}")
+    m3 = ("merge-tree", "--write-tree", "--name-only", "abc", "collab/pr/3")
+    cap = _capture_from_map(
+        {
+            f9: (0, ""),
+            v9: (0, "sha9"),
+            m9: (0, "treeoid"),
+            f3: (0, ""),
+            v3: (0, "sha3"),
+            m3: (1, "treeoid\na.py\n"),
+        }
+    )
+    refined = pr_overlap._refine_line_overlaps(
+        [hit9, hit3], [pr9, pr3], "abc", capture=cap
+    )
+    assert [h.number for h in refined] == [3]
+
+
+# --- run() with line-level ---------------------------------------------------
+
+
+def test_run_line_level_no_git_merge_tree_falls_back(capsys):
+    """When merge-tree is unavailable, fall back to file-level detection."""
+    config = pr_overlap.GuardConfig(
+        repo="o/r", pr_number=42, base_ref="main", token="t", line_level=True
+    )
+    http = _fake_http(
+        {
+            "/pulls/42/files": [{"filename": "shared.py"}],
+            "/pulls?state=open": [
+                {"number": 7, "head": {"ref": "feat/seven"}, "draft": False}
+            ],
+            "/pulls/7/files": [{"filename": "shared.py"}],
+        }
+    )
+    # git merge-tree not available
+    git = _capture_from_map({("merge-tree", "-h"): (1, "")})
+    rc = pr_overlap.run(config, http=http, git_capture=git)
+    assert rc == pr_overlap.EXIT_OVERLAP
+    out = capsys.readouterr().out
+    assert "merge-tree" in out
+    assert "not available" in out.lower()
+
+
+def test_run_line_level_no_head_sha_is_error(capsys):
+    """When HEAD SHA can't be resolved, fail with EXIT_ERROR."""
+    config = pr_overlap.GuardConfig(
+        repo="o/r", pr_number=42, base_ref="main", token="t", line_level=True
+    )
+    http = _fake_http(
+        {
+            "/pulls/42/files": [{"filename": "shared.py"}],
+            "/pulls?state=open": [
+                {
+                    "number": 7,
+                    "head": {"ref": "feat/seven", "sha": "sha7"},
+                    "draft": False,
+                }
+            ],
+            "/pulls/7/files": [{"filename": "shared.py"}],
+        }
+    )
+    # merge-tree available but rev-parse fails
+    git = _capture_from_map(
+        {
+            ("merge-tree", "-h"): (0, "--write-tree"),
+            ("rev-parse", "HEAD"): (1, ""),
+        }
+    )
+    rc = pr_overlap.run(config, http=http, git_capture=git)
+    assert rc == pr_overlap.EXIT_ERROR
+
+
+def test_run_line_level_refines_hits(capsys):
+    """Line-level mode refines hits via merge-tree."""
+    config = pr_overlap.GuardConfig(
+        repo="o/r", pr_number=42, base_ref="main", token="t", line_level=True
+    )
+    http = _fake_http(
+        {
+            "/pulls/42/files": [{"filename": "shared.py"}],
+            "/pulls?state=open": [
+                {
+                    "number": 7,
+                    "head": {"ref": "feat/seven", "sha": "sha7"},
+                    "draft": False,
+                }
+            ],
+            "/pulls/7/files": [{"filename": "shared.py"}],
+        }
+    )
+    # merge-tree available, HEAD resolves, fetch works, merge-tree clean
+    fk = ("fetch", "--force", "--quiet", "origin", "pull/7/head:collab/pr/7")
+    mk = ("merge-tree", "--write-tree", "--name-only", "sha42", "collab/pr/7")
+    git = _capture_from_map(
+        {
+            ("merge-tree", "-h"): (0, "--write-tree"),
+            ("rev-parse", "HEAD"): (0, "sha42"),
+            fk: (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "sha7"),
+            mk: (0, "treeoid"),
+        }
+    )
+    rc = pr_overlap.run(config, http=http, git_capture=git)
+    # Clean merge -> no overlap
+    assert rc == pr_overlap.EXIT_OK
+
+
+def test_run_line_level_disabled_skips_merge_tree(capsys):
+    """When line_level=False, no merge-tree step is attempted."""
+    config = pr_overlap.GuardConfig(
+        repo="o/r", pr_number=42, base_ref="main", token="t", line_level=False
+    )
+    http = _fake_http(
+        {
+            "/pulls/42/files": [{"filename": "shared.py"}],
+            "/pulls?state=open": [
+                {"number": 7, "head": {"ref": "feat/seven"}, "draft": False}
+            ],
+            "/pulls/7/files": [{"filename": "shared.py"}],
+        }
+    )
+    # No git calls needed
+    rc = pr_overlap.run(config, http=http)
+    assert rc == pr_overlap.EXIT_OVERLAP
+    out = capsys.readouterr().out
+    assert "file-level" not in out.lower() or "overlaps" in out
+
+
 def test_load_event_pr_missing_path(monkeypatch):
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
     assert pr_overlap._load_event_pr() == (None, None)

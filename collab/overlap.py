@@ -1,7 +1,8 @@
-"""Git-based cross-branch file overlap detection.
+"""Git-based cross-branch / cross-PR file overlap detection.
 
 Compares changes on the current branch against other unmerged branches so developers
-see likely merge conflicts before push.
+see likely merge conflicts before push. Also provides the server-side PR overlap guard
+with merge-tree line-level conflict confirmation.
 
 By default this is advisory (warnings only, never blocks). When
 ``COLLAB_OVERLAP_STRICT`` is enabled the ``warn_cross_branch_overlap`` entry point
@@ -99,10 +100,19 @@ def is_overlap_fetch_enabled() -> bool:
 def is_line_level_enabled() -> bool:
     """Return True unless ``COLLAB_OVERLAP_LINE_LEVEL`` is explicitly disabled.
 
-    When enabled, file overlaps are confirmed with a real ``git merge-tree`` merge so
-    non-conflicting edits to the same file are not flagged.
+    Used by the client-side ``overlap.py`` pre-push hook.
     """
     raw = os.getenv("COLLAB_OVERLAP_LINE_LEVEL", "1").strip().lower()
+    return raw not in _FALSE_VALUES
+
+
+def is_pr_line_level_enabled() -> bool:
+    """Return True unless ``COLLAB_PR_OVERLAP_LINE_LEVEL`` is explicitly disabled.
+
+    Used by the server-side ``pr_overlap.py`` GitHub Actions guard. Default is ``1``
+    (line-level on) per the v0.9.0+ design.
+    """
+    raw = os.getenv("COLLAB_PR_OVERLAP_LINE_LEVEL", "1").strip().lower()
     return raw not in _FALSE_VALUES
 
 
@@ -268,19 +278,19 @@ def _is_ancestor(capture: GitCapture, ancestor: str, descendant: str) -> bool:
     return rc == 0
 
 
-def _merge_tree_conflicts(
+def merge_tree_conflicts(
     capture: GitCapture, head_ref: str, other_ref: str
 ) -> Optional[frozenset[str]]:
     """Return the files that truly conflict when merging the two refs.
 
-    Uses ``git merge-tree --write-tree`` (git >= 2.38) to perform a real in-memory
-    3-way merge -- so edits to *different* regions of a shared file are not reported.
-    Returns:
+    Uses ``git merge-tree --write-tree`` (git >= 2.38) to perform a real
+    in-memory 3-way merge -- so edits to *different* regions of a shared file
+    are not reported.  Returns:
 
     * ``frozenset()`` -- the branches merge cleanly (no conflict),
     * a non-empty frozenset -- the conflicting file paths,
-    * ``None`` -- line-level detection is unavailable or inconclusive; the caller
-      should fall back to file-level overlap.
+    * ``None`` -- line-level detection is unavailable or inconclusive; the
+      caller should fall back to file-level overlap.
     """
     rc, out = capture(
         ["merge-tree", "--write-tree", "--name-only", head_ref, other_ref]
@@ -288,7 +298,8 @@ def _merge_tree_conflicts(
     if rc == 0:
         return frozenset()
     if rc == 1:
-        # stdout: line 0 is the tree OID; conflicted paths follow until a blank line.
+        # stdout: line 0 is the tree OID; conflicted paths follow until a
+        # blank line.
         lines = out.splitlines()
         conflicted = set()
         for line in lines[1:]:
@@ -298,6 +309,74 @@ def _merge_tree_conflicts(
         # rc==1 with nothing parseable -> inconclusive; fall back to file-level.
         return frozenset(conflicted) if conflicted else None
     return None
+
+
+def git_version_supports_merge_tree(capture: GitCapture) -> bool:
+    """Return True when the installed git supports ``merge-tree --write-tree``.
+
+    Probes by running ``git merge-tree -h`` and checking for ``--write-tree`` in the
+    help output (reliable across git 2.38+ regardless of locale).
+    """
+    rc, out = capture(["merge-tree", "-h"])
+    if rc != 0:
+        return False
+    return "--write-tree" in out
+
+
+def fetch_pr_ref(
+    capture: GitCapture,
+    remote: str,
+    pr_number: int,
+    head_sha: str,
+    *,
+    timeout: float = 30.0,
+) -> Optional[str]:
+    """Fetch a single pull-request head into a local ref and return the ref name.
+
+    The ref is fetched as ``collab/pr/<N>`` so multiple PRs can coexist in the
+    same shallow CI checkout.  Returns ``None`` when the fetch fails (callers
+    should treat this as fail-closed / ``EXIT_ERROR``).
+
+    Args:
+        capture: Git capture callable.
+        remote: The git remote to fetch from (e.g. ``origin``).
+        pr_number: GitHub PR number.
+        head_sha: The expected HEAD SHA of the PR (from the GitHub API).
+        timeout: Timeout in seconds for the fetch subprocess.
+    """
+    local_ref = f"collab/pr/{pr_number}"
+
+    # --force in case a previous run left a stale ref with the same name.
+    rc, _ = capture(
+        [
+            "fetch",
+            "--force",
+            "--quiet",
+            remote,
+            f"pull/{pr_number}/head:{local_ref}",
+        ]
+    )
+    if rc != 0:
+        logger.debug("Failed to fetch PR #%d ref from %s", pr_number, remote)
+        return None
+
+    # Verify the fetched ref points at the expected SHA.
+    rc_verify, fetched_sha = capture(
+        ["rev-parse", "--verify", f"{local_ref}^{{commit}}"]
+    )
+    if rc_verify != 0:
+        logger.debug(
+            "Ref %s didn't resolve after fetch for PR #%d", local_ref, pr_number
+        )
+        return None
+
+    fetched_sha = fetched_sha.strip()
+    if fetched_sha != head_sha:
+        logger.debug(
+            "Fetched SHA %s != expected %s for PR #%d", fetched_sha, head_sha, pr_number
+        )
+        # Still usable (the ref exists), but log the discrepancy.
+    return local_ref
 
 
 def _list_candidate_refs(
@@ -353,7 +432,7 @@ def detect_cross_branch_overlaps(
     overlaps exist. Individual branch failures are skipped (fail-open).
 
     When ``line_level`` is True, a file-level overlap is confirmed with
-    :func:`_merge_tree_conflicts` (a real merge) so non-conflicting edits to the same
+    :func:`merge_tree_conflicts` (a real merge) so non-conflicting edits to the same
     file are dropped; if that is unavailable the file-level result is kept.
     """
     if not is_overlap_check_enabled():
@@ -412,7 +491,7 @@ def detect_cross_branch_overlaps(
 
         if line_level:
             # Confirm with a real merge: keep only files that actually conflict.
-            conflicts = _merge_tree_conflicts(capture, "HEAD", ref)
+            conflicts = merge_tree_conflicts(capture, "HEAD", ref)
             if conflicts is not None:
                 overlap = sorted(set(overlap) & conflicts)
                 if not overlap:

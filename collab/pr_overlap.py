@@ -9,17 +9,28 @@ override.
 
 The overlap math (:func:`find_overlaps`) is pure and unit-tested. Network access is
 isolated behind an injectable ``http`` callable so tests never hit GitHub.
+
+As of v0.9.0 the guard also supports **line-level** conflict confirmation via ``git
+merge-tree`` (default on, opt-out with ``COLLAB_PR_OVERLAP_LINE_LEVEL=0``). When
+enabled, two PRs touching the same file but non-overlapping line ranges no longer block
+each other — only files with real merge-tree conflicts are flagged.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Optional
+from pathlib import Path
+from typing import Callable, Iterable, Optional, Sequence
+
+from collab import overlap, safe_subprocess
+
+logger = logging.getLogger(__name__)
 
 GITHUB_API = (os.getenv("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
 
@@ -31,6 +42,11 @@ EXIT_ERROR = 2  # Could not complete the check (fail-closed in CI).
 # An injectable HTTP getter: (url, token) -> parsed JSON (list or dict).
 HttpGetter = Callable[[str, Optional[str]], object]
 
+# An injectable git capture: (args) -> (returncode, stdout).
+GitCapture = Callable[[Sequence[str]], tuple[int, str]]
+
+_MAX_PRS_DEFAULT = 50
+
 
 @dataclass(frozen=True)
 class PullRequest:
@@ -40,6 +56,7 @@ class PullRequest:
     branch: str
     files: frozenset[str]
     draft: bool = False
+    head_sha: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +66,7 @@ class OverlapHit:
     number: int
     branch: str
     files: tuple[str, ...]
+    conflict_type: str = "file-level"
 
 
 @dataclass
@@ -60,6 +78,8 @@ class GuardConfig:
     base_ref: str
     token: Optional[str] = None
     skip_drafts: bool = field(default=False)
+    line_level: bool = field(default=True)
+    max_prs: int = field(default=_MAX_PRS_DEFAULT)
 
 
 def find_overlaps(
@@ -88,6 +108,68 @@ def find_overlaps(
     return hits
 
 
+def _refine_line_overlaps(
+    hits: list[OverlapHit],
+    others: list[PullRequest],
+    current_head_ref: str,
+    *,
+    capture: GitCapture,
+) -> list[OverlapHit]:
+    """Refine file-level overlap hits with merge-tree confirmation.
+
+    For each hit whose PR has a ``head_sha``, run ``merge_tree_conflicts`` and intersect
+    the result with the file-level overlap.  PRs that merge cleanly are dropped.  When
+    merge-tree is inconclusive the original file-level hit is kept (fail-closed).
+
+    Returns a new list of refined hits (may be shorter than ``hits``).
+    """
+    by_number: dict[int, PullRequest] = {pr.number: pr for pr in others}
+    refined: list[OverlapHit] = []
+
+    for hit in hits:
+        pr = by_number.get(hit.number)
+        if pr is None or not pr.head_sha:
+            # No head_sha → can't confirm; keep file-level hit (fail-closed).
+            refined.append(hit)
+            continue
+
+        other_ref = overlap.fetch_pr_ref(capture, "origin", pr.number, pr.head_sha)
+        if other_ref is None:
+            # Fetch failed → can't confirm; keep file-level hit (fail-closed).
+            logger.warning(
+                "Could not fetch ref for PR #%d; keeping file-level overlap.",
+                pr.number,
+            )
+            refined.append(hit)
+            continue
+
+        conflicts = overlap.merge_tree_conflicts(capture, current_head_ref, other_ref)
+        if conflicts is None:
+            # Inconclusive → keep file-level hit (fail-closed).
+            logger.warning(
+                "merge-tree inconclusive for PR #%d; keeping file-level overlap.",
+                pr.number,
+            )
+            refined.append(hit)
+            continue
+
+        # Intersect file overlap with merge-tree-confirmed conflicts.
+        real_overlap = sorted(set(hit.files) & conflicts)
+        if real_overlap:
+            refined.append(
+                OverlapHit(
+                    number=hit.number,
+                    branch=hit.branch,
+                    files=tuple(real_overlap),
+                    conflict_type="line-level-confirmed",
+                )
+            )
+        # else: merges cleanly → not a hit; drop it.
+
+    refined.sort(key=lambda h: h.number)
+    return refined
+
+
 def format_overlap_report(current_number: int, hits: list[OverlapHit]) -> str:
     """Render a human-readable summary for the CI log / check output."""
     if not hits:
@@ -98,7 +180,8 @@ def format_overlap_report(current_number: int, hits: list[OverlapHit]) -> str:
     ]
     for hit in hits:
         flist = ", ".join(hit.files)
-        lines.append(f"  - PR #{hit.number} ({hit.branch}): {flist}")
+        ctype = f" ({hit.conflict_type})" if hit.conflict_type != "file-level" else ""
+        lines.append(f"  - PR #{hit.number} ({hit.branch}): {flist}{ctype}")
     lines.append(
         "[collab] Resolve by rebasing/merging one PR first, splitting the shared "
         "files, or coordinating merge order before this check can pass."
@@ -162,9 +245,13 @@ def gather_other_prs(http: HttpGetter, config: GuardConfig) -> list[PullRequest]
         if not isinstance(number, int) or number == config.pr_number:
             continue
         branch = ""
+        head_sha = None
         head = row.get("head")
-        if isinstance(head, dict) and isinstance(head.get("ref"), str):
-            branch = head["ref"]
+        if isinstance(head, dict):
+            if isinstance(head.get("ref"), str):
+                branch = head["ref"]
+            if isinstance(head.get("sha"), str):
+                head_sha = head["sha"]
         files = _pr_files(http, config.repo, number, config.token)
         others.append(
             PullRequest(
@@ -172,13 +259,53 @@ def gather_other_prs(http: HttpGetter, config: GuardConfig) -> list[PullRequest]
                 branch=branch,
                 files=files,
                 draft=bool(row.get("draft", False)),
+                head_sha=head_sha,
             )
         )
+    # Respect max_prs cap.
+    if len(others) > config.max_prs:
+        logger.warning(
+            "Truncating open PR list from %d to %d (COLLAB_PR_OVERLAP_MAX_PRS=%d)",
+            len(others),
+            config.max_prs,
+            config.max_prs,
+        )
+        others = others[: config.max_prs]
     return others
 
 
-def run(config: GuardConfig, *, http: HttpGetter = _default_http) -> int:
-    """Execute the guard; return an :data:`EXIT_OK`/``OVERLAP``/``ERROR`` code."""
+def _default_git_capture(cwd: str, args: Sequence[str]) -> tuple[int, str]:
+    """Run a git command and return (returncode, stdout)."""
+    result = safe_subprocess.capture(
+        ["git", *args],
+        policy="git",
+        cwd=cwd,
+        timeout=60.0,
+    )
+    stdout = safe_subprocess.decode_output(result.stdout).strip()
+    return result.returncode, stdout
+
+
+def _current_head_sha(capture: GitCapture) -> Optional[str]:
+    """Return the SHA of HEAD, or None if git is unavailable."""
+    rc, sha = capture(["rev-parse", "HEAD"])
+    if rc != 0 or not sha:
+        return None
+    return sha.strip()
+
+
+def run(
+    config: GuardConfig,
+    *,
+    http: HttpGetter = _default_http,
+    git_capture: Optional[GitCapture] = None,
+) -> int:
+    """Execute the guard; return an :data:`EXIT_OK`/``OVERLAP``/``ERROR`` code.
+
+    When ``config.line_level`` is True (the default), file-level overlaps are confirmed
+    with ``git merge-tree`` so non-conflicting edits to the same file are not flagged.
+    The git working directory is the current working directory (the CI checkout).
+    """
     try:
         current_files = _pr_files(http, config.repo, config.pr_number, config.token)
         if not current_files:
@@ -199,6 +326,37 @@ def run(config: GuardConfig, *, http: HttpGetter = _default_http) -> int:
         # Fail-closed: an unverifiable result must not silently pass the gate.
         print(f"[collab] PR overlap guard could not complete: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    # --- line-level refinement (only when hits exist) ----------------------
+    if hits and config.line_level:
+        cwd = str(Path.cwd())
+
+        def capture(args: Sequence[str]) -> tuple[int, str]:
+            runner = git_capture or (lambda a: _default_git_capture(cwd, a))
+            return runner(args)
+
+        # Verify git supports merge-tree before proceeding.
+        if not overlap.git_version_supports_merge_tree(capture):
+            print(
+                "[collab] git merge-tree --write-tree not available; "
+                "falling back to file-level overlap detection."
+            )
+        else:
+            head_ref = _current_head_sha(capture)
+            if head_ref is None:
+                print(
+                    "[collab] Could not resolve HEAD SHA; "
+                    "cannot perform line-level overlap refinement.",
+                    file=sys.stderr,
+                )
+                return EXIT_ERROR
+
+            print(
+                f"[collab] Line-level refinement enabled; "
+                f"verifying {len(hits)} file-level hit(s) with merge-tree..."
+            )
+            hits = _refine_line_overlaps(hits, others, head_ref, capture=capture)
+    # -----------------------------------------------------------------------
 
     print(format_overlap_report(config.pr_number, hits))
     return EXIT_OVERLAP if hits else EXIT_OK
@@ -247,6 +405,8 @@ def config_from_env() -> Optional[GuardConfig]:
         base_ref=base_ref,
         token=os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN"),
         skip_drafts=_bool_env("COLLAB_PR_OVERLAP_SKIP_DRAFTS", False),
+        line_level=_bool_env("COLLAB_PR_OVERLAP_LINE_LEVEL", True),
+        max_prs=int(os.getenv("COLLAB_PR_OVERLAP_MAX_PRS", str(_MAX_PRS_DEFAULT))),
     )
 
 
