@@ -918,6 +918,14 @@ def test_git_supports_merge_tree_error():
     assert overlap.git_version_supports_merge_tree(cap) is False
 
 
+def test_git_supports_merge_tree_nonzero_exit_with_flag():
+    """Regression: git >= 2.48 may exit 129 even when --write-tree is supported."""
+    cap = _capture_from_map(
+        {("merge-tree", "-h"): (129, "usage: git merge-tree ...\n  --write-tree")}
+    )
+    assert overlap.git_version_supports_merge_tree(cap) is True
+
+
 # --- fetch_pr_ref ----------------------------------------------------------
 
 
