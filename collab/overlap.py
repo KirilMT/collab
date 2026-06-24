@@ -315,11 +315,11 @@ def git_version_supports_merge_tree(capture: GitCapture) -> bool:
     """Return True when the installed git supports ``merge-tree --write-tree``.
 
     Probes by running ``git merge-tree -h`` and checking for ``--write-tree`` in the
-    help output (reliable across git 2.38+ regardless of locale).
+    help output.  The exit code of ``-h`` is deliberately ignored because newer git
+    versions (>= 2.48) may return 129 even when the flag is fully supported and listed
+    in the help text.
     """
-    rc, out = capture(["merge-tree", "-h"])
-    if rc != 0:
-        return False
+    _, out = capture(["merge-tree", "-h"])
     return "--write-tree" in out
 
 
