@@ -408,6 +408,160 @@ def test_resolve_lock_diff_base_ref_uses_origin_branch(monkeypatch):
     assert mod.LockClient._resolve_lock_diff_base_ref() == "origin/feat/x"
 
 
+def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, tmp_path, caplog):
+    """Stale locks younger than the minimum hold time are kept, not released."""
+    import logging
+    from datetime import datetime
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+
+    # File is clean (empty git status)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_modified_and_unpushed_files",
+        lambda self: ([], True),
+    )
+
+    # Use timezone-aware isoformat (Supabase format) to exercise
+    # the .replace(tzinfo=None) path in _reconcile().
+    from datetime import timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    locks_data = [
+        {
+            "file_path": "src/held.py",
+            "developer_id": "test_user",
+            "lock_token": "tok123",
+            "acquired_at": now_iso,
+        }
+    ]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
+
+    lc = mod.LockClient(developer_id="test_user")
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        result = lc._reconcile()
+
+    # The lock is young — should be KEPT in the return value
+    # (via kept_young union) so the main loop continues tracking it.
+    assert "src/held.py" in result
+    assert "⏳ [KEPT]" in caplog.text
+
+
+def test_reconcile_defers_dev_other_stale_for_young_locks(
+    monkeypatch, tmp_path, caplog
+):
+    """Agent locks (dev_other_stale) younger than min hold time are kept."""
+    import logging
+    from datetime import datetime, timezone
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_modified_and_unpushed_files",
+        lambda self: ([], True),
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # dev_other lock: same developer_id, different agent_id
+    locks_data = [
+        {
+            "file_path": "src/agent.py",
+            "developer_id": "test_user",
+            "agent_id": "agent-123",
+            "lock_token": "tok456",
+            "acquired_at": now_iso,
+        }
+    ]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
+
+    lc = mod.LockClient(developer_id="test_user")
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc._reconcile()
+
+    assert "⏳ [KEPT]" in caplog.text
+
+
+def test_reconcile_handles_malformed_acquired_at(monkeypatch, tmp_path, caplog):
+    """Malformed acquired_at timestamps are silently skipped (except clause)."""
+    import logging
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_modified_and_unpushed_files",
+        lambda self: ([], True),
+    )
+
+    locks_data = [
+        {
+            "file_path": "src/bad.py",
+            "developer_id": "test_user",
+            "lock_token": "tok",
+            "acquired_at": "not-a-valid-date",
+        }
+    ]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
+
+    lc = mod.LockClient(developer_id="test_user")
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        result = lc._reconcile()
+
+    # Malformed timestamp → except pass → lock released (not kept).
+    assert "src/bad.py" not in result
+
+
+def test_reconcile_handles_malformed_dev_other_acquired_at(
+    monkeypatch, tmp_path, caplog
+):
+    """Malformed acquired_at in dev_other locks triggers except clause."""
+    import logging
+
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_modified_and_unpushed_files",
+        lambda self: ([], True),
+    )
+
+    # dev_other lock: same developer, different agent, malformed timestamp
+    locks_data = [
+        {
+            "file_path": "src/agent_bad.py",
+            "developer_id": "test_user",
+            "agent_id": "agent-456",
+            "lock_token": "tok",
+            "acquired_at": "garbage",
+        }
+    ]
+    response = FakeResponse(status=200, data=locks_data)
+    monkeypatch.setattr(mod, "_get_create_client", lambda: make_create_client(response))
+
+    lc = mod.LockClient(developer_id="test_user")
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        lc._reconcile()
+
+    # Malformed timestamp → except pass → lock released as stale agent lock.
+    assert "[STALE-RELEASED]" in caplog.text
+
+
 def test_resolve_lock_diff_base_ref_returns_none(monkeypatch):
     """No upstream, override, or remote base -> None (status-only locking)."""
     monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
