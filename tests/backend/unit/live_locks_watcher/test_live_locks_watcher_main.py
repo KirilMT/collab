@@ -1591,12 +1591,12 @@ def test_min_auto_lock_hold_seconds_default(monkeypatch):
     assert mod._min_auto_lock_hold_seconds() == 300
 
 
-def test_graceful_shutdown_defers_young_locks(monkeypatch, tmp_path, caplog):
-    """_graceful_shutdown keeps locks younger than the minimum hold time."""
+def test_graceful_shutdown_releases_clean_files(monkeypatch, tmp_path, caplog):
+    """_graceful_shutdown releases clean files immediately regardless of age (#150,
+    #151)."""
     import logging
 
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
@@ -1606,13 +1606,8 @@ def test_graceful_shutdown_defers_young_locks(monkeypatch, tmp_path, caplog):
     mod._local_owned_locks.clear()
     mod._lock_acquired_at.clear()
 
-    # File is still dirty — should be KEPT
-    monkeypatch.setattr(
-        mod, "_run_git_status_porcelain", lambda: set()
-    )  # file is clean
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
     mod._local_owned_locks.add("src/clean.py")
-
-    # Record acquisition just now
     mod._lock_acquired_at["src/clean.py"] = datetime.now()
 
     delete_calls = []
@@ -1640,32 +1635,29 @@ def test_graceful_shutdown_defers_young_locks(monkeypatch, tmp_path, caplog):
     with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
         mod._graceful_shutdown()
 
-    # The lock is young — should NOT be deleted.
-    assert delete_calls == []
-    assert "⏳ [KEPT]" in caplog.text
+    # Clean files are RELEASED immediately even if lock is young.
+    assert len(delete_calls) == 1
+    assert "[RELEASED]" in caplog.text
 
 
-def test_graceful_shutdown_db_fallback_defers_young_locks(
+def test_graceful_shutdown_db_fallback_releases_clean_files(
     monkeypatch, tmp_path, caplog
 ):
-    """DB-fallback path in _graceful_shutdown keeps young locks."""
+    """DB-fallback path releases clean files immediately (#150, #151)."""
     import logging
     from datetime import datetime, timezone
 
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
     monkeypatch.setenv("COLLAB_TEST_MODE", "0")
     monkeypatch.setattr(mod, "SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "test_key")
     mod._shutdown_done = False
-    mod._local_owned_locks.clear()  # Empty — triggers DB fallback
+    mod._local_owned_locks.clear()
     mod._lock_acquired_at.clear()
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    # Populate _lock_acquired_at so the hold-time check fires.
-    # (In production this is done by _reconcile_on_startup.)
     mod._lock_acquired_at["src/db_lock.py"] = datetime.now()
 
     delete_calls = []
@@ -1711,5 +1703,6 @@ def test_graceful_shutdown_db_fallback_defers_young_locks(
     with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
         mod._graceful_shutdown()
 
-    assert delete_calls == []
-    assert "⏳ [KEPT]" in caplog.text
+    # Clean files are RELEASED immediately in DB fallback path.
+    assert len(delete_calls) == 1
+    assert "[RELEASED]" in caplog.text

@@ -622,19 +622,17 @@ def test_reconcile_same_machine_re_adopt_update_exception(monkeypatch):
     assert "collab/file.py" in mod._local_owned_locks
 
 
-def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, caplog):
-    """Stale locks younger than the minimum hold time are kept, not released."""
+def test_reconcile_releases_stale_locks_immediately(monkeypatch, caplog):
+    """Stale locks (clean files) are released immediately regardless of age (#150,
+    #151)."""
     import logging
     from datetime import datetime, timezone
 
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
     monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
     monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
-    monkeypatch.setattr(
-        mod, "_run_git_status_porcelain", lambda: set()
-    )  # file is clean
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
     monkeypatch.setattr(mod, "_fetch_dev_other_identity_locks", lambda c: {})
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
     monkeypatch.setattr(mod, "_handle_multi_session_lock", lambda c, f, t: None)
@@ -643,10 +641,8 @@ def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, caplog):
     mod._active_conflicts.clear()
     mod._lock_acquired_at.clear()
 
-    # Use Supabase-format timestamp (timezone-aware) to exercise .replace(tzinfo=None).
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Existing lock acquired just now — too young to release.
     class FakeClient:
         def table(self, _name):
             return self
@@ -664,6 +660,7 @@ def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, caplog):
             return self
 
         def execute(self):
+            # Track delete calls separately
             return type(
                 "R",
                 (),
@@ -687,9 +684,9 @@ def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
         mod._reconcile_on_startup(FakeClient())
 
-    # The lock is young — should be KEPT in local_owned_locks, not released.
-    assert "⏳ [KEPT]" in caplog.text
-    assert "collab/app.py" in mod._local_owned_locks
+    # The file is clean — should be STALE-RELEASED immediately, not kept.
+    assert "STALE-RELEASED" in caplog.text
+    assert "collab/app.py" not in mod._local_owned_locks
 
 
 def test_reconcile_handles_malformed_acquired_at(monkeypatch, caplog):

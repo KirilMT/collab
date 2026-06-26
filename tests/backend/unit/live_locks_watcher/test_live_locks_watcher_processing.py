@@ -210,12 +210,11 @@ def test_maybe_warn_cross_branch_overlap_import_failure(monkeypatch):
     mod._maybe_warn_cross_branch_overlap()
 
 
-def test_process_releases_defers_young_locks(monkeypatch, caplog):
-    """Locks younger than _min_auto_lock_hold_seconds are NOT released."""
+def test_process_releases_releases_all_clean_files(monkeypatch, caplog):
+    """Clean files are released immediately regardless of lock age (#150, #151)."""
     import logging
 
     mod = load_watcher_module()
-    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
     monkeypatch.setattr(mod, "DEVELOPER_ID", "tester")
     monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
     mod._active_conflicts.clear()
@@ -223,6 +222,7 @@ def test_process_releases_defers_young_locks(monkeypatch, caplog):
 
     from datetime import datetime
 
+    # Lock is only 1 second old — should still be released
     mod._lock_acquired_at["src/app.py"] = datetime.now()
 
     delete_calls = []
@@ -244,11 +244,8 @@ def test_process_releases_defers_young_locks(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
         mod._process_releases(FakeClient(), {"src/app.py"})
 
-    assert delete_calls == []
-    assert "⏳ [KEPT]" in caplog.text
-
-    # Import failure returns before the throttle timestamp is advanced.
-    assert mod._last_overlap_warn_at == 0.0
+    # File should be released immediately even though the lock is young.
+    assert len(delete_calls) == 1
 
 
 def test_maybe_warn_cross_branch_overlap_disabled(monkeypatch):

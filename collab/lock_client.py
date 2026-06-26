@@ -3633,46 +3633,20 @@ class LockClient:
         if any([n_released, n_newly_locked, n_readopted, n_refreshed, n_multi]):
             logger.debug("Starting lock reconciliation...")
 
-        # Process stale locks — but skip any that were acquired too recently.
-        # This prevents the watcher from releasing locks it just acquired during
-        # the same reconciliation pass (e.g. when git status is transient).
+        # Process stale locks — release immediately because git status
+        # confirms the file is clean.  Unlike agent locks (dev_other_stale),
+        # the developer's own watcher has authoritative knowledge of the
+        # working tree.  Delaying here (e.g. via a minimum hold time) would
+        # leave post-merge / post-pull files locked for minutes (#150, #151).
         if stale:
-            truly_stale = set()
-            for fp in stale:
-                lock = lock_map.get(fp, {})
-                acquired_str = lock.get("acquired_at")
-                if acquired_str:
-                    try:
-                        acq_dt = (
-                            datetime.fromisoformat(acquired_str)
-                            .astimezone()
-                            .replace(tzinfo=None)
-                        )
-                        age = (_safe_now() - acq_dt).total_seconds()
-                        if age < _min_auto_lock_hold_seconds():
-                            kept_young.add(fp)
-                            logger.debug(
-                                "⏳ [KEPT] %s — lock is only %ds old "
-                                "(< %ds minimum); skipping auto-release",
-                                fp,
-                                int(age),
-                                _min_auto_lock_hold_seconds(),
-                            )
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-                truly_stale.add(fp)
-
-            if truly_stale:
-                for fp in sorted(truly_stale):
-                    logger.info(
-                        "🔓 [STALE-RELEASED] %s — locked but file is now clean,"
-                        " releasing",
-                        fp,
-                    )
-                self.release_multiple(list(truly_stale))
-                # Only count actually-released stale locks in the summary
-                n_released = len(truly_stale)
+            for fp in sorted(stale):
+                logger.info(
+                    "🔓 [STALE-RELEASED] %s — locked but file is now clean,"
+                    " releasing",
+                    fp,
+                )
+            self.release_multiple(list(stale))
+            n_released = len(stale)
 
         # Process RESUMED locks: use direct table update (preserves acquired_at)
         # This prevents the timer from resetting when switching IDEs
