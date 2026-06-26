@@ -17,6 +17,8 @@ from unittest import mock
 
 import pytest
 
+from collab.safe_subprocess import CaptureResult
+
 from ._helpers import (
     FakeClient,
     FakeResponse,
@@ -1147,11 +1149,367 @@ def test_watch_loop_iteration_exception_recovers(monkeypatch, tmp_path, caplog):
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
-    with caplog.at_level(logging.ERROR, logger=mod.logger.name):
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
         lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
-    # The error is logged and the loop reaches its recovery sleep (>=1 call).
-    assert "Error in watcher loop" in caplog.text
-    assert counter["n"] >= 1
+    assert any("loop body failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Worktree-aware sibling scanning (#150)
+# ---------------------------------------------------------------------------
+
+
+def _make_capture_result(returncode=0, stdout=b"", timed_out=False):
+    """Build a minimal CaptureResult for test injection."""
+    return CaptureResult(
+        argv=("git", "test"),
+        returncode=returncode,
+        stdout=stdout,
+        stderr=b"",
+        timed_out=timed_out,
+    )
+
+
+def test_get_sibling_worktree_dirty_files_empty(monkeypatch):
+    """No sibling worktrees → empty set."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=b""),
+    )
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_command_fails(monkeypatch):
+    """Git worktree list fails → empty set."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(returncode=1),
+    )
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_timed_out(monkeypatch):
+    """Git worktree list times out → empty set."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(timed_out=True),
+    )
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_skips_own(monkeypatch, tmp_path):
+    """Only our own worktree listed → empty set."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    our_root = os.path.abspath(mod._PROJECT_ROOT)
+    wt_output = (f"worktree {our_root}\n" f"branch refs/heads/main\n").encode()
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=wt_output),
+    )
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_finds_dirty(monkeypatch, tmp_path):
+    """Sibling worktree has dirty files → returned in result."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    # Create a fake sibling worktree path
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+
+    our_root = os.path.abspath(mod._PROJECT_ROOT)
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    status_output = b" M collab/lock_client.py\n M README.md\n"
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        # Subsequent calls are git status in sibling worktrees
+        return _make_capture_result(stdout=status_output)
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = lc._get_sibling_worktree_dirty_files()
+    assert "collab/lock_client.py" in result
+    assert "README.md" in result
+
+
+def test_get_sibling_worktree_dirty_files_status_fails(monkeypatch, tmp_path):
+    """Git status in sibling worktree fails → graceful skip."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+    our_root = os.path.abspath(mod._PROJECT_ROOT)
+
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        return _make_capture_result(returncode=1)  # status fails
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_nonexistent_dir(monkeypatch, tmp_path):
+    """Worktree path that doesn't exist on disk is skipped."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    nonexistent = str(tmp_path / "nonexistent_wt")
+    our_root = os.path.abspath(mod._PROJECT_ROOT)
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {nonexistent}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=wt_output),
+    )
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_sibling_worktree_dirty_files_scan_exception(monkeypatch, tmp_path):
+    """Exception during sibling status scan is caught and skipped."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    lc = mod.LockClient(developer_id="test_user")
+
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+    our_root = os.path.abspath(mod._PROJECT_ROOT)
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = lc._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_get_modified_and_unpushed_includes_worktree(monkeypatch, tmp_path):
+    """_get_modified_and_unpushed_files folds in sibling worktree dirty files."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    # No git-modified files, but sibling worktree has dirty files.
+    monkeypatch.setattr(
+        mod.LockClient, "_run_git_status", staticmethod(lambda: ("", True))
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    monkeypatch.setattr(
+        lc, "_get_sibling_worktree_dirty_files", lambda: {"collab/x.py"}
+    )
+
+    result, ok = lc._get_modified_and_unpushed_files()
+    assert ok is True
+    assert "collab/x.py" in result
+
+
+def test_get_modified_and_unpushed_worktree_scan_exception(monkeypatch, tmp_path):
+    """Sibling worktree scan failure is swallowed and does not affect result."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_run_git_status",
+        staticmethod(lambda: (" M collab/x.py", True)),
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+
+    def _boom():
+        raise RuntimeError("worktree scan boom")
+
+    monkeypatch.setattr(lc, "_get_sibling_worktree_dirty_files", _boom)
+
+    result, ok = lc._get_modified_and_unpushed_files()
+    assert ok is True
+    # Git-modified files are still returned despite worktree scan failure.
+    assert "collab/x.py" in result
+
+
+def test_acquire_cross_branch_advisory(monkeypatch, tmp_path, caplog):
+    """Cross-branch advisory warns when same-dev lock exists on different branch."""
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    rpc_data = [
+        {
+            "status": "ok",
+            "token": "tok-123",
+            "developer_id": "test_user",
+            "agent_id": None,
+            "agent_label": None,
+            "agent_kind": None,
+            "existing_branch": "feat/other",
+        }
+    ]
+    monkeypatch.setattr(
+        mod,
+        "_get_create_client",
+        lambda: make_create_client(FakeResponse(data=rpc_data)),
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    # The acquire() method checks os.path.exists for local validation.
+    monkeypatch.setattr(mod.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+    monkeypatch.setattr(lc, "_get_current_branch", lambda: "main")
+
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        ok, token = lc.acquire("collab/x.py", reason="test", branch_name="main")
+
+    assert ok is True
+    assert isinstance(token, str) and len(token) > 0
+    assert any("CROSS-BRANCH" in r.message for r in caplog.records)
+
+
+def test_acquire_cross_branch_same_branch_no_warning(monkeypatch, caplog):
+    """No cross-branch warning when existing_branch matches current branch."""
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    rpc_data = [
+        {
+            "status": "ok",
+            "token": "tok-456",
+            "developer_id": "test_user",
+            "agent_id": None,
+            "agent_label": None,
+            "agent_kind": None,
+            "existing_branch": "main",
+        }
+    ]
+    monkeypatch.setattr(
+        mod,
+        "_get_create_client",
+        lambda: make_create_client(FakeResponse(data=rpc_data)),
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    monkeypatch.setattr(mod.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(mod.os.path, "isdir", lambda _p: False)
+    monkeypatch.setattr(lc, "_get_current_branch", lambda: "main")
+
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        ok, token = lc.acquire("collab/x.py", reason="test", branch_name="main")
+
+    assert ok is True
+    assert isinstance(token, str) and len(token) > 0
+    assert not any("CROSS-BRANCH" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

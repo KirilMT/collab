@@ -1109,6 +1109,22 @@ class LockClient:
                     branch or "main",
                     reason or "No reason",
                 )
+                # Cross-branch advisory: warn when renewing a lock that was
+                # previously held by the same developer on a *different* branch.
+                # This catches same-developer concurrent edits across worktrees
+                # before they become merge conflicts (#150).
+                existing_branch = row.get("existing_branch")
+                if existing_branch and existing_branch != (branch or "main"):
+                    logger.warning(
+                        (
+                            "⚠️ CROSS-BRANCH: %s is also locked by you on "
+                            "branch '%s' (current: '%s'). "
+                            "Concurrent edits may cause merge conflicts."
+                        ),
+                        self._normalize_file_path(file_path),
+                        existing_branch,
+                        branch or "main",
+                    )
                 return True, token
             if row.get("status") == "conflict":
                 owner = row.get("owner", "another developer")
@@ -3924,6 +3940,9 @@ class LockClient:
         ``git_ok`` is False when the git status snapshot failed, signalling callers that
         the result is **not** a reliable picture of local state and should not be used
         to release locks.
+
+        Includes dirty files from sibling git worktrees (``git worktree list``) so that
+        concurrent edits across worktrees are not released as stale (#150).
         """
         modified = set()
         git_status_ok = True
@@ -3962,7 +3981,90 @@ class LockClient:
         except Exception as exc:
             logger.debug("Git diff for in-progress files failed: %s", exc)
 
+        # 3. Sibling worktree dirty files — prevent stale-lock release when
+        #    another worktree is actively editing the same files (#150).
+        try:
+            sibling_dirty = self._get_sibling_worktree_dirty_files()
+            if sibling_dirty:
+                modified.update(sibling_dirty)
+        except Exception as exc:
+            logger.debug("Sibling worktree scan failed: %s", exc)
+
         return list(modified), git_status_ok
+
+    def _get_sibling_worktree_dirty_files(self) -> set[str]:
+        """Return dirty files from sibling git worktrees.
+
+        Uses ``git worktree list --porcelain`` to discover sibling worktrees, then runs
+        ``git status --porcelain`` in each.  Paths are normalised to project- relative
+        form so they match the watcher's own file set.
+        """
+        sibling_files: set[str] = set()
+
+        # Discover worktrees
+        captured = safe_subprocess.capture(
+            ["git", "worktree", "list", "--porcelain"],
+            policy="git",
+            cwd=_PROJECT_ROOT,
+            timeout=10.0,
+        )
+        if not captured.ok or captured.timed_out:
+            return sibling_files
+
+        out = safe_subprocess.decode_output(captured.stdout)
+        worktrees: list[tuple[str, str]] = []  # (path, branch)
+        current_path = ""
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("worktree "):
+                current_path = line[len("worktree ") :]
+            elif line.startswith("branch ") and current_path:
+                branch_ref = line[len("branch ") :]
+                branch = branch_ref.replace("refs/heads/", "", 1)
+                worktrees.append((current_path, branch))
+                current_path = ""
+
+        # Normalise our own root for comparison
+        our_root = os.path.abspath(_PROJECT_ROOT).rstrip("\\/").lower()
+
+        for wt_path, wt_branch in worktrees:
+            wt_abs = os.path.abspath(wt_path).rstrip("\\/").lower()
+            # Skip our own worktree
+            if wt_abs == our_root:
+                continue
+            if not os.path.isdir(wt_path):
+                continue
+
+            try:
+                wt_captured = safe_subprocess.capture(
+                    ["git", "status", "--porcelain"],
+                    policy="git",
+                    cwd=wt_path,
+                    timeout=_GIT_STATUS_TIMEOUT_S,
+                )
+                if not wt_captured.ok or wt_captured.timed_out:
+                    continue
+                wt_out = safe_subprocess.decode_output(wt_captured.stdout).strip("\r\n")
+                for line in wt_out.splitlines():
+                    if len(line) > 3:
+                        p = self._normalize_file_path(self._parse_git_status_path(line))
+                        if (
+                            p
+                            and not p.endswith("/")
+                            and not self._should_ignore_path(p)
+                        ):
+                            sibling_files.add(p)
+                            logger.debug(
+                                "👥 [WORKTREE] %s — dirty in sibling worktree"
+                                " '%s' (%s)",
+                                p,
+                                wt_branch,
+                                wt_path,
+                            )
+            except Exception as exc:
+                logger.debug("Failed to scan sibling worktree %s: %s", wt_path, exc)
+
+        return sibling_files
 
     @staticmethod
     def _parse_git_status_path(line: str) -> str:

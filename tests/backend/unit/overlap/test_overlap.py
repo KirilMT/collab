@@ -961,6 +961,327 @@ def test_fetch_pr_ref_fails_on_fetch_error():
     assert overlap.fetch_pr_ref(cap, "origin", 7, "abc123") is None
 
 
+# ---------------------------------------------------------------------------
+# Worktree overlap detection (#150)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_worktree_overlaps_no_sibling_worktrees(monkeypatch, tmp_path):
+    """No sibling worktrees → empty report list."""
+    monkeypatch.delenv("COLLAB_OVERLAP_CHECK", raising=False)
+    our_root = str(tmp_path)
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (0, ""),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\nbranch refs/heads/feat/current\n",
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_command_fails(monkeypatch, tmp_path):
+    """Git worktree list fails → empty report list."""
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("worktree", "list", "--porcelain"): (1, ""),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_detached_head(monkeypatch, tmp_path):
+    """Detached HEAD → empty report list."""
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "HEAD"),
+            ("worktree", "list", "--porcelain"): (0, ""),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_finds_overlap(monkeypatch, tmp_path):
+    """Sibling worktree with overlapping dirty files is detected."""
+    sibling_root = tmp_path / "sibling"
+    sibling_root.mkdir()
+    our_root = str(tmp_path)
+    sibling_str = str(sibling_root)
+
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (
+                0,
+                "AGENTS.md\nREADME.md",
+            ),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/other\n",
+            ),
+            ("-C", sibling_str, "status", "--porcelain"): (
+                0,
+                " M AGENTS.md\n M CHANGELOG.md\n",
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert len(reports) == 1
+    assert reports[0].branch == "feat/other"
+    assert reports[0].files == ("AGENTS.md",)
+
+
+def test_detect_worktree_overlaps_same_branch_skipped(monkeypatch, tmp_path):
+    """Sibling worktree on same branch is skipped."""
+    sibling_root = tmp_path / "sibling"
+    sibling_root.mkdir()
+    our_root = str(tmp_path)
+    sibling_str = str(sibling_root)
+
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (
+                0,
+                "AGENTS.md",
+            ),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/current\n",
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_warn_cross_branch_overlap_with_worktree_overlap(monkeypatch, tmp_path):
+    """warn_cross_branch_overlap includes worktree overlap warnings."""
+    monkeypatch.delenv("COLLAB_OVERLAP_STRICT", raising=False)
+    monkeypatch.setattr(overlap, "refresh_remote_state", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        overlap,
+        "detect_worktree_overlaps",
+        lambda *_a, **_k: [overlap.OverlapReport(branch="feat/other", files=("a.py",))],
+    )
+    emitted: list[str] = []
+    rc = overlap.warn_cross_branch_overlap(tmp_path, emit=emitted.append)
+    assert rc == 0
+    assert any("worktree" in line.lower() for line in emitted)
+    assert any("a.py" in line for line in emitted)
+
+
+def test_warn_cross_branch_overlap_strict_with_worktree(monkeypatch, tmp_path):
+    """Strict mode: worktree overlap triggers EXIT_OVERLAP."""
+    monkeypatch.setenv("COLLAB_OVERLAP_STRICT", "1")
+    monkeypatch.setattr(overlap, "refresh_remote_state", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        overlap,
+        "detect_cross_branch_overlaps",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        overlap,
+        "detect_worktree_overlaps",
+        lambda *_a, **_k: [overlap.OverlapReport(branch="feat/other", files=("b.py",))],
+    )
+    emitted: list[str] = []
+    rc = overlap.warn_cross_branch_overlap(tmp_path, emit=emitted.append)
+    assert rc == overlap.EXIT_OVERLAP
+
+
+def test_emit_strict_help_pr_claims_tip(monkeypatch):
+    """_emit_strict_help includes PR_CLAIMS tip when disabled."""
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "0")
+    monkeypatch.setattr(overlap, "is_pr_claims_enabled", lambda: False)
+    emitted: list[str] = []
+    overlap._emit_strict_help(emitted.append)
+    assert any("COLLAB_PR_CLAIMS=1" in line for line in emitted)
+
+
+def test_emit_strict_help_pr_claims_already_enabled(monkeypatch):
+    """_emit_strict_help omits PR_CLAIMS tip when already enabled."""
+    monkeypatch.setenv("COLLAB_PR_CLAIMS", "1")
+    monkeypatch.setattr(overlap, "is_pr_claims_enabled", lambda: True)
+    emitted: list[str] = []
+    overlap._emit_strict_help(emitted.append)
+    assert not any("COLLAB_PR_CLAIMS=1" in line for line in emitted)
+
+
+def test_detect_worktree_overlaps_no_current_files(monkeypatch, tmp_path):
+    """Empty current_files → early return."""
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (0, ""),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {tmp_path}\nbranch refs/heads/feat/current\n"
+                f"worktree {tmp_path}/sibling\nbranch refs/heads/feat/other\n",
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_nonexistent_dir(monkeypatch, tmp_path):
+    """Worktree path that no longer exists on disk is skipped."""
+    sibling_str = str(tmp_path / "nonexistent_sibling")
+    our_root = str(tmp_path)
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (
+                0,
+                "AGENTS.md",
+            ),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/other\n",
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_status_fails(monkeypatch, tmp_path):
+    """Git status in sibling worktree fails → skipped."""
+    sibling_root = tmp_path / "sibling"
+    sibling_root.mkdir()
+    our_root = str(tmp_path)
+    sibling_str = str(sibling_root)
+
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (
+                0,
+                "AGENTS.md",
+            ),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/other\n",
+            ),
+            ("-C", sibling_str, "status", "--porcelain"): (1, ""),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert reports == []
+
+
+def test_detect_worktree_overlaps_rename_and_quoted_paths(monkeypatch, tmp_path):
+    """Handles rename (->) and quoted path syntax in git status output."""
+    sibling_root = tmp_path / "sibling"
+    sibling_root.mkdir()
+    our_root = str(tmp_path)
+    sibling_str = str(sibling_root)
+
+    cap = _capture_from_map(
+        {
+            ("rev-parse", "--abbrev-ref", "HEAD"): (0, "feat/current"),
+            ("rev-parse", "--verify", "origin/main"): (0, "origin/main"),
+            ("rev-parse", "HEAD"): (0, "sha-head"),
+            ("merge-base", "HEAD", "origin/main"): (0, "base-sha"),
+            ("diff", "--name-only", "base-sha...HEAD"): (
+                0,
+                "new_name.py\nquoted file.py",
+            ),
+            ("worktree", "list", "--porcelain"): (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/other\n",
+            ),
+            ("-C", sibling_str, "status", "--porcelain"): (
+                0,
+                " R old_name.py -> new_name.py\n" ' M "quoted file.py"\n',
+            ),
+        }
+    )
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=cap)
+    assert len(reports) == 1
+    assert set(reports[0].files) == {"new_name.py", "quoted file.py"}
+
+
+def test_detect_worktree_overlaps_scan_exception(monkeypatch, tmp_path):
+    """Exception during sibling worktree scan is caught and skipped."""
+    sibling_root = tmp_path / "sibling"
+    sibling_root.mkdir()
+    our_root = str(tmp_path)
+    sibling_str = str(sibling_root)
+
+    def _cap(args):
+        key = tuple(args)
+        if key == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return (0, "feat/current")
+        if key == ("rev-parse", "--verify", "origin/main"):
+            return (0, "origin/main")
+        if key == ("rev-parse", "HEAD"):
+            return (0, "sha-head")
+        if key == ("merge-base", "HEAD", "origin/main"):
+            return (0, "base-sha")
+        if key == ("diff", "--name-only", "base-sha...HEAD"):
+            return (0, "AGENTS.md")
+        if key == ("worktree", "list", "--porcelain"):
+            return (
+                0,
+                f"worktree {our_root}\n"
+                f"branch refs/heads/feat/current\n"
+                f"worktree {sibling_str}\n"
+                f"branch refs/heads/feat/other\n",
+            )
+        # Simulate exception during status scan
+        raise RuntimeError("scan exploded")
+
+    reports = overlap.detect_worktree_overlaps(tmp_path, git_capture=_cap)
+    assert reports == []
+
+
 def test_fetch_pr_ref_fails_on_verify_error():
     cap = _capture_from_map(
         {
