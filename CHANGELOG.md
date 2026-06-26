@@ -11,19 +11,17 @@ and this project adheres to
 
 ## [0.9.0](https://github.com/KirilMT/collab/compare/v0.8.1...v0.9.0) (2026-06-26)
 
-
 ### Features
 
-* add edit-time cross-branch/agent conflict detection and worktree-aware locking ([#153](https://github.com/KirilMT/collab/issues/153)) ([d34e677](https://github.com/KirilMT/collab/commit/d34e677c621237aa2c033b8b7555f5007bc08b03))
-* **overlap:** consolidate merge-tree logic, add line-level PR overlap guard ([#144](https://github.com/KirilMT/collab/issues/144)) ([f74b28c](https://github.com/KirilMT/collab/commit/f74b28ce9ee057eadbdab9e426e7d7dd86f5a1e4)), closes [#143](https://github.com/KirilMT/collab/issues/143)
-
+- add edit-time cross-branch/agent conflict detection and worktree-aware locking ([#153](https://github.com/KirilMT/collab/issues/153)) ([d34e677](https://github.com/KirilMT/collab/commit/d34e677c621237aa2c033b8b7555f5007bc08b03))
+- **overlap:** consolidate merge-tree logic, add line-level PR overlap guard ([#144](https://github.com/KirilMT/collab/issues/144)) ([f74b28c](https://github.com/KirilMT/collab/commit/f74b28ce9ee057eadbdab9e426e7d7dd86f5a1e4)), closes [#143](https://github.com/KirilMT/collab/issues/143)
 
 ### Bug Fixes
 
-* **deps:** resolve js-yaml quadratic-complexity DoS via npm overrides ([#146](https://github.com/KirilMT/collab/issues/146)) ([6172945](https://github.com/KirilMT/collab/commit/6172945f50c565846d2fb0a1629f0d2b1b23cd03))
-* eliminate sub-minute lock durations caused by criteria mismatch and missing hysteresis ([#152](https://github.com/KirilMT/collab/issues/152)) ([440df19](https://github.com/KirilMT/collab/commit/440df1908db5e027ed584afd6e3477e6933d1ad1)), closes [#151](https://github.com/KirilMT/collab/issues/151)
-* **overlap:** ignore exit code in git_version_supports_merge_tree ([#149](https://github.com/KirilMT/collab/issues/149)) ([189dcf8](https://github.com/KirilMT/collab/commit/189dcf8bbd723e87256ec0ee26ee08d1db9ff5e8))
-* **schema:** add DROP FUNCTION before CREATE OR REPLACE acquire_lock ([#154](https://github.com/KirilMT/collab/issues/154)) ([1f02c31](https://github.com/KirilMT/collab/commit/1f02c31c0c8e6f232a16ea41686e292289018b4f))
+- **deps:** resolve js-yaml quadratic-complexity DoS via npm overrides ([#146](https://github.com/KirilMT/collab/issues/146)) ([6172945](https://github.com/KirilMT/collab/commit/6172945f50c565846d2fb0a1629f0d2b1b23cd03))
+- eliminate sub-minute lock durations caused by criteria mismatch and missing hysteresis ([#152](https://github.com/KirilMT/collab/issues/152)) ([440df19](https://github.com/KirilMT/collab/commit/440df1908db5e027ed584afd6e3477e6933d1ad1)), closes [#151](https://github.com/KirilMT/collab/issues/151)
+- **overlap:** ignore exit code in git_version_supports_merge_tree ([#149](https://github.com/KirilMT/collab/issues/149)) ([189dcf8](https://github.com/KirilMT/collab/commit/189dcf8bbd723e87256ec0ee26ee08d1db9ff5e8))
+- **schema:** add DROP FUNCTION before CREATE OR REPLACE acquire_lock ([#154](https://github.com/KirilMT/collab/issues/154)) ([1f02c31](https://github.com/KirilMT/collab/commit/1f02c31c0c8e6f232a16ea41686e292289018b4f))
 
 ## [0.8.1](https://github.com/KirilMT/collab/compare/v0.8.0...v0.8.1) (2026-06-14)
 
