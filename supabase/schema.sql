@@ -171,6 +171,13 @@ alter publication supabase_realtime add table file_locks;
 -- the *previous* branch name (existing_branch) when a same-developer renewal
 -- happened on a different branch — the client uses this to emit a cross-branch
 -- advisory warning.
+--
+-- DROP before CREATE OR REPLACE so the return type can change across versions.
+-- PostgreSQL forbids changing the OUT-parameter row type of an existing function
+-- even with CREATE OR REPLACE (error 42P13).
+drop function if exists acquire_lock(
+  text, text, text, text, text, boolean, text, text, text, text
+);
 create or replace function acquire_lock(
   p_file_path text,
   p_developer_id text,
