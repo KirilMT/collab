@@ -19,6 +19,8 @@ from unittest import mock
 
 import pytest
 
+from collab.safe_subprocess import CaptureResult
+
 from ._helpers import load_watcher_module, reload_watcher_module
 
 
@@ -519,6 +521,268 @@ def _interrupt_sleep(monkeypatch, mod):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+
+# ---------------------------------------------------------------------------
+# Worktree-aware sibling scanning (#150)
+# ---------------------------------------------------------------------------
+
+
+def _make_capture_result(returncode=0, stdout=b"", timed_out=False):
+    """Build a minimal CaptureResult for test injection."""
+    return CaptureResult(
+        argv=("git", "test"),
+        returncode=returncode,
+        stdout=stdout,
+        stderr=b"",
+        timed_out=timed_out,
+    )
+
+
+def test_watcher_get_sibling_worktree_dirty_files_empty(monkeypatch):
+    """No sibling worktrees → empty set."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=b""),
+    )
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_command_fails(monkeypatch):
+    """Git worktree list fails → empty set."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(returncode=1),
+    )
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_timed_out(monkeypatch):
+    """Git worktree list times out → empty set."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(timed_out=True),
+    )
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_skips_own(monkeypatch):
+    """Only our own worktree listed → empty set."""
+    mod = load_watcher_module()
+    our_root = mod._PROJECT_ROOT
+    wt_output = (f"worktree {our_root}\n" f"branch refs/heads/main\n").encode()
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=wt_output),
+    )
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_finds_dirty(monkeypatch, tmp_path):
+    """Sibling worktree has dirty files → returned in result."""
+    mod = load_watcher_module()
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+    our_root = mod._PROJECT_ROOT
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+    status_output = b" M collab/live_locks_watcher.py\n M AGENTS.md\n"
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        return _make_capture_result(stdout=status_output)
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = mod._get_sibling_worktree_dirty_files()
+    assert "collab/live_locks_watcher.py" in result
+    assert "AGENTS.md" in result
+
+
+def test_watcher_get_modified_and_unpushed_includes_worktree(monkeypatch):
+    """_get_modified_and_unpushed_files folds in sibling worktree dirty files."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "_git_capture_status_porcelain", lambda: "")
+    monkeypatch.setattr(mod, "_resolve_lock_diff_base_ref", lambda: "origin/main")
+    monkeypatch.setattr(
+        mod, "_get_sibling_worktree_dirty_files", lambda: {"collab/x.py"}
+    )
+
+    result = mod._get_modified_and_unpushed_files()
+    assert "collab/x.py" in result
+
+
+def test_watcher_get_modified_and_unpushed_worktree_scan_exception(monkeypatch):
+    """Sibling worktree scan failure is swallowed."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "_git_capture_status_porcelain", lambda: " M README.md")
+    monkeypatch.setattr(mod, "_resolve_lock_diff_base_ref", lambda: "origin/main")
+
+    def _boom():
+        raise RuntimeError("worktree scan boom")
+
+    monkeypatch.setattr(mod, "_get_sibling_worktree_dirty_files", _boom)
+
+    result = mod._get_modified_and_unpushed_files()
+    # Git-modified files are still returned despite worktree scan failure.
+    assert "README.md" in result
+
+
+def test_process_new_files_cross_branch_advisory(monkeypatch, caplog):
+    """Cross-branch advisory warns when same-dev lock exists on different branch."""
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
+    monkeypatch.setattr(mod, "AGENT_ID", None)
+    monkeypatch.setattr(mod, "_maybe_warn_cross_branch_overlap", lambda: None)
+    monkeypatch.setattr(mod, "_HAS_COLORAMA", False)
+
+    rpc_data = [
+        {
+            "status": "acquired",
+            "token": "tok-xyz",
+            "existing_branch": "feat/other",
+        }
+    ]
+
+    # Build a proper chain: client.rpc(...).execute().data
+    fake_execute_result = mock.MagicMock()
+    fake_execute_result.data = rpc_data
+
+    fake_rpc_result = mock.MagicMock()
+    fake_rpc_result.execute.return_value = fake_execute_result
+
+    fake_client = mock.MagicMock()
+    fake_client.rpc.return_value = fake_rpc_result
+
+    # Also need table().insert().execute() for lock tracking
+    fake_table = mock.MagicMock()
+    fake_insert = mock.MagicMock()
+    fake_insert.execute.return_value = mock.MagicMock(data=[])
+    fake_table.insert.return_value = fake_insert
+    fake_client.table.return_value = fake_table
+
+    monkeypatch.setattr(mod, "SESSION_TOKEN", "sess-tok")
+    monkeypatch.setattr(mod, "_local_owned_locks", set())
+    monkeypatch.setattr(mod, "_lock_acquired_at", {})
+
+    from datetime import datetime
+
+    monkeypatch.setattr(mod, "datetime", mock.MagicMock())
+    mod.datetime.now.return_value = datetime(2025, 1, 1)
+
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        mod._process_new_files(fake_client, "main", {"collab/x.py"})
+
+    assert any("CROSS-BRANCH" in r.message for r in caplog.records)
+
+
+def test_watcher_get_sibling_worktree_dirty_files_status_fails(monkeypatch, tmp_path):
+    """Git status in sibling worktree fails → graceful skip."""
+    mod = load_watcher_module()
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+    our_root = mod._PROJECT_ROOT
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        return _make_capture_result(returncode=1)  # status fails
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_nonexistent_dir(
+    monkeypatch, tmp_path
+):
+    """Worktree path that doesn't exist on disk is skipped."""
+    mod = load_watcher_module()
+    nonexistent = str(tmp_path / "nonexistent_wt")
+    our_root = mod._PROJECT_ROOT
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {nonexistent}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda *a, **k: _make_capture_result(stdout=wt_output),
+    )
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
+
+
+def test_watcher_get_sibling_worktree_dirty_files_scan_exception(monkeypatch, tmp_path):
+    """Exception during sibling status scan is caught and skipped."""
+    mod = load_watcher_module()
+    sibling = tmp_path / "sibling_wt"
+    sibling.mkdir()
+    our_root = mod._PROJECT_ROOT
+    wt_output = (
+        f"worktree {our_root}\n"
+        f"branch refs/heads/main\n"
+        f"worktree {sibling}\n"
+        f"branch refs/heads/feat/other\n"
+    ).encode()
+
+    call_count = {"n": 0}
+
+    def _capture(argv, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_capture_result(stdout=wt_output)
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", _capture)
+    monkeypatch.setattr(
+        mod.safe_subprocess, "decode_output", lambda b: b.decode("utf-8")
+    )
+
+    result = mod._get_sibling_worktree_dirty_files()
+    assert result == set()
 
 
 def test_main_assigns_pid_file_when_env_unset(monkeypatch, tmp_path):

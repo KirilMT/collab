@@ -162,14 +162,15 @@ alter publication supabase_realtime add table file_locks;
 -- ---------------------------------------------------------------------------
 -- Atomic lock acquisition function (RPC)
 -- ---------------------------------------------------------------------------
--- This function attempts to insert a lock for file_path. If a lock already
--- exists it will only be replaced by the same owner (renewals). There is
--- no automatic expiry-based replacement: locks persist until explicitly
--- released. Returns status and token.
--- and token.
+-- This function attempts to insert a lock for file_path. Same-developer
+-- renewal is permitted when the agent identity matches (or the caller is the
+-- human taking over any agent lock).  Different agents of the same developer
+-- now conflict so concurrent worktree edits are surfaced at edit time (#150).
 --
--- Usage (RPC):
---   select * from acquire_lock('path', 'alice', 'editing', 'uuid-token');
+-- Returns status, lock_token, owner, agent_id, agent_label, agent_kind, and
+-- the *previous* branch name (existing_branch) when a same-developer renewal
+-- happened on a different branch — the client uses this to emit a cross-branch
+-- advisory warning.
 create or replace function acquire_lock(
   p_file_path text,
   p_developer_id text,
@@ -181,15 +182,26 @@ create or replace function acquire_lock(
   p_agent_label text default null,
   p_origin text default 'human',
   p_agent_kind text default null
-) returns table(status text, lock_token text, owner text, agent_id text) as $$
+) returns table(
+  status text,
+  lock_token text,
+  owner text,
+  agent_id text,
+  agent_label text,
+  agent_kind text,
+  existing_branch text
+) as $$
 declare
   rec record;
+  _old_branch text;
 begin
-  -- Try to insert; on conflict the lock may be taken over when the same
-  -- developer already owns it (renewal, agent claim after human auto-lock,
-  -- human pre-commit acquire after agent edit, etc.). Cross-developer
-  -- conflicts are rejected. The background watcher still skips agent-held
-  -- files so attribution is not downgraded during bulk auto-watch.
+  -- Snapshot the current lock's branch before the upsert so we can report
+  -- cross-branch renewals.
+  select fl.branch_name into _old_branch
+  from file_locks fl
+  where fl.file_path = p_file_path
+    and fl.developer_id = p_developer_id;
+
   insert into file_locks(
     file_path, developer_id, branch_name, lock_token, reason,
     acquired_at, is_ephemeral, agent_id, agent_label, origin, agent_kind
@@ -211,15 +223,39 @@ begin
         origin = excluded.origin,
         agent_kind = excluded.agent_kind
     where file_locks.developer_id = excluded.developer_id
-  returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id into rec;
+      and (excluded.agent_id is null  -- human always wins
+           or file_locks.agent_id is not distinct from excluded.agent_id)
+  returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id,
+            file_locks.agent_label, file_locks.agent_kind into rec;
 
   if found then
-    return query select 'ok'::text, rec.lock_token::text, rec.developer_id::text, rec.agent_id::text;
+    return query select
+      'ok'::text,
+      rec.lock_token::text,
+      rec.developer_id::text,
+      rec.agent_id::text,
+      rec.agent_label::text,
+      rec.agent_kind::text,
+      case
+        when _old_branch is not null and _old_branch <> p_branch_name
+        then _old_branch
+        else null
+      end::text;
+    return;
   end if;
 
-  select fl.lock_token, fl.developer_id, fl.agent_id into rec
+  select fl.lock_token, fl.developer_id, fl.agent_id,
+         fl.agent_label, fl.agent_kind
+  into rec
   from file_locks fl where fl.file_path = p_file_path;
-  return query select 'conflict'::text, rec.lock_token::text, rec.developer_id::text, rec.agent_id::text;
+  return query select
+    'conflict'::text,
+    rec.lock_token::text,
+    rec.developer_id::text,
+    rec.agent_id::text,
+    rec.agent_label::text,
+    rec.agent_kind::text,
+    null::text;
 end;
 $$ language plpgsql security definer;
 

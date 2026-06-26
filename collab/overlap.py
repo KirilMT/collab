@@ -599,6 +599,111 @@ def format_warnings(reports: Sequence[OverlapReport]) -> list[str]:
     return [format_overlap_warning(report) for report in reports]
 
 
+def detect_worktree_overlaps(
+    repo_root: str | Path,
+    *,
+    git_capture: Optional[GitCapture] = None,
+) -> list[OverlapReport]:
+    """Detect dirty files in sibling worktrees that overlap with current changes.
+
+    Uses ``git worktree list --porcelain`` to discover sibling worktrees, then checks
+    ``git status --porcelain`` in each.  Files that are dirty in a sibling worktree AND
+    also modified on the current branch are reported as overlaps — these represent
+    concurrent, uncommitted edits that will likely conflict at merge time (#150).
+
+    Returns an empty list when there are no sibling worktrees or no overlaps.
+    """
+    cwd = str(Path(repo_root).resolve())
+
+    def capture(args: Sequence[str]) -> tuple[int, str]:
+        runner = git_capture or (lambda a: _default_git_capture(cwd, a))
+        return runner(args)
+
+    # 1. Get current branch's changed files vs base
+    rc, current_branch = capture(["rev-parse", "--abbrev-ref", "HEAD"])
+    if rc != 0 or current_branch == "HEAD":
+        return []
+    current_branch = current_branch.strip()
+
+    # 2. List worktrees
+    rc, wt_out = capture(["worktree", "list", "--porcelain"])
+    if rc != 0:
+        return []
+
+    worktrees: list[tuple[str, str, str]] = []  # (path, branch, abs_path_lower)
+    current_wt_path = ""
+    for line in wt_out.splitlines():
+        line = line.strip()
+        if line.startswith("worktree "):
+            current_wt_path = line[len("worktree ") :]
+        elif line.startswith("branch ") and current_wt_path:
+            branch_ref = line[len("branch ") :]
+            branch = branch_ref.replace("refs/heads/", "", 1)
+            abs_path = os.path.abspath(current_wt_path).rstrip("\\/").lower()
+            worktrees.append((current_wt_path, branch, abs_path))
+            current_wt_path = ""
+
+    our_abs = os.path.abspath(str(repo_root)).rstrip("\\/").lower()
+
+    # 3. Get current branch's changed files (for comparison)
+    current_files: set[str] = set()
+    try:
+        base_ref = resolve_base_ref(capture, resolve_remote(capture))
+        if base_ref:
+            current_files = set(_changed_files_since_base(capture, "HEAD", base_ref))
+    except Exception:
+        pass
+
+    if not current_files:
+        return []
+
+    # 4. Scan each sibling worktree for overlapping dirty files
+    reports: list[OverlapReport] = []
+    for wt_path, wt_branch, wt_abs in worktrees:
+        if wt_abs == our_abs:
+            continue
+        if wt_branch == current_branch:
+            continue
+        if not os.path.isdir(wt_path):
+            continue
+
+        try:
+            rc, wt_status = capture(["-C", wt_path, "status", "--porcelain"])
+            if rc != 0:
+                continue
+
+            sibling_dirty: set[str] = set()
+            for line in wt_status.splitlines():
+                if len(line) > 3:
+                    fp = line[3:].strip()
+                    if " -> " in fp:
+                        fp = fp.split(" -> ")[-1].strip()
+                    if fp.startswith('"') and fp.endswith('"'):
+                        fp = fp[1:-1]
+                    fp = fp.replace("\\", "/")
+                    if fp and not fp.endswith("/"):
+                        sibling_dirty.add(fp)
+
+            overlap_files = sibling_dirty & current_files
+            if overlap_files:
+                reports.append(
+                    OverlapReport(
+                        branch=wt_branch,
+                        files=tuple(sorted(overlap_files)),
+                    )
+                )
+                logger.debug(
+                    "Worktree overlap: %d file(s) dirty in both '%s' and '%s'",
+                    len(overlap_files),
+                    current_branch,
+                    wt_branch,
+                )
+        except Exception as exc:
+            logger.debug("Failed to scan sibling worktree %s: %s", wt_path, exc)
+
+    return reports
+
+
 def _emit_strict_help(writer: Callable[[str], None]) -> None:
     """Tell the user how to proceed once strict mode has blocked them."""
     writer(
@@ -607,6 +712,12 @@ def _emit_strict_help(writer: Callable[[str], None]) -> None:
         "To override for one push set COLLAB_OVERLAP_STRICT=0 (or, as a last "
         "resort, `git push --no-verify`)."
     )
+    if not is_pr_claims_enabled():
+        writer(
+            "[collab] TIP: set COLLAB_PR_CLAIMS=1 to retain pushed-branch files "
+            "as persistent claims until merge, extending edit-time protection "
+            "to open PRs (see docs/API.md)."
+        )
 
 
 def warn_cross_branch_overlap(
@@ -661,7 +772,20 @@ def warn_cross_branch_overlap(
         for line in format_warnings(reports):
             writer(line)
 
-        if reports and strict:
+        # Also check sibling worktrees for uncommitted overlapping edits (#150).
+        # These are edits that haven't been committed/pushed yet, so ref-based
+        # detection can't see them — but they will cause merge conflicts later.
+        wt_reports = detect_worktree_overlaps(root, git_capture=capture)
+        if wt_reports:
+            writer(
+                "[collab] WARNING: concurrent uncommitted edits detected in "
+                "sibling worktrees (files also modified on this branch):"
+            )
+            for line in format_warnings(wt_reports):
+                writer(line)
+
+        all_reports = list(reports) + wt_reports
+        if all_reports and strict:
             _emit_strict_help(writer)
             return EXIT_OVERLAP
     except Exception as exc:

@@ -754,6 +754,18 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                 )
                 log_msg = _color(msg, Fore.GREEN) if _HAS_COLORAMA else msg
                 logger.info(log_msg)
+                # Cross-branch advisory (#150): warn when renewing a lock
+                # held by the same developer on a different branch.
+                existing_branch = data[0].get("existing_branch") if data else None
+                if existing_branch and existing_branch != br_local:
+                    warn_msg = (
+                        f"CROSS-BRANCH: {fp} is also locked by you on "
+                        f"branch '{existing_branch}' (current: '{br_local}'). "
+                        "Concurrent edits may cause merge conflicts."
+                    )
+                    logger.warning(
+                        _color(warn_msg, Fore.YELLOW) if _HAS_COLORAMA else warn_msg
+                    )
                 # Track locks this watcher created so remote scans do not
                 # report them as 'remote added' later.
                 _local_owned_locks.add(fp)
@@ -949,6 +961,74 @@ def _resolve_lock_diff_base_ref() -> str | None:
     return None
 
 
+def _get_sibling_worktree_dirty_files() -> set[str]:
+    """Return dirty files from sibling git worktrees.
+
+    Uses ``git worktree list --porcelain`` to discover sibling worktrees, then runs
+    ``git status --porcelain`` in each.  Paths are normalised to project- relative form.
+    Used by :func:`_get_modified_and_unpushed_files` so that concurrent edits across
+    worktrees are not released as stale (#150).
+    """
+    sibling_files: set[str] = set()
+
+    captured = safe_subprocess.capture(
+        ["git", "worktree", "list", "--porcelain"],
+        policy="git",
+        cwd=_PROJECT_ROOT,
+        timeout=10.0,
+    )
+    if not captured.ok or captured.timed_out:
+        return sibling_files
+
+    out = safe_subprocess.decode_output(captured.stdout)
+    worktrees: list[tuple[str, str]] = []  # (path, branch)
+    current_path = ""
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("worktree "):
+            current_path = line[len("worktree ") :]
+        elif line.startswith("branch ") and current_path:
+            branch_ref = line[len("branch ") :]
+            branch = branch_ref.replace("refs/heads/", "", 1)
+            worktrees.append((current_path, branch))
+            current_path = ""
+
+    our_root = os.path.abspath(_PROJECT_ROOT).rstrip("\\/").lower()
+
+    for wt_path, wt_branch in worktrees:
+        wt_abs = os.path.abspath(wt_path).rstrip("\\/").lower()
+        if wt_abs == our_root:
+            continue
+        if not os.path.isdir(wt_path):
+            continue
+
+        try:
+            wt_captured = safe_subprocess.capture(
+                ["git", "status", "--porcelain"],
+                policy="git",
+                cwd=wt_path,
+                timeout=10.0,
+            )
+            if not wt_captured.ok or wt_captured.timed_out:
+                continue
+            wt_out = safe_subprocess.decode_output(wt_captured.stdout).strip("\r\n")
+            for line in wt_out.splitlines():
+                if len(line) > 3:
+                    p = _normalize_path(_parse_git_status_path(line), _PROJECT_ROOT)
+                    if p and not _should_ignore_path(p):
+                        sibling_files.add(p)
+                        logger.debug(
+                            "👥 [WORKTREE] %s — dirty in sibling '%s' (%s)",
+                            p,
+                            wt_branch,
+                            wt_path,
+                        )
+        except Exception as exc:
+            logger.debug("Failed to scan sibling worktree %s: %s", wt_path, exc)
+
+    return sibling_files
+
+
 def _get_modified_and_unpushed_files() -> set[str]:
     """Return the set of files that are 'in progress' for this developer.
 
@@ -989,6 +1069,15 @@ def _get_modified_and_unpushed_files() -> set[str]:
         # No base ref or diff failed - fall back to status-only. This is safe: we
         # just won't lock committed-but-unpushed files, which beats crashing.
         pass
+
+    # Part 3: sibling worktree dirty files (#150) — prevent stale-lock release
+    # when another worktree is actively editing the same files.
+    try:
+        sibling_dirty = _get_sibling_worktree_dirty_files()
+        if sibling_dirty:
+            result.update(sibling_dirty)
+    except Exception as exc:
+        logger.debug("Sibling worktree scan failed: %s", exc)
 
     return result
 
