@@ -46,6 +46,7 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
         "rev-parse",
         "show",
         "status",
+        "worktree",
     }
 )
 
