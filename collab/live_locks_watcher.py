@@ -781,26 +781,8 @@ def _process_releases(client, released: set[str]) -> None:
 
     Extracted so tests can simulate exceptions when removing locks from the local-owned
     set without running the entire main loop.
-
-    Enforces a minimum hold time to avoid rapid acquire/release cycles when git status
-    is transient.
     """
     for fp in released:
-        # Enforce minimum lock hold time: skip files whose lock was acquired
-        # too recently to avoid thrashing when git status fluctuates.
-        acquired = _lock_acquired_at.get(fp)
-        if acquired is not None:
-            age = (datetime.now() - acquired).total_seconds()
-            if age < _min_auto_lock_hold_seconds():
-                logger.debug(
-                    "⏳ [KEPT] %s — lock is only %ds old "
-                    "(< %ds minimum); deferring auto-release",
-                    fp,
-                    int(age),
-                    _min_auto_lock_hold_seconds(),
-                )
-                continue
-
         # Was this file in conflict?
         if fp in _active_conflicts:
             _active_conflicts.discard(fp)
@@ -1205,25 +1187,10 @@ def _reconcile_on_startup(client) -> None:
                 msg = f"[RESUMED] {fp} - lock re-adopted from this machine"
                 logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         else:
-            # File is clean — but skip if the lock was acquired too recently.
-            # This prevents the watcher from releasing locks it just acquired
-            # during the same reconciliation pass (e.g. when git status is
-            # transient).
-            acquired = _lock_acquired_at.get(fp)
-            if acquired is not None:
-                age = (datetime.now() - acquired).total_seconds()
-                if age < _min_auto_lock_hold_seconds():
-                    logger.debug(
-                        "⏳ [KEPT] %s — lock is only %ds old "
-                        "(< %ds minimum); skipping auto-release",
-                        fp,
-                        int(age),
-                        _min_auto_lock_hold_seconds(),
-                    )
-                    # Keep the lock in _local_owned_locks so the main loop
-                    # continues to track it for eventual release.
-                    _local_owned_locks.add(fp)
-                    continue
+            # File is clean — release immediately.
+            # Unlike agent locks, the developer's own watcher has authoritative
+            # knowledge of the working tree. Delaying here would leave
+            # post-merge / post-pull files locked (#150, #151).
 
             # File is clean - stale lock, release it
             try:
@@ -1522,22 +1489,6 @@ def _graceful_shutdown() -> None:
                         msg = f"[KEPT] {fp} - still has local edits, lock preserved"
                         logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
                     else:
-                        # Enforce minimum hold time even during shutdown:
-                        # keep locks that were acquired too recently.
-                        acquired = _lock_acquired_at.get(fp)
-                        if acquired is not None:
-                            age = (datetime.now() - acquired).total_seconds()
-                            if age < _min_auto_lock_hold_seconds():
-                                n_kept += 1
-                                logger.debug(
-                                    "⏳ [KEPT] %s — lock is only %ds old "
-                                    "(< %ds minimum); preserving",
-                                    fp,
-                                    int(age),
-                                    _min_auto_lock_hold_seconds(),
-                                )
-                                continue
-
                         try:
                             _scope_agent(
                                 client.table("file_locks")
@@ -1571,21 +1522,6 @@ def _graceful_shutdown() -> None:
                         ]
                         for fp in db_locks:
                             if fp and fp not in still_dirty:
-                                # Enforce minimum hold time
-                                acquired = _lock_acquired_at.get(fp)
-                                if acquired is not None:
-                                    age = (datetime.now() - acquired).total_seconds()
-                                    if age < _min_auto_lock_hold_seconds():
-                                        n_kept += 1
-                                        logger.debug(
-                                            "⏳ [KEPT] %s — lock is only %ds old "
-                                            "(< %ds minimum); preserving",
-                                            fp,
-                                            int(age),
-                                            _min_auto_lock_hold_seconds(),
-                                        )
-                                        continue
-
                                 _scope_agent(
                                     client.table("file_locks")
                                     .delete()

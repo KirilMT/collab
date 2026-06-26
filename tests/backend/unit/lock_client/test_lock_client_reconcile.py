@@ -408,14 +408,14 @@ def test_resolve_lock_diff_base_ref_uses_origin_branch(monkeypatch):
     assert mod.LockClient._resolve_lock_diff_base_ref() == "origin/feat/x"
 
 
-def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, tmp_path, caplog):
-    """Stale locks younger than the minimum hold time are kept, not released."""
+def test_reconcile_releases_stale_locks_immediately(monkeypatch, tmp_path, caplog):
+    """Stale locks (clean files) are released immediately regardless of age (#150,
+    #151)."""
     import logging
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
 
     # File is clean (empty git status)
     monkeypatch.setattr(
@@ -423,10 +423,6 @@ def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, tmp_path, c
         "_get_modified_and_unpushed_files",
         lambda self: ([], True),
     )
-
-    # Use timezone-aware isoformat (Supabase format) to exercise
-    # the .replace(tzinfo=None) path in _reconcile().
-    from datetime import timezone
 
     now_iso = datetime.now(timezone.utc).isoformat()
     locks_data = [
@@ -445,10 +441,9 @@ def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, tmp_path, c
     with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
         result = lc._reconcile()
 
-    # The lock is young — should be KEPT in the return value
-    # (via kept_young union) so the main loop continues tracking it.
-    assert "src/held.py" in result
-    assert "⏳ [KEPT]" in caplog.text
+    # The file is clean — released immediately, NOT kept.
+    assert "src/held.py" not in result
+    assert "STALE-RELEASED" in caplog.text
 
 
 def test_reconcile_defers_dev_other_stale_for_young_locks(
