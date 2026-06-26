@@ -620,3 +620,132 @@ def test_reconcile_same_machine_re_adopt_update_exception(monkeypatch):
 
     mod._reconcile_on_startup(FakeClient())
     assert "collab/file.py" in mod._local_owned_locks
+
+
+def test_reconcile_defers_stale_release_for_young_locks(monkeypatch, caplog):
+    """Stale locks younger than the minimum hold time are kept, not released."""
+    import logging
+    from datetime import datetime, timezone
+
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
+    monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
+    monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
+    monkeypatch.setattr(
+        mod, "_run_git_status_porcelain", lambda: set()
+    )  # file is clean
+    monkeypatch.setattr(mod, "_fetch_dev_other_identity_locks", lambda c: {})
+    monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    monkeypatch.setattr(mod, "_handle_multi_session_lock", lambda c, f, t: None)
+    monkeypatch.setattr(mod, "_notify", lambda t, m: None)
+    mod._local_owned_locks.clear()
+    mod._active_conflicts.clear()
+    mod._lock_acquired_at.clear()
+
+    # Use Supabase-format timestamp (timezone-aware) to exercise .replace(tzinfo=None).
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Existing lock acquired just now — too young to release.
+    class FakeClient:
+        def table(self, _name):
+            return self
+
+        def select(self, *_a, **_k):
+            return self
+
+        def delete(self):
+            return self
+
+        def update(self, *_a, **_k):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            return type(
+                "R",
+                (),
+                {
+                    "data": [
+                        {
+                            "file_path": "collab/app.py",
+                            "developer_id": "alice",
+                            "lock_token": mod.SESSION_TOKEN,
+                            "acquired_at": now_iso,
+                        }
+                    ]
+                },
+            )()
+
+        def rpc(self, *_a, **_k):
+            return type(
+                "R", (), {"execute": lambda self: type("E", (), {"data": []})()}
+            )()
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        mod._reconcile_on_startup(FakeClient())
+
+    # The lock is young — should be KEPT in local_owned_locks, not released.
+    assert "⏳ [KEPT]" in caplog.text
+    assert "collab/app.py" in mod._local_owned_locks
+
+
+def test_reconcile_handles_malformed_acquired_at(monkeypatch, caplog):
+    """Malformed acquired_at timestamps are silently skipped (except clause)."""
+    import logging
+
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "alice")
+    monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
+    monkeypatch.setattr(mod, "_get_current_branch", lambda: "main")
+    monkeypatch.setattr(mod, "_run_git_status_porcelain", lambda: set())
+    monkeypatch.setattr(mod, "_fetch_dev_other_identity_locks", lambda c: {})
+    monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    monkeypatch.setattr(mod, "_handle_multi_session_lock", lambda c, f, t: None)
+    monkeypatch.setattr(mod, "_notify", lambda t, m: None)
+    mod._local_owned_locks.clear()
+    mod._active_conflicts.clear()
+    mod._lock_acquired_at.clear()
+
+    class FakeClient:
+        def table(self, _name):
+            return self
+
+        def select(self, *_a, **_k):
+            return self
+
+        def delete(self):
+            return self
+
+        def update(self, *_a, **_k):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            return type(
+                "R",
+                (),
+                {
+                    "data": [
+                        {
+                            "file_path": "collab/bad.py",
+                            "developer_id": "alice",
+                            "lock_token": mod.SESSION_TOKEN,
+                            "acquired_at": "not-a-valid-date",
+                        }
+                    ]
+                },
+            )()
+
+        def rpc(self, *_a, **_k):
+            return type("R", (), {"execute": lambda s: type("E", (), {"data": []})()})()
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        mod._reconcile_on_startup(FakeClient())
+
+    assert "[STALE-RELEASED]" in caplog.text

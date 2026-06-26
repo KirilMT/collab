@@ -209,6 +209,44 @@ def test_maybe_warn_cross_branch_overlap_import_failure(monkeypatch):
 
     mod._maybe_warn_cross_branch_overlap()
 
+
+def test_process_releases_defers_young_locks(monkeypatch, caplog):
+    """Locks younger than _min_auto_lock_hold_seconds are NOT released."""
+    import logging
+
+    mod = load_watcher_module()
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+    monkeypatch.setattr(mod, "DEVELOPER_ID", "tester")
+    monkeypatch.setattr(mod, "_is_ephemeral_dev", lambda _: False)
+    mod._active_conflicts.clear()
+    mod._lock_acquired_at.clear()
+
+    from datetime import datetime
+
+    mod._lock_acquired_at["src/app.py"] = datetime.now()
+
+    delete_calls = []
+
+    class FakeClient:
+        def table(self, _name):
+            return self
+
+        def delete(self):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            delete_calls.append(1)
+            return type("R", (), {"data": []})()
+
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        mod._process_releases(FakeClient(), {"src/app.py"})
+
+    assert delete_calls == []
+    assert "⏳ [KEPT]" in caplog.text
+
     # Import failure returns before the throttle timestamp is advanced.
     assert mod._last_overlap_warn_at == 0.0
 

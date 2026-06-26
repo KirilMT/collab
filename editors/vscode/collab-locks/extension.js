@@ -1579,83 +1579,208 @@ function deactivate() {
     currentSubscription = null;
   }
 
-  // Smart shutdown: release only locks for files that are clean in git.
-  // Keep locks alive for files still being edited (dirty in git status).
-  if (supabaseClient && workspaceRoot) {
+  // Smart shutdown: release locks for files that are genuinely clean.
+  //
+  // "Genuinely clean" matches the watcher's criteria — a file is considered
+  // "in progress" (lock preserved) when it appears in EITHER:
+  //   1. ``git status --porcelain``  (dirty / staged)
+  //   2. ``git diff --name-only @{u}..HEAD``  (committed-but-unpushed,
+  //      with fallback to ``origin/main...HEAD`` when no upstream exists).
+  //
+  // All async operations are properly awaited, and any failure preserves
+  // every lock (fail-safe: never release locks we aren't sure about).
+  const shutdownPromise = (async () => {
+    if (!supabaseClient || !workspaceRoot) return;
     const config = loadConfig();
-    if (config && config.user) {
-      let dirtyFiles = new Set();
-      let gitFailed = false;
-      try {
-        const gitOut = execSync("git status --porcelain", {
-          cwd: workspaceRoot,
-          timeout: 3000,
-          encoding: "utf8",
-        }).trim();
-        if (gitOut) {
-          for (const line of gitOut.split("\n")) {
-            if (line.length > 3) {
-              let fp = line.substring(3).trim();
-              if (fp.includes(" -> ")) fp = fp.split(" -> ").pop().trim();
-              if (fp.startsWith('"') && fp.endsWith('"'))
-                fp = fp.slice(1, -1);
-              dirtyFiles.add(fp);
-            }
-          }
-        }
-      } catch (e) {
-        gitFailed = true;
-        if (outputChannel)
-          outputChannel.appendLine(
-            `[collab] WARNING: git status failed during shutdown: ${e.message}`,
-          );
+    if (!config || !config.user) return;
+
+    let inProgressFiles;
+    try {
+      inProgressFiles = getInProgressFiles(workspaceRoot);
+    } catch (e) {
+      // Could not determine which files are in progress — preserve everything.
+      logToCollab(
+        `Shutdown: could not determine in-progress files (${e.message}); all locks preserved.`,
+        "WARN"
+      );
+      return;
+    }
+    if (inProgressFiles === null) {
+      logToCollab(
+        "Shutdown: git status unavailable; all locks preserved.",
+        "WARN"
+      );
+      return;
+    }
+
+    try {
+      const { data: locks, error } = await supabaseClient
+        .from("file_locks")
+        .select("file_path")
+        .eq("developer_id", config.user);
+
+      if (error) {
+        logToCollab(
+          `Shutdown: failed to fetch locks (${error.message}); all locks preserved.`,
+          "WARN"
+        );
+        return;
       }
 
-      if (!gitFailed) {
-        supabaseClient
-          .from("file_locks")
-          .select("file_path")
-          .eq("developer_id", config.user)
-          .then((res) => {
-            const locks = res?.data || [];
-            let nKept = 0;
-            let nReleased = 0;
-            const releasePromises = [];
-            for (const lock of locks) {
-              const fp = lock.file_path;
-              if (fp && !dirtyFiles.has(fp)) {
-                nReleased++;
-                releasePromises.push(
-                  supabaseClient
-                    .from("file_locks")
-                    .delete()
-                    .eq("file_path", fp)
-                    .eq("developer_id", config.user)
-                    .then(() => {})
-                    .catch(() => {}),
-                );
-              } else if (fp) {
-                nKept++;
-              }
-            }
-            if (outputChannel)
-              outputChannel.appendLine(
-                `[collab] Shutdown: kept ${nKept} lock(s), released ${nReleased} lock(s).`,
-              );
-            return Promise.all(releasePromises);
-          })
-          .catch(() => {});
-      } else {
-        if (outputChannel)
-          outputChannel.appendLine(
-            "[collab] All locks preserved (git status unavailable).",
+      let nKept = 0;
+      let nReleased = 0;
+      const releasePromises = [];
+      for (const lock of locks || []) {
+        const fp = lock.file_path;
+        if (fp && !inProgressFiles.has(fp)) {
+          nReleased++;
+          releasePromises.push(
+            supabaseClient
+              .from("file_locks")
+              .delete()
+              .eq("file_path", fp)
+              .eq("developer_id", config.user)
           );
+        } else if (fp) {
+          nKept++;
+        }
+      }
+
+      if (releasePromises.length > 0) {
+        const results = await Promise.allSettled(releasePromises);
+        const failed = results.filter(r => r.status === "rejected").length;
+        if (failed > 0) {
+          logToCollab(
+            `Shutdown: ${failed} release(s) failed; ` +
+            `${nReleased - failed} released, ${nKept + failed} preserved.`,
+            "WARN"
+          );
+        } else {
+          logToCollab(
+            `Shutdown: kept ${nKept} lock(s), released ${nReleased} lock(s).`
+          );
+        }
+      } else {
+        logToCollab(`Shutdown: kept ${nKept} lock(s), released 0 lock(s).`);
+      }
+    } catch (e) {
+      logToCollab(
+        `Shutdown: lock cleanup error (${e.message}); all locks preserved.`,
+        "WARN"
+      );
+    }
+  })();
+
+  // Safety timeout: VS Code may force-kill the extension host before the
+  // Supabase calls complete.  Give the shutdown promise up to 4 seconds.
+  const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 4000));
+
+  // Return a promise so VS Code waits for the shutdown to settle, but never
+  // longer than the safety timeout.
+  return Promise.race([shutdownPromise, timeoutPromise]).then(() => {
+    if (outputChannel)
+      outputChannel.appendLine(`[collab] VS Code deactivation complete`);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Smart-shutdown helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the set of file paths that are currently "in progress".
+ *
+ * Matches the watcher's ``_get_modified_and_unpushed_files()`` criteria:
+ * files that appear in ``git status --porcelain`` (dirty/staged) **or**
+ * ``git diff --name-only <base>..HEAD`` (committed-but-unpushed).
+ *
+ * Returns ``null`` when ``git status`` itself fails (callers should treat
+ * this as "could not determine — preserve all locks").
+ */
+function getInProgressFiles(workspaceRoot) {
+  const files = new Set();
+
+  // 1. Dirty / staged files
+  try {
+    const gitOut = execSync("git status --porcelain", {
+      cwd: workspaceRoot,
+      timeout: 3000,
+      encoding: "utf8",
+    }).trim();
+    if (gitOut) {
+      for (const line of gitOut.split("\n")) {
+        if (line.length > 3) {
+          let fp = line.substring(3).trim();
+          if (fp.includes(" -> ")) fp = fp.split(" -> ").pop().trim();
+          if (fp.startsWith('"') && fp.endsWith('"'))
+            fp = fp.slice(1, -1);
+          files.add(fp);
+        }
       }
     }
+  } catch {
+    // git status is the authoritative signal — if it fails we cannot make
+    // any safe decision about which locks to release.
+    return null;
   }
 
-  if (outputChannel)
-    outputChannel.appendLine(`[collab] VS Code deactivation complete`);
+  // 2. Committed-but-unpushed files (same fallback chain as the watcher)
+  try {
+    const rangeSpec = resolveDiffRangeSpec(workspaceRoot);
+    if (rangeSpec) {
+      const diffOut = execSync(`git diff --name-only ${rangeSpec}`, {
+        cwd: workspaceRoot,
+        timeout: 5000,
+        encoding: "utf8",
+      }).trim();
+      for (const line of diffOut.split("\n")) {
+        const fp = line.trim();
+        if (fp) files.add(fp);
+      }
+    }
+  } catch (e) {
+    // Best-effort: if the diff fails we still have the git-status files.
+    logToCollab(`Shutdown: git diff failed (${e.message}); using only git-status files.`, "DEBUG");
+  }
+
+  return files;
+}
+
+/**
+ * Resolve the git range-spec for detecting committed-but-unpushed files.
+ *
+ * Mirrors the watcher's ``_resolve_lock_diff_base_ref()`` fallback chain
+ * (simplified): tries ``@{u}`` (upstream), then ``origin/main``.
+ * Returns ``null`` when no base ref can be determined.
+ */
+function resolveDiffRangeSpec(workspaceRoot) {
+  // 1. Upstream tracking branch
+  try {
+    execSync("git rev-parse --abbrev-ref @{u}", {
+      cwd: workspaceRoot,
+      timeout: 2000,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    return "@{u}..HEAD";
+  } catch {
+    // No upstream — continue to fallback
+  }
+
+  // 2. Origin/main
+  try {
+    execSync("git rev-parse --verify origin/main", {
+      cwd: workspaceRoot,
+      timeout: 2000,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    return "origin/main...HEAD";
+  } catch {
+    // No origin/main either
+  }
+
+  return null;
 }
 
 module.exports = { activate, deactivate };

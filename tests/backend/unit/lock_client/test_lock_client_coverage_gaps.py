@@ -1061,6 +1061,8 @@ def test_watch_immediate_parent_name_resolution_exception(
 
 def test_watch_releases_locks_for_cleaned_files(monkeypatch, tmp_path):
     """Files that become clean while git is OK are released and logged."""
+    # Disable minimum hold time so the test can verify rapid release behavior.
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 0)
     lc = _setup_watch(monkeypatch, tmp_path)
     seq = iter([(["a.py"], True), ([], True)])
     monkeypatch.setattr(
@@ -1088,6 +1090,43 @@ def test_watch_releases_locks_for_cleaned_files(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.time, "sleep", _sleep)
     lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
     assert released == ["a.py"]
+
+
+def test_watch_defers_release_for_young_locks(monkeypatch, tmp_path):
+    """Locks acquired less than _min_auto_lock_hold_seconds ago are NOT released."""
+    # Set a short hold time so the test is fast but still exercises the filter.
+    monkeypatch.setattr(mod, "_min_auto_lock_hold_seconds", lambda: 60)
+    lc = _setup_watch(monkeypatch, tmp_path)
+
+    # First call: a.py is dirty → acquire.  Second call: clean → should NOT release
+    # because the lock is only ~1s old (< 60s minimum).
+    seq = iter([(["a.py"], True), ([], True)])
+    monkeypatch.setattr(
+        lc, "_get_modified_and_unpushed_files", lambda: next(seq, ([], True))
+    )
+    monkeypatch.setattr(lc, "_get_current_branch", lambda: "main")
+    monkeypatch.setattr(lc, "acquire_multiple", lambda *a, **k: (True, [], "ok"))
+
+    released = []
+
+    def _release(files):
+        released.extend(files)
+        return True, len(files), ""
+
+    monkeypatch.setattr(lc, "release_multiple", _release)
+    monkeypatch.setattr(lc, "_graceful_shutdown", lambda *a, **k: None)
+
+    counter = {"n": 0}
+
+    def _sleep(_x):
+        counter["n"] += 1
+        if counter["n"] > 4:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+    lc.watch(interval=1, timeout_mins=60, daemon_mode=True)
+    # The lock should NOT have been released because it's too young.
+    assert released == []
 
 
 def test_watch_loop_iteration_exception_recovers(monkeypatch, tmp_path, caplog):
@@ -1435,3 +1474,9 @@ def test_get_process_name_via_tasklist_error(monkeypatch):
     monkeypatch.setattr(mod.platform_probe, "tasklist_csv_for_pid", _boom)
     lc = mod.LockClient(local_only=True)
     assert lc._get_process_name_via_tasklist(999) is None
+
+
+def test_min_auto_lock_hold_seconds_default(monkeypatch):
+    """The default minimum hold time is 300 seconds."""
+    monkeypatch.delenv("COLLAB_MIN_AUTO_LOCK_HOLD_SECONDS", raising=False)
+    assert mod._min_auto_lock_hold_seconds() == 300

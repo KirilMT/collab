@@ -261,6 +261,10 @@ _local_owned_locks: set[str] = set()
 # Guard to prevent _graceful_shutdown from running more than once
 _shutdown_done: bool = False
 
+# Track when each lock was acquired so we can enforce a minimum hold time
+# and avoid rapid acquire/release cycles when git status is transient.
+_lock_acquired_at: dict[str, datetime] = {}
+
 # URL of the running dashboard server (set in main after _start_dashboard_server).
 # Used by interactive conflict menus so users can review all active locks.
 _dashboard_url: str | None = None
@@ -471,6 +475,15 @@ def _normalize_path(path: str, project_root: str) -> str:
         return path
     except Exception:
         return path.replace("\\", "/")
+
+
+def _min_auto_lock_hold_seconds() -> int:
+    """Minimum seconds an auto-watch lock must be held before auto-release.
+
+    Configurable via ``COLLAB_MIN_AUTO_LOCK_HOLD_SECONDS`` (default 300 = 5 min).
+    Wrapped in a callable so tests can monkeypatch without import-time coupling.
+    """
+    return int(os.getenv("COLLAB_MIN_AUTO_LOCK_HOLD_SECONDS", "300"))
 
 
 def _should_ignore_path(path: str) -> bool:
@@ -744,6 +757,8 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                 # Track locks this watcher created so remote scans do not
                 # report them as 'remote added' later.
                 _local_owned_locks.add(fp)
+                # Record acquisition time for minimum-hold enforcement.
+                _lock_acquired_at[fp] = datetime.now()
         except Exception:
             # Log full traceback so errors during acquire are visible in errors.log
             logger.exception("Failed to acquire lock for %s", fp)
@@ -754,8 +769,26 @@ def _process_releases(client, released: set[str]) -> None:
 
     Extracted so tests can simulate exceptions when removing locks from the local-owned
     set without running the entire main loop.
+
+    Enforces a minimum hold time to avoid rapid acquire/release cycles when git status
+    is transient.
     """
     for fp in released:
+        # Enforce minimum lock hold time: skip files whose lock was acquired
+        # too recently to avoid thrashing when git status fluctuates.
+        acquired = _lock_acquired_at.get(fp)
+        if acquired is not None:
+            age = (datetime.now() - acquired).total_seconds()
+            if age < _min_auto_lock_hold_seconds():
+                logger.debug(
+                    "⏳ [KEPT] %s — lock is only %ds old "
+                    "(< %ds minimum); deferring auto-release",
+                    fp,
+                    int(age),
+                    _min_auto_lock_hold_seconds(),
+                )
+                continue
+
         # Was this file in conflict?
         if fp in _active_conflicts:
             _active_conflicts.discard(fp)
@@ -1003,6 +1036,18 @@ def _reconcile_on_startup(client) -> None:
         fp = lock.get("file_path", "")
         if fp:
             lock_map[fp] = lock
+            # Populate _lock_acquired_at from existing locks so the minimum-hold
+            # check works correctly across watcher restarts.
+            acquired_str = lock.get("acquired_at")
+            if acquired_str and fp not in _lock_acquired_at:
+                try:
+                    _lock_acquired_at[fp] = (
+                        datetime.fromisoformat(acquired_str)
+                        .astimezone()
+                        .replace(tzinfo=None)
+                    )
+                except (ValueError, TypeError):
+                    pass
 
     locked_paths = set(lock_map.keys())
     branch = _get_current_branch()
@@ -1071,6 +1116,26 @@ def _reconcile_on_startup(client) -> None:
                 msg = f"[RESUMED] {fp} - lock re-adopted from this machine"
                 logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         else:
+            # File is clean — but skip if the lock was acquired too recently.
+            # This prevents the watcher from releasing locks it just acquired
+            # during the same reconciliation pass (e.g. when git status is
+            # transient).
+            acquired = _lock_acquired_at.get(fp)
+            if acquired is not None:
+                age = (datetime.now() - acquired).total_seconds()
+                if age < _min_auto_lock_hold_seconds():
+                    logger.debug(
+                        "⏳ [KEPT] %s — lock is only %ds old "
+                        "(< %ds minimum); skipping auto-release",
+                        fp,
+                        int(age),
+                        _min_auto_lock_hold_seconds(),
+                    )
+                    # Keep the lock in _local_owned_locks so the main loop
+                    # continues to track it for eventual release.
+                    _local_owned_locks.add(fp)
+                    continue
+
             # File is clean - stale lock, release it
             try:
                 _scoped_owned_query(
@@ -1114,6 +1179,7 @@ def _reconcile_on_startup(client) -> None:
                 _handle_post_restart_conflict(client, fp, data[0])
             else:
                 _local_owned_locks.add(fp)
+                _lock_acquired_at[fp] = datetime.now()
                 n_newly_locked += 1
                 msg = f"[LOCKED] {fp} - acquired lock for dirty file at startup"
                 logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
@@ -1367,6 +1433,22 @@ def _graceful_shutdown() -> None:
                         msg = f"[KEPT] {fp} - still has local edits, lock preserved"
                         logger.debug(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
                     else:
+                        # Enforce minimum hold time even during shutdown:
+                        # keep locks that were acquired too recently.
+                        acquired = _lock_acquired_at.get(fp)
+                        if acquired is not None:
+                            age = (datetime.now() - acquired).total_seconds()
+                            if age < _min_auto_lock_hold_seconds():
+                                n_kept += 1
+                                logger.debug(
+                                    "⏳ [KEPT] %s — lock is only %ds old "
+                                    "(< %ds minimum); preserving",
+                                    fp,
+                                    int(age),
+                                    _min_auto_lock_hold_seconds(),
+                                )
+                                continue
+
                         try:
                             _scope_agent(
                                 client.table("file_locks")
@@ -1400,6 +1482,21 @@ def _graceful_shutdown() -> None:
                         ]
                         for fp in db_locks:
                             if fp and fp not in still_dirty:
+                                # Enforce minimum hold time
+                                acquired = _lock_acquired_at.get(fp)
+                                if acquired is not None:
+                                    age = (datetime.now() - acquired).total_seconds()
+                                    if age < _min_auto_lock_hold_seconds():
+                                        n_kept += 1
+                                        logger.debug(
+                                            "⏳ [KEPT] %s — lock is only %ds old "
+                                            "(< %ds minimum); preserving",
+                                            fp,
+                                            int(age),
+                                            _min_auto_lock_hold_seconds(),
+                                        )
+                                        continue
+
                                 _scope_agent(
                                     client.table("file_locks")
                                     .delete()

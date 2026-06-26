@@ -339,6 +339,16 @@ _PID_FILE_HEARTBEAT_INTERVAL_SECONDS = float(
     os.getenv("COLLAB_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", "10.0")
 )
 
+
+def _min_auto_lock_hold_seconds() -> int:
+    """Minimum seconds an auto-watch lock must be held before auto-release.
+
+    Configurable via ``COLLAB_MIN_AUTO_LOCK_HOLD_SECONDS`` (default 300 = 5 min).
+    Wrapped in a callable so tests can monkeypatch without import-time coupling.
+    """
+    return int(os.getenv("COLLAB_MIN_AUTO_LOCK_HOLD_SECONDS", "300"))
+
+
 # ---------------------------------------------------------------------------
 # Supabase client (lazy import)
 # ---------------------------------------------------------------------------
@@ -727,6 +737,9 @@ class LockClient:
             # ephemeral (CI/test prefixes)
         )
         self._is_ephemeral: bool = False
+        # Track when the auto-watcher acquired each lock so we can enforce a
+        # minimum hold time and avoid rapid acquire/release cycles.
+        self._lock_acquired_at: Dict[str, datetime] = {}
         if self.developer_id:
             try:
                 for p in EPHEMERAL_PREFIXES:
@@ -3031,12 +3044,42 @@ class LockClient:
                             )
                             if not ok:
                                 logger.warning("⚠️ CONFLICT ALERT: %s", msg)
+                            # Record acquisition times for minimum-hold enforcement
+                            now = _safe_now()
+                            for fp in new_files:
+                                self._lock_acquired_at[fp] = now
 
                         released = last_modified - current_modified
                         if released and git_ok:
-                            ok, count, _ = self.release_multiple(list(released))
-                            if ok and count > 0:
-                                logger.info("🔓 [RELEASED] %d file(s) released", count)
+                            # Enforce minimum lock hold time: keep locks that were
+                            # acquired too recently to avoid rapid acquire/release
+                            # cycles when git status is transient.
+                            keep = set()
+                            for fp in released:
+                                acquired = self._lock_acquired_at.get(fp)
+                                if acquired is not None:
+                                    age = (_safe_now() - acquired).total_seconds()
+                                    if age < _min_auto_lock_hold_seconds():
+                                        logger.debug(
+                                            "⏳ [KEPT] %s — lock is only %ds old "
+                                            "(< %ds minimum); deferring auto-release",
+                                            fp,
+                                            int(age),
+                                            _min_auto_lock_hold_seconds(),
+                                        )
+                                        keep.add(fp)
+                            actual_releases = released - keep
+                            if actual_releases:
+                                ok, count, _ = self.release_multiple(
+                                    list(actual_releases)
+                                )
+                                if ok and count > 0:
+                                    logger.info(
+                                        "🔓 [RELEASED] %d file(s) released", count
+                                    )
+                            # Keep young locks in last_modified so they are not
+                            # re-acquired on the next iteration.
+                            last_modified = current_modified | keep
                         elif released:
                             logger.warning(
                                 "Skipping release of %d lock(s) — "
@@ -3044,8 +3087,9 @@ class LockClient:
                                 "locks preserved until next successful sync",
                                 len(released),
                             )
-
-                        last_modified = current_modified
+                            last_modified = current_modified
+                        else:
+                            last_modified = current_modified
                     else:
                         # Idle timeout
                         idle = _safe_now() - last_change_time
@@ -3216,8 +3260,14 @@ class LockClient:
 
         IMPORTANT: This handler strictly DOES NOT release any Supabase locks.
         Locks are preserved to ensure they persist across IDE restarts and
-        terminal sessions. They are only released automatically during 'git push'
-        (via pre-push hook) or manual release-all.
+        terminal sessions.  They are only released by:
+
+        * The next watcher reconciliation pass (stale-file cleanup, with a
+          minimum hold time to prevent thrashing).
+        * The VS Code extension's smart shutdown on deactivation (which uses
+          the same ``git status`` + ``git diff`` criteria as the watcher).
+        * The pre-push hook (when code is pushed).
+        * Explicit user action (``collab release`` / ``release-all``).
         """
         logger.debug("_graceful_shutdown called (reason=%s)", reason)
 
@@ -3446,6 +3496,9 @@ class LockClient:
             my_locks = {lk["file_path"] for lk in active if self._lock_owned_by_me(lk)}
             # Build lock_map for token checking
             lock_map: dict[str, dict] = {}
+            # Also build a map for dev_other locks so the minimum-hold check
+            # can look up acquired_at for agent-owned locks.
+            dev_other_map: dict[str, dict] = {}
             # Locks held by THIS developer under a *different* identity. For the
             # background watcher (which runs as the human) these are the same
             # developer's AI-agent locks. We must never downgrade or fight them.
@@ -3458,12 +3511,28 @@ class LockClient:
                     lock_map[fp] = lk
                 elif lk.get("developer_id") == self.developer_id:
                     dev_other_locked.add(fp)
+                    dev_other_map[fp] = lk
         except LockServiceUnavailableError as e:
             logger.error("Error getting Supabase locks (service unavailable): %s", e)
             return git_modified
         except Exception as e:
             logger.error("Error getting Supabase locks: %s", e)
             return git_modified
+
+        # Populate _lock_acquired_at from existing active locks so the
+        # minimum-hold check works correctly across watcher restarts.
+        for lk in active:
+            fp = lk.get("file_path", "")
+            acquired_str = lk.get("acquired_at")
+            if fp and acquired_str:
+                try:
+                    self._lock_acquired_at[fp] = (
+                        datetime.fromisoformat(acquired_str)
+                        .astimezone()
+                        .replace(tzinfo=None)
+                    )
+                except (ValueError, TypeError):
+                    pass
 
         # Calculate lock categories. ``missing`` excludes files already held by
         # this developer under another (agent) identity so the human watcher does
@@ -3473,12 +3542,44 @@ class LockClient:
         missing = git_modified - my_locks - dev_other_locked
         still_valid = my_locks & git_modified
 
+        # Track locks that were kept because they're too young to release.
+        # These are included in the return value so the main watch loop can
+        # continue to evaluate them on subsequent iterations.
+        kept_young: set = set()
+
         # Clean up this developer's agent locks for work that is no longer in
         # progress (e.g. after a push). Keeps the dashboard tidy without an agent
         # having to explicitly release every file it touched.
+        # Enforce minimum hold time to avoid releasing agent locks that were just
+        # acquired (e.g. an AI agent created a lock seconds before a watcher restart).
         dev_other_stale = dev_other_locked - git_modified
         if dev_other_stale:
             for fp in sorted(dev_other_stale):
+                # Check minimum hold time against stored acquired_at.
+                # Use dev_other_map (not lock_map) because agent locks
+                # are tracked separately.
+                lock = dev_other_map.get(fp, {})
+                acquired_str = lock.get("acquired_at")
+                if acquired_str:
+                    try:
+                        acq_dt = (
+                            datetime.fromisoformat(acquired_str)
+                            .astimezone()
+                            .replace(tzinfo=None)
+                        )
+                        age = (_safe_now() - acq_dt).total_seconds()
+                        if age < _min_auto_lock_hold_seconds():
+                            kept_young.add(fp)
+                            logger.debug(
+                                "⏳ [KEPT] %s — agent lock is only %ds old "
+                                "(< %ds minimum); skipping auto-release",
+                                fp,
+                                int(age),
+                                _min_auto_lock_hold_seconds(),
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass
                 logger.info(
                     "🔓 [STALE-RELEASED] %s — agent lock for clean file, releasing",
                     fp,
@@ -3516,14 +3617,46 @@ class LockClient:
         if any([n_released, n_newly_locked, n_readopted, n_refreshed, n_multi]):
             logger.debug("Starting lock reconciliation...")
 
-        # Process stale locks
+        # Process stale locks — but skip any that were acquired too recently.
+        # This prevents the watcher from releasing locks it just acquired during
+        # the same reconciliation pass (e.g. when git status is transient).
         if stale:
-            for fp in sorted(stale):
-                logger.info(
-                    "🔓 [STALE-RELEASED] %s — locked but file is now clean, releasing",
-                    fp,
-                )
-            self.release_multiple(list(stale))
+            truly_stale = set()
+            for fp in stale:
+                lock = lock_map.get(fp, {})
+                acquired_str = lock.get("acquired_at")
+                if acquired_str:
+                    try:
+                        acq_dt = (
+                            datetime.fromisoformat(acquired_str)
+                            .astimezone()
+                            .replace(tzinfo=None)
+                        )
+                        age = (_safe_now() - acq_dt).total_seconds()
+                        if age < _min_auto_lock_hold_seconds():
+                            kept_young.add(fp)
+                            logger.debug(
+                                "⏳ [KEPT] %s — lock is only %ds old "
+                                "(< %ds minimum); skipping auto-release",
+                                fp,
+                                int(age),
+                                _min_auto_lock_hold_seconds(),
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                truly_stale.add(fp)
+
+            if truly_stale:
+                for fp in sorted(truly_stale):
+                    logger.info(
+                        "🔓 [STALE-RELEASED] %s — locked but file is now clean,"
+                        " releasing",
+                        fp,
+                    )
+                self.release_multiple(list(truly_stale))
+                # Only count actually-released stale locks in the summary
+                n_released = len(truly_stale)
 
         # Process RESUMED locks: use direct table update (preserves acquired_at)
         # This prevents the timer from resetting when switching IDEs
@@ -3563,7 +3696,9 @@ class LockClient:
 
         # Process REFRESHED locks (no stored token) - use acquire RPC
         if refreshed_locks:
-            for fp in sorted(refreshed_locks):
+            now = _safe_now()
+            for fp in refreshed_locks:
+                self._lock_acquired_at[fp] = now
                 logger.info("🔒 [REFRESHED] %s — token refreshed", fp)
             branch = self._get_current_branch()
             self.acquire_multiple(
@@ -3572,6 +3707,9 @@ class LockClient:
 
         # Process NEW locks (missing) - use acquire RPC
         if missing:
+            now = _safe_now()
+            for fp in missing:
+                self._lock_acquired_at[fp] = now
             branch = self._get_current_branch()
             self.acquire_multiple(
                 list(missing), branch_name=branch, reason="Auto-Watch Sync"
@@ -3597,7 +3735,7 @@ class LockClient:
         # Skip if silencing is requested (e.g., during tests)
         if os.environ.get("COLLAB_SILENT_DAEMON"):
             logger.debug("Skipping startup summary (COLLAB_SILENT_DAEMON set)")
-            return git_modified
+            return git_modified | kept_young
 
         try:
             import json
@@ -3661,7 +3799,7 @@ class LockClient:
         except Exception:
             pass
 
-        return git_modified
+        return git_modified | kept_young
 
     @staticmethod
     def _run_git_status() -> Tuple[str, bool]:

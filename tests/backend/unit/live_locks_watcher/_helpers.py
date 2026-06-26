@@ -90,6 +90,7 @@ def load_watcher_module():
             ("_active_conflicts", set()),
             ("_warned_remote_locks", set()),
             ("_known_remote_locks", set()),
+            ("_lock_acquired_at", {}),
             ("SESSION_TOKEN", ""),
             ("_dashboard_url", None),
             ("_dashboard_server", None),
