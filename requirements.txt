@@ -4,7 +4,7 @@
 # (Used in deployed collab package and live environments)
 
 # Core Supabase client for file lock management
-supabase==2.31.0
+supabase>=2.31.0
 httpx>=0.28.1
 
 # Process monitoring and system utilities
@@ -12,6 +12,9 @@ psutil>=5.9.8
 
 # Desktop notifications (cross-platform)
 plyer>=2.1.0
+
+# TOML parser (tomli backport; stdlib tomllib on 3.11+)
+tomli>=2.0.0
 
 # Environment configuration
 python-dotenv>=1.2.2

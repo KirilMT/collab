@@ -192,8 +192,41 @@ for candidate in python3 python; do
     fi
 done
 
+# Read the canonical Python version.
+# If .python-version exists at project root, use it (pyenv/uv/asdf compatible).
+# Otherwise, default to the hardcoded version below.
+read_target_python_version() {
+    local default="3.12"
+    local version_file="$PROJECT_ROOT/.python-version"
+
+    if [ ! -f "$version_file" ]; then
+        echo "   .python-version not found — defaulting to Python $default" >&2
+        TARGET_MAJOR=3
+        TARGET_MINOR=12
+        TARGET_STRING="$default"
+        return 0
+    fi
+
+    local raw
+    raw=$(tr -d '[:space:]' < "$version_file")
+    if echo "$raw" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+        TARGET_MAJOR=$(echo "$raw" | cut -d. -f1)
+        TARGET_MINOR=$(echo "$raw" | cut -d. -f2)
+        TARGET_STRING="$TARGET_MAJOR.$TARGET_MINOR"
+        return 0
+    fi
+
+    print_error "Invalid .python-version format: '$raw'. Expected 'X.Y' (e.g., '3.12')."
+    exit 1
+}
+
+read_target_python_version
+
 if [ -z "$PYTHON_CMD" ]; then
-    print_error "Python 3 not found. Please install Python 3.10+ from https://www.python.org"
+    print_error "Python $TARGET_STRING not found."
+    echo "" >&2
+    echo "   Install Python $TARGET_STRING from:" >&2
+    echo "   https://www.python.org/downloads/release/python-${TARGET_MAJOR}${TARGET_MINOR}0/" >&2
     exit 1
 fi
 
@@ -202,12 +235,29 @@ echo "   Found: Python $PYTHON_VERSION" >&2
 MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
 MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
 
-if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 10 ]); then
-    print_error "Python 3.10+ required. Found Python $PYTHON_VERSION"
+# Enforce exact Python version match (not just >=3.10).
+# Using a different version causes wheel/API incompatibilities.
+if [ "$MAJOR" -ne "$TARGET_MAJOR" ] || [ "$MINOR" -ne "$TARGET_MINOR" ]; then
+    echo "" >&2
+    echo -e "   ${YELLOW}Python $MAJOR.$MINOR is installed, but this project requires Python $TARGET_STRING${NC}" >&2
+    echo "   (declared in .python-version or setup.sh default)." >&2
+    echo "" >&2
+    echo "   Using a different Python version can cause:" >&2
+    echo "   - Missing package wheels (no cp3XX wheel for your version)" >&2
+    echo "   - API incompatibilities in pinned dependencies" >&2
+    echo "   - 'Works on my machine' test failures" >&2
+    echo "" >&2
+    echo -e "   ${YELLOW}To fix this:${NC}" >&2
+    echo "   1. Install Python $TARGET_STRING from:" >&2
+    echo "      https://www.python.org/downloads/release/python-${TARGET_MAJOR}${TARGET_MINOR}0/" >&2
+    echo "   2. Ensure it is on your PATH" >&2
+    echo "   3. Rerun this script" >&2
+    echo "" >&2
+    echo "   Or use pyenv:  pyenv install $TARGET_STRING && pyenv local $TARGET_STRING" >&2
     exit 1
 fi
 
-print_success "Python $PYTHON_VERSION OK"
+print_success "Python $PYTHON_VERSION OK (matches target $TARGET_STRING)"
 
 # Check Git
 if ! command -v git &> /dev/null; then
@@ -221,6 +271,36 @@ print_success "Git OK"
 
 print_step 2 10 "Setting up virtual environment..."
 
+# Validate existing .venv: if it was created by a different Python version
+# than the target, delete it so we get a clean venv.
+VENV_NEEDS_RECREATE=false
+if [ -d ".venv" ]; then
+    PYVENV_CFG=".venv/pyvenv.cfg"
+    VENV_VERSION_KNOWN=false
+    if [ -f "$PYVENV_CFG" ]; then
+        VENV_PYTHON_VERSION=$(grep -E '^version[[:space:]]*=' "$PYVENV_CFG" | head -n1 | sed 's/.*=[[:space:]]*//' | cut -d. -f1,2)
+        if echo "$VENV_PYTHON_VERSION" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            VENV_VERSION_KNOWN=true
+            if [ "$VENV_PYTHON_VERSION" != "$TARGET_STRING" ]; then
+                echo -e "   ${YELLOW}Existing .venv uses Python $VENV_PYTHON_VERSION, but target is $TARGET_STRING${NC}" >&2
+                echo "   Recreating .venv with the correct Python version..." >&2
+                VENV_NEEDS_RECREATE=true
+            fi
+        fi
+    fi
+    # Safety: if we cannot determine the venv Python version
+    # (missing pyvenv.cfg or unparseable), recreate to be safe.
+    if [ "$VENV_VERSION_KNOWN" = false ]; then
+        echo -e "   ${YELLOW}Cannot determine .venv Python version — recreating to be safe${NC}" >&2
+        echo "   (pyvenv.cfg missing or unparseable)" >&2
+        VENV_NEEDS_RECREATE=true
+    fi
+    if [ "$VENV_NEEDS_RECREATE" = true ]; then
+        rm -rf ".venv"
+        echo "   Old .venv removed." >&2
+    fi
+fi
+
 if [ ! -d ".venv" ]; then
     echo "   Creating ${MAGENTA}.venv${NC}..." >&2
     "$PYTHON_CMD" -m venv .venv
@@ -231,7 +311,7 @@ if [ ! -d ".venv" ]; then
         exit 1
     fi
 else
-    echo "   Virtual environment already exists" >&2
+    echo -e "   Virtual environment already exists (Python $TARGET_STRING)" >&2
     print_success ".venv exists"
 fi
 
@@ -262,8 +342,9 @@ echo "   Ensuring pip is up to date..." >&2
 if [ -f "requirements.txt" ]; then
     echo "   Installing core dependencies from ${MAGENTA}requirements.txt${NC}..." >&2
     echo ""
-    # Quiet installation
-    "$VENV_PIP" install -r requirements.txt --quiet --no-warn-script-location >/dev/null 2>&1
+    # Install with --upgrade to ensure packages are updated when
+    # Dependabot bumps version pins in requirements.txt.
+    "$VENV_PIP" install --upgrade --upgrade-strategy only-if-needed -r requirements.txt --quiet --no-warn-script-location >/dev/null 2>&1
 
     if [ $? -eq 0 ]; then
         print_success "Core dependencies installed"

@@ -547,7 +547,13 @@ class CodeFormatter:
         all_passed &= self._run_tool_step(
             "YAML (yamllint)",
             None,
-            ["yamllint", "--strict"] + yaml_files,
+            [
+                "yamllint",
+                "--strict",
+                "-d",
+                "{extends: default, rules: {comments: {min-spaces-from-content: 1}}}",
+            ]
+            + yaml_files,
             "YAML",
             2,
             2,

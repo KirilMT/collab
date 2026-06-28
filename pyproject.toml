@@ -8,7 +8,7 @@ version = "0.9.1"
 description = "Collaborative file locking runtime"
 readme = "docs/pypi/README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 authors = [
   { name = "KirilMT", email = "kiril.mt95@gmail.com" }
 ]
