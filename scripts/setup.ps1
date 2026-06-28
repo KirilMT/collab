@@ -383,41 +383,148 @@ function Refresh-EnvPath {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
+# Read the canonical Python version from .python-version at project root.
+# This is the single source of truth for which Python interpreter the
+# project is developed and tested against.
+function Read-TargetPythonVersion {
+    $versionFile = Join-Path $projectRoot ".python-version"
+    if (-not (Test-Path $versionFile)) {
+        Write-Error "   FATAL: .python-version not found at project root."
+        Write-Host "   This file declares the canonical Python version for this project." -ForegroundColor Gray
+        Write-Host "   Create it with the target version, e.g.: echo 3.12 > .python-version" -ForegroundColor Gray
+        exit 1
+    }
+    $raw = (Get-Content $versionFile -Raw).Trim()
+    if ($raw -match '^(\d+)\.(\d+)$') {
+        return @{
+            Major  = [int]$Matches[1]
+            Minor  = [int]$Matches[2]
+            String = "$($Matches[1]).$($Matches[2])"
+        }
+    }
+    Write-Error "   FATAL: Invalid .python-version format: '$raw'. Expected 'X.Y' (e.g., '3.12')."
+    exit 1
+}
+
+# Attempt to install the target Python version via winget.
+# Returns $true on success, $false on failure.
+function Install-PythonViaWinget {
+    param([hashtable]$Target)
+
+    $pkgId = "Python.Python.$($Target.Major).$($Target.Minor)"
+    Write-Host "   Attempting to install $pkgId via winget..." -ForegroundColor Gray
+
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $proc = Start-Process -FilePath "winget" `
+            -ArgumentList "install -e --id $pkgId --silent --accept-package-agreements --accept-source-agreements" `
+            -NoNewWindow -PassThru -Wait
+        $sw.Stop()
+
+        if ($proc.ExitCode -eq 0) {
+            Write-Host "   Python $($Target.String) installed successfully (took $([int]$sw.Elapsed.TotalSeconds) s)" -ForegroundColor Green
+            return $true
+        }
+        else {
+            Write-Host "   winget returned exit code $($proc.ExitCode) for $pkgId" -ForegroundColor Red
+            return $false
+        }
+    }
+    catch {
+        Write-Host "   winget invocation failed: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
 # Step 1: Check Prerequisites
 Write-SetupStepHeader -Step 1 -Message 'Checking prerequisites...'
 
-# Step 1.1: Check for Python
+# Read the canonical Python version ONCE, used throughout the script.
+$script:TargetPython = Read-TargetPythonVersion
+
+# Step 1.1: Check for Python — ENFORCE the version declared in .python-version.
 function Check-Python {
+    param([hashtable]$Target)
+
+    # Helper: try to resolve Python by auto-installing the target version.
+    function Resolve-PythonMismatch {
+        param([hashtable]$Target, [string]$FoundVersion)
+
+        Write-Host "   " -NoNewline
+        Write-Host "Python $FoundVersion" -NoNewline -ForegroundColor Yellow
+        Write-Host " is installed, but this project requires " -NoNewline -ForegroundColor White
+        Write-Host "Python $($Target.String)" -ForegroundColor Cyan
+        Write-Host "   (declared in .python-version)." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "   Using a different Python version can cause:" -ForegroundColor Gray
+        Write-Host "   - Missing package wheels (no cp3XX wheel for your version)" -ForegroundColor Gray
+        Write-Host "   - API incompatibilities in pinned dependencies" -ForegroundColor Gray
+        Write-Host "   - 'Works on my machine' test failures" -ForegroundColor Gray
+        Write-Host ""
+
+        # Guard against infinite recursion.
+        if ($script:TargetPythonResolved) {
+            Write-Error "   Auto-resolution already attempted — cannot proceed."
+            exit 1
+        }
+
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "   Attempting to auto-install Python $($Target.String) via winget..." -ForegroundColor Yellow
+            if (Install-PythonViaWinget -Target $Target) {
+                Refresh-EnvPath
+                $script:TargetPythonResolved = $true
+                return (Check-Python -Target $Target)
+            }
+            Write-Host "   Auto-install failed. Falling through to manual instructions..." -ForegroundColor Yellow
+        }
+
+        # Cannot auto-resolve — hard stop with clear instructions.
+        Write-Error "`n   Cannot proceed without Python $($Target.String)."
+        Write-Host ""
+        Write-Host "   To fix this:" -ForegroundColor Yellow
+        Write-Host "   1. Install Python $($Target.String) from:" -ForegroundColor White
+        Write-Host "      https://www.python.org/downloads/release/python-$($Target.Major)$($Target.Minor)0/" -ForegroundColor Cyan
+        Write-Host "   2. Ensure it is on your PATH (check 'Add Python to PATH' during install)" -ForegroundColor White
+        Write-Host "   3. Restart your terminal and run this script again" -ForegroundColor White
+        Write-Host ""
+        Write-Host "   Or, if Python $($Target.String) IS installed but not on PATH:" -ForegroundColor Gray
+        Write-Host "   - Add it manually via: set PATH=C:\Path\To\Python$($Target.Major)$($Target.Minor);%PATH%" -ForegroundColor Gray
+        exit 1
+    }
+
+    # ---- Check 1: python on PATH ----
     if (Get-Command python -ErrorAction SilentlyContinue) {
         $v = python --version 2>&1
-        if ($v -match "Python (\d+)\.(\d+)") {
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            if ($major -ge 3 -and $minor -ge 12) {
+        if ($v -match 'Python (\d+)\.(\d+)') {
+            $sysMajor = [int]$Matches[1]
+            $sysMinor = [int]$Matches[2]
+
+            if ($sysMajor -eq $Target.Major -and $sysMinor -eq $Target.Minor) {
                 Write-Host "   Found: " -NoNewline -ForegroundColor White
-                Write-Host "$v" -NoNewline -ForegroundColor White
+                Write-Host "$v" -NoNewline -ForegroundColor Green
+                Write-Host " (matches .python-version)" -ForegroundColor Gray
                 Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
                 return $true
             }
             else {
-                Write-Warning "   Found: $v (Python 3.12+ recommended)"
-                return $true
+                return (Resolve-PythonMismatch -Target $Target -FoundVersion "$sysMajor.$sysMinor")
             }
+        }
+        else {
+            Write-Warning "   Could not parse Python version from: $v"
+            return $false
         }
     }
 
-    $pythonLocations = @(
-        "${env:LOCALAPPDATA}\Programs\Python\Python312\python.exe",
-        "${env:LOCALAPPDATA}\Programs\Python\Python311\python.exe",
-        "${env:LOCALAPPDATA}\Programs\Python\Python310\python.exe",
-        "C:\Python312\python.exe",
-        "C:\Python311\python.exe",
-        "C:\Python310\python.exe"
+    # ---- Check 2: scan known install paths for the TARGET version only ----
+    $searchPaths = @(
+        "${env:LOCALAPPDATA}\Programs\Python\Python$($Target.Major)$($Target.Minor)\python.exe",
+        "C:\Python$($Target.Major)$($Target.Minor)\python.exe"
     )
 
-    foreach ($location in $pythonLocations) {
+    foreach ($location in $searchPaths) {
         if (Test-Path $location) {
-            Write-Host "   Found Python at: $location" -ForegroundColor Yellow
+            Write-Host "   Found Python at: $location" -ForegroundColor Green
             $pythonDir = Split-Path -Parent $location
             $env:Path = "$pythonDir;$pythonDir\Scripts;$env:Path"
 
@@ -450,54 +557,33 @@ function Check-Python {
     return $false
 }
 
-if (-not (Check-Python)) {
-    Write-Warning "   Python not found. Attempting automatic installation via winget..."
+$script:TargetPythonResolved = $false
+
+if (-not (Check-Python -Target $script:TargetPython)) {
+    Write-Warning "   Python $($script:TargetPython.String) not found. Attempting automatic installation via winget..."
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        try {
-            $pythonIds = @("Python.Python.3.12", "Python.Python.3.11", "Python.Python.3")
-            $installed = $false
-
-            foreach ($id in $pythonIds) {
-                Write-Host "   Trying package ID: $id..." -ForegroundColor Gray
-                $startTime = Get-Date
-                $process = Start-Process -FilePath "winget" -ArgumentList "install -e --id $id --silent --accept-package-agreements --accept-source-agreements" -NoNewWindow -PassThru -Wait
-                $duration = (Get-Date) - $startTime
-
-                if ($process.ExitCode -eq 0) {
-                    Write-Host "   Python installed successfully (took $([int]$duration.TotalSeconds) seconds)" -ForegroundColor Green
-                    $installed = $true
-                    break
-                }
-            }
-
-            if ($installed) {
-                Refresh-EnvPath
-                if (-not (Check-Python)) {
-                    Write-Warning "   Python installed but not found in PATH."
-                    Write-Host "   Please restart your terminal and run this script again." -ForegroundColor Yellow
-                    exit 1
-                }
-            }
-            else {
-                Write-Warning "   Automatic installation via winget failed."
-                Write-Host ""
-                Write-Host "   Please install Python manually:" -ForegroundColor Yellow
-                Write-Host "   1. Download from: https://www.python.org/downloads/" -ForegroundColor White
-                Write-Host "   2. Run installer and check 'Add Python to PATH'" -ForegroundColor White
-                Write-Host "   3. Restart terminal and run this script again" -ForegroundColor White
+        if (Install-PythonViaWinget -Target $script:TargetPython) {
+            Refresh-EnvPath
+            if (-not (Check-Python -Target $script:TargetPython)) {
+                Write-Warning "   Python installed but not found in PATH."
+                Write-Host "   Please restart your terminal and run this script again." -ForegroundColor Yellow
                 exit 1
             }
         }
-        catch {
-            Write-Warning "   Automatic installation failed: $_"
-            Write-Host "   Please install Python manually from https://www.python.org" -ForegroundColor Yellow
+        else {
+            Write-Error "   Automatic installation of Python $($script:TargetPython.String) via winget failed."
+            Write-Host ""
+            Write-Host "   Please install Python $($script:TargetPython.String) manually:" -ForegroundColor Yellow
+            Write-Host "   1. Download from: https://www.python.org/downloads/release/python-$($script:TargetPython.Major)$($script:TargetPython.Minor)0/" -ForegroundColor White
+            Write-Host "   2. Run installer and check 'Add Python to PATH'" -ForegroundColor White
+            Write-Host "   3. Restart terminal and run this script again" -ForegroundColor White
             exit 1
         }
     }
     else {
-        Write-Error "   Python not found and winget not available."
-        Write-Host "   Please install Python manually from https://www.python.org" -ForegroundColor Yellow
+        Write-Error "   Python $($script:TargetPython.String) not found and winget not available."
+        Write-Host "   Please install Python $($script:TargetPython.String) manually from https://www.python.org" -ForegroundColor Yellow
         exit 1
     }
 }
@@ -558,6 +644,29 @@ if (-not (Check-Git)) {
 
 # Step 2: Create Virtual Environment
 Write-SetupStepHeader -Step 2 -Message 'Setting up virtual environment...'
+
+# Validate existing .venv: if it was created by a different Python version
+# than what .python-version declares, delete it so we get a clean venv.
+$venvNeedsRecreate = $false
+if (Test-Path ".venv") {
+    $pyvenvCfg = ".\.venv\pyvenv.cfg"
+    if (Test-Path $pyvenvCfg) {
+        $cfgContent = Get-Content $pyvenvCfg -Raw
+        if ($cfgContent -match 'version\s*=\s*(\d+\.\d+)') {
+            $venvPythonVersion = $Matches[1]
+            if ($venvPythonVersion -ne $script:TargetPython.String) {
+                Write-Host "   Existing .venv uses Python $venvPythonVersion, but .python-version requires $($script:TargetPython.String)" -ForegroundColor Yellow
+                Write-Host "   Recreating .venv with the correct Python version..." -ForegroundColor Gray
+                $venvNeedsRecreate = $true
+            }
+        }
+    }
+    if ($venvNeedsRecreate) {
+        Remove-Item -Recurse -Force ".venv" -ErrorAction Stop
+        Write-Host "   Old .venv removed." -ForegroundColor Gray
+    }
+}
+
 if (-not (Test-Path ".venv")) {
     Write-Host "   Creating " -NoNewline -ForegroundColor White
     Write-Host ".venv" -NoNewline -ForegroundColor Magenta
@@ -573,7 +682,7 @@ if (-not (Test-Path ".venv")) {
     }
 }
 else {
-    Write-Host "   Virtual environment already exists " -NoNewline -ForegroundColor White
+    Write-Host "   Virtual environment already exists (Python $($script:TargetPython.String)) " -NoNewline -ForegroundColor White
     Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
 }
 
@@ -622,8 +731,9 @@ if (Test-Path "requirements.txt") {
     Write-Host "requirements.txt" -NoNewline -ForegroundColor Magenta
     Write-Host "..." -NoNewline -ForegroundColor White
 
-    # Run pip quietly and suppress stderr noise
-    $pipInstall = & $pipPath install -r requirements.txt --quiet --no-warn-script-location 2>&1
+    # Run pip with --upgrade to ensure packages are updated when
+    # Dependabot bumps version pins in requirements.txt.
+    $pipInstall = & $pipPath install --upgrade --upgrade-strategy only-if-needed -r requirements.txt --quiet --no-warn-script-location 2>&1
 
     if ($LASTEXITCODE -eq 0) {
         Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
