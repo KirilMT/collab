@@ -383,16 +383,20 @@ function Refresh-EnvPath {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
-# Read the canonical Python version from .python-version at project root.
-# This is the single source of truth for which Python interpreter the
-# project is developed and tested against.
+# Read the canonical Python version.
+# If .python-version exists at project root, use it (pyenv/uv/asdf compatible).
+# Otherwise, default to the hardcoded version below.
 function Read-TargetPythonVersion {
+    $defaultVersion = "3.12"
+
     $versionFile = Join-Path $projectRoot ".python-version"
     if (-not (Test-Path $versionFile)) {
-        Write-Error "   FATAL: .python-version not found at project root."
-        Write-Host "   This file declares the canonical Python version for this project." -ForegroundColor Gray
-        Write-Host "   Create it with the target version, e.g.: echo 3.12 > .python-version" -ForegroundColor Gray
-        exit 1
+        Write-Host "   .python-version not found — defaulting to Python $defaultVersion" -ForegroundColor Gray
+        return @{
+            Major  = 3
+            Minor  = 12
+            String = $defaultVersion
+        }
     }
     $raw = (Get-Content $versionFile -Raw).Trim()
     if ($raw -match '^(\d+)\.(\d+)$') {
