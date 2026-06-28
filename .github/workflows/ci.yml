@@ -139,6 +139,23 @@ jobs:
           name: backend-coverage
           fail_ci_if_error: false
 
+  # Summary job: produces a single "Python Backend Tests" status check
+  # that the branch protection rule can require, regardless of matrix size.
+  python-tests-result:
+    name: Python Backend Tests
+    needs: python-tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check matrix result
+        run: |
+          if [ "${{ needs.python-tests.result }}" = "success" ]; then
+            echo "✅ All Python version matrix jobs passed"
+          else
+            echo "❌ Python tests failed on one or more versions"
+            exit 1
+          fi
+
   jest-tests:
     name: Jest Unit Tests
     runs-on: ubuntu-latest
