@@ -650,16 +650,25 @@ Write-SetupStepHeader -Step 2 -Message 'Setting up virtual environment...'
 $venvNeedsRecreate = $false
 if (Test-Path ".venv") {
     $pyvenvCfg = ".\.venv\pyvenv.cfg"
+    $venvVersionKnown = $false
     if (Test-Path $pyvenvCfg) {
         $cfgContent = Get-Content $pyvenvCfg -Raw
         if ($cfgContent -match 'version\s*=\s*(\d+\.\d+)') {
             $venvPythonVersion = $Matches[1]
+            $venvVersionKnown = $true
             if ($venvPythonVersion -ne $script:TargetPython.String) {
                 Write-Host "   Existing .venv uses Python $venvPythonVersion, but .python-version requires $($script:TargetPython.String)" -ForegroundColor Yellow
                 Write-Host "   Recreating .venv with the correct Python version..." -ForegroundColor Gray
                 $venvNeedsRecreate = $true
             }
         }
+    }
+    # Safety: if we cannot determine the venv Python version
+    # (missing pyvenv.cfg or unparseable), recreate to be safe.
+    if (-not $venvVersionKnown) {
+        Write-Host "   Cannot determine .venv Python version — recreating to be safe" -ForegroundColor Yellow
+        Write-Host "   (pyvenv.cfg missing or unparseable)" -ForegroundColor Gray
+        $venvNeedsRecreate = $true
     }
     if ($venvNeedsRecreate) {
         Remove-Item -Recurse -Force ".venv" -ErrorAction Stop
