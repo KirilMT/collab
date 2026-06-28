@@ -17,11 +17,12 @@ import re
 import tempfile
 import threading
 import time
-import tomllib
 import urllib.parse
 import zipfile
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple
+
+import tomli as tomllib
 
 logger = logging.getLogger(__name__)
 
