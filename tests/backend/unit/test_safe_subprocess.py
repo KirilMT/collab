@@ -145,6 +145,25 @@ def test_capture_returns_nonzero_without_raising(monkeypatch):
     assert not result.ok
 
 
+def test_capture_stderr_preserved_on_error(monkeypatch):
+    """Stderr is captured (via PIPE) and available in CaptureResult on error."""
+    monkeypatch.setenv("COLLAB_TEST_MODE", "1")
+
+    def fake_check_output(argv, **kwargs):
+        exc = sp.CalledProcessError(1, argv)
+        exc.stderr = b"fatal: refusing to merge unrelated histories"
+        raise exc
+
+    patch_subprocess(monkeypatch, check_output=fake_check_output)
+    result = safe_subprocess.capture(
+        ["git", "merge-tree", "--write-tree", "HEAD", "collab/pr/7"],
+        policy="git",
+    )
+    assert result.returncode == 1
+    assert not result.ok
+    assert b"refusing to merge unrelated histories" in result.stderr
+
+
 def test_validate_empty_argv_rejected():
     with pytest.raises(SubprocessSecurityError):
         safe_subprocess.validate_argv([], policy="git")

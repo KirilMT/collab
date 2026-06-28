@@ -1316,6 +1316,85 @@ def test_fetch_pr_ref_sha_mismatch_still_returns_ref():
     assert ref == "collab/pr/7"  # Still returned despite mismatch
 
 
+def test_fetch_pr_ref_unshallows_when_shallow():
+    """When the clone is shallow, unshallow so merge-tree can find merge base."""
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "abc123"),
+            ("rev-parse", "--is-shallow-repository"): (0, "true"),
+            ("fetch", "--unshallow", "origin"): (0, ""),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"
+
+
+def test_fetch_pr_ref_unshallow_fallback_to_deepen():
+    """When --unshallow fails, fall back to --deepen=50."""
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "abc123"),
+            ("rev-parse", "--is-shallow-repository"): (0, "true"),
+            ("fetch", "--unshallow", "origin"): (1, "fatal"),
+            ("fetch", "--deepen=50", "origin"): (0, ""),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"
+
+
+def test_fetch_pr_ref_not_shallow_no_unshallow():
+    """When repo is not shallow, no unshallow/deepen calls are made."""
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "abc123"),
+            ("rev-parse", "--is-shallow-repository"): (0, "false"),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"
+
+
+def test_fetch_pr_ref_is_shallow_check_fails_no_unshallow():
+    """When --is-shallow-repository fails, skip unshallowing (defensive)."""
+    cap = _capture_from_map(
+        {
+            (
+                "fetch",
+                "--force",
+                "--quiet",
+                "origin",
+                "pull/7/head:collab/pr/7",
+            ): (0, ""),
+            ("rev-parse", "--verify", "collab/pr/7^{commit}"): (0, "abc123"),
+            ("rev-parse", "--is-shallow-repository"): (1, ""),
+        }
+    )
+    ref = overlap.fetch_pr_ref(cap, "origin", 7, "abc123")
+    assert ref == "collab/pr/7"
+
+
 # --- resolve_remote ---------------------------------------------------------
 
 

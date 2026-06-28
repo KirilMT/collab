@@ -44,6 +44,7 @@ def _shim_from_stdlib(
         "run",
         "check_output",
         "Popen",
+        "PIPE",
         "DEVNULL",
         "TimeoutExpired",
         "CalledProcessError",
