@@ -272,7 +272,7 @@ def capture(
     sp = get_subprocess()
     safe_argv = validate_argv(argv, policy=policy)
     kwargs: dict[str, Any] = {
-        "stderr": sp.DEVNULL,
+        "stderr": sp.PIPE,
         "timeout": timeout,
         "cwd": cwd,
     }

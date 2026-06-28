@@ -308,6 +308,11 @@ def merge_tree_conflicts(
             conflicted.add(line.strip())
         # rc==1 with nothing parseable -> inconclusive; fall back to file-level.
         return frozenset(conflicted) if conflicted else None
+    # rc != 0,1: the merge-tree command itself failed (e.g. rc=128 "refusing to
+    # merge unrelated histories" in a shallow clone, or unsupported git version).
+    logger.debug(
+        "merge-tree exited rc=%d for %s..%s; inconclusive", rc, head_ref, other_ref
+    )
     return None
 
 
@@ -376,6 +381,24 @@ def fetch_pr_ref(
             "Fetched SHA %s != expected %s for PR #%d", fetched_sha, head_sha, pr_number
         )
         # Still usable (the ref exists), but log the discrepancy.
+
+    # If the checkout is shallow (e.g. actions/checkout@v4 default fetch-depth: 1),
+    # unshallow now so that git merge-tree can find the merge base.  Without this,
+    # merge-tree exits rc=128 ("refusing to merge unrelated histories") and
+    # merge_tree_conflicts returns None (inconclusive).
+    rc_shallow, shallow_out = capture(["rev-parse", "--is-shallow-repository"])
+    if rc_shallow == 0 and shallow_out.strip() == "true":
+        logger.debug("Shallow clone detected; unshallowing from %s", remote)
+        rc_unshallow, _ = capture(["fetch", "--unshallow", remote])
+        if rc_unshallow != 0:
+            # Best-effort fallback: deepen history so merge-tree has a
+            # reasonable chance of finding the merge base.
+            logger.debug(
+                "--unshallow failed (rc=%d); trying --deepen=50 as fallback",
+                rc_unshallow,
+            )
+            capture(["fetch", "--deepen=50", remote])
+
     return local_ref
 
 
