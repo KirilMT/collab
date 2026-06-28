@@ -28,7 +28,8 @@ dependencies = [
   "supabase>=2.30.0",
   "httpx>=0.28.1",
   "psutil>=5.9.8",
-  "plyer>=2.1.0"
+  "plyer>=2.1.0",
+  "tomli>=2.0.0",
 ]
 
 [project.scripts]
