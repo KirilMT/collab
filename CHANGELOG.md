@@ -11,12 +11,11 @@ and this project adheres to
 
 ## [0.9.2](https://github.com/KirilMT/collab/compare/v0.9.1...v0.9.2) (2026-06-28)
 
-
 ### Bug Fixes
 
-* add tomli to pyproject.toml dependencies ([#164](https://github.com/KirilMT/collab/issues/164)) ([b7c7548](https://github.com/KirilMT/collab/commit/b7c7548b7f6adc484e96006ee7cd8e168e3e5520))
-* **overlap:** self-heal shallow CI clones in fetch_pr_ref for merge-tree ([#160](https://github.com/KirilMT/collab/issues/160)) ([8b8aa40](https://github.com/KirilMT/collab/commit/8b8aa40e3d9c648f0adbace58575f85f2f90d2a6)), closes [#159](https://github.com/KirilMT/collab/issues/159)
-* **setup:** enforce Python version from .python-version ([#163](https://github.com/KirilMT/collab/issues/163)) ([caeb092](https://github.com/KirilMT/collab/commit/caeb09255bcc5ef70eb9fca2edbeeb02131f02af))
+- add tomli to pyproject.toml dependencies ([#164](https://github.com/KirilMT/collab/issues/164)) ([b7c7548](https://github.com/KirilMT/collab/commit/b7c7548b7f6adc484e96006ee7cd8e168e3e5520))
+- **overlap:** self-heal shallow CI clones in fetch_pr_ref for merge-tree ([#160](https://github.com/KirilMT/collab/issues/160)) ([8b8aa40](https://github.com/KirilMT/collab/commit/8b8aa40e3d9c648f0adbace58575f85f2f90d2a6)), closes [#159](https://github.com/KirilMT/collab/issues/159)
+- **setup:** enforce Python version from .python-version ([#163](https://github.com/KirilMT/collab/issues/163)) ([caeb092](https://github.com/KirilMT/collab/commit/caeb09255bcc5ef70eb9fca2edbeeb02131f02af))
 
 ## [0.9.1](https://github.com/KirilMT/collab/compare/v0.9.0...v0.9.1) (2026-06-26)
 
