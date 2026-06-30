@@ -339,6 +339,46 @@ _PID_FILE_HEARTBEAT_INTERVAL_SECONDS = float(
     os.getenv("COLLAB_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", "10.0")
 )
 
+# Grace period used when daemon-start provides a heartbeat file (no extension
+# owner).  Generous enough to tolerate transient stalls while still reaping
+# within a reasonable window after the session ends.
+_DAEMON_HEARTBEAT_GRACE_SECONDS = int(
+    os.getenv("COLLAB_DAEMON_HEARTBEAT_GRACE_SECONDS", "30")
+)
+
+# Period between worktree-validity checks in the watcher loop (Layer 2
+# defense-in-depth).  Configurable via env; set to 0 to disable.
+_WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS = float(
+    os.getenv("COLLAB_WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS", "60.0")
+)
+
+# Inline script for the heartbeat-keeper subprocess spawned by daemon-start.
+# Runs as a lightweight console-attached process that touches a heartbeat file
+# every 2 s.  When the hosting terminal / console is destroyed (window close),
+# the OS delivers CTRL_CLOSE_EVENT (Windows) or SIGHUP (Unix) and the keeper
+# dies naturally, letting the watcher's heartbeat-staleness detection reap it.
+_HEARTBEAT_KEEPER_SCRIPT = r"""
+import time, os, sys
+hb = os.getenv("COLLAB_HEARTBEAT_KEEPER_FILE")
+if not hb:
+    sys.exit(1)
+# Create the heartbeat file on first touch so the watcher sees it.
+try:
+    os.makedirs(os.path.dirname(hb), exist_ok=True)
+except Exception:
+    pass
+try:
+    while True:
+        try:
+            with open(hb, "w") as f:
+                f.write(str(time.time()) + "\n")
+        except Exception:
+            pass
+        time.sleep(2)
+except KeyboardInterrupt:
+    pass
+"""
+
 
 def _min_auto_lock_hold_seconds() -> int:
     """Minimum seconds an auto-watch lock must be held before auto-release.
@@ -1864,6 +1904,34 @@ class LockClient:
         else:
             logger.debug("No parent IDE detected - watcher will run independently")
 
+        # -----------------------------------------------------------------
+        # Layer 1 — Session heartbeat for daemon-started watchers
+        #
+        # When an IDE session is present (parent_pid is set), provide a
+        # heartbeat file so the watcher can self-terminate when the owning
+        # terminal / console is destroyed (e.g. a worktree / Agents window
+        # is closed while other IDE windows remain open).  A lightweight
+        # heartbeat-keeper subprocess — NOT detached from the console —
+        # touches the file every 2 s.  When the console dies the keeper
+        # dies, the heartbeat goes stale, and the watcher exits.
+        #
+        # This is defense-in-depth on top of parent-PID monitoring (which
+        # only fires when the *entire* IDE quits).  The extension-owned
+        # heartbeat path (startWatcher / deactivate) is unchanged.
+        # -----------------------------------------------------------------
+        _heartbeat_keeper_proc = None
+        if parent_pid:
+            _daemon_heartbeat = _state_path(".daemon_heartbeat")
+            cmd.extend(["--heartbeat-file", _daemon_heartbeat])
+            cmd.extend(
+                ["--heartbeat-grace-seconds", str(_DAEMON_HEARTBEAT_GRACE_SECONDS)]
+            )
+            logger.debug(
+                "Providing daemon heartbeat file: %s (grace: %ds)",
+                _daemon_heartbeat,
+                _DAEMON_HEARTBEAT_GRACE_SECONDS,
+            )
+
         if open_dashboard:
             cmd.append("--open-dashboard")
 
@@ -1955,6 +2023,64 @@ class LockClient:
 
         if actual_pid:
             print(f"✅ Started (PID: {actual_pid})")
+
+            # -----------------------------------------------------------------
+            # Spawn the heartbeat-keeper subprocess (Layer 1).
+            #
+            # The keeper is a minimal Python process that touches the daemon
+            # heartbeat file every 2 s.  It is deliberately NOT detached from
+            # the parent console so that it receives CTRL_CLOSE_EVENT (Windows)
+            # or SIGHUP (Unix) when the hosting terminal / IDE window closes.
+            # When the keeper dies the heartbeat goes stale and the watcher
+            # self-exits via _heartbeat_should_shutdown().
+            #
+            # We use python.exe (not pythonw.exe) on Windows so the process
+            # remains a console application attached to the parent console.
+            # -----------------------------------------------------------------
+            if _heartbeat_keeper_proc is None and parent_pid:
+                try:
+                    _keeper_python = sys.executable
+                    if sys.platform == "win32":
+                        _pythonw = os.path.join(
+                            os.path.dirname(sys.executable), "pythonw.exe"
+                        )
+                        if (
+                            os.path.exists(_pythonw)
+                            and os.path.abspath(sys.executable).lower()
+                            == os.path.abspath(_pythonw).lower()
+                        ):
+                            _keeper_python = os.path.join(
+                                os.path.dirname(sys.executable), "python.exe"
+                            )
+                        elif "pythonw" in os.path.basename(sys.executable).lower():
+                            _keeper_python = sys.executable.replace("pythonw", "python")
+                    _keeper_env: dict = {
+                        **os.environ,
+                        "COLLAB_HEARTBEAT_KEEPER_FILE": _daemon_heartbeat,
+                    }
+                    _keeper_argv = [_keeper_python, "-c", _HEARTBEAT_KEEPER_SCRIPT]
+                    import subprocess as _sp
+
+                    _kf: int = 0
+                    if sys.platform == "win32":
+                        # CREATE_NO_WINDOW but NOT DETACHED_PROCESS —
+                        # keep the process attached to the console.
+                        _kf = 0x08000000  # CREATE_NO_WINDOW
+                    _heartbeat_keeper_proc = _sp.Popen(
+                        _keeper_argv,
+                        env=_keeper_env,
+                        stdin=_sp.DEVNULL,
+                        stdout=_sp.DEVNULL,
+                        stderr=_sp.DEVNULL,
+                        creationflags=_kf if sys.platform == "win32" else 0,
+                    )
+                    logger.debug(
+                        "Heartbeat keeper spawned (PID: %d) for %s",
+                        _heartbeat_keeper_proc.pid,
+                        _daemon_heartbeat,
+                    )
+                except Exception as _exc:
+                    logger.debug("Failed to spawn heartbeat keeper: %s", _exc)
         else:
             start_error = DaemonStartError(
                 "Watcher process exited or failed to record PID. "
@@ -2696,6 +2822,7 @@ class LockClient:
         last_change_time = _safe_now()
         last_parent_check = _safe_now()
         last_pid_heartbeat = time.time()
+        _last_worktree_check = 0.0  # timestamp of last worktree-validity check
 
         # Initialize WMIC resolution failure streak counter for zombie process detection
         _parent_name_unknown_streak = 0
@@ -3115,6 +3242,37 @@ class LockClient:
                             )
                             break
 
+                    # -----------------------------------------------------------------
+                    # Layer 2 — Worktree-validity self-check (IDE-agnostic)
+                    #
+                    # Periodically verify the project root is still a valid,
+                    # registered Git worktree.  If the worktree has been
+                    # removed / pruned / invalidated, self-exit so the
+                    # directory can be cleaned up.  This is defense-in-depth
+                    # that guarantees ``git worktree remove`` always reaps
+                    # the watcher, independent of IDE extension or PID
+                    # binding.
+                    # -----------------------------------------------------------------
+                    if _WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS > 0:
+                        _now_ts = time.time()
+                        if (
+                            _now_ts - _last_worktree_check
+                            >= _WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS
+                        ):
+                            _last_worktree_check = _now_ts
+                            try:
+                                _valid = self._verify_worktree_valid()
+                                if not _valid:
+                                    logger.info(
+                                        "Worktree %s is no longer valid. "
+                                        "Shutting down...",
+                                        _PROJECT_ROOT,
+                                    )
+                                    self._graceful_shutdown(reason="worktree_invalid")
+                                    return
+                            except Exception as _exc:
+                                logger.debug("Worktree validity check failed: %s", _exc)
+
                     time.sleep(interval)
                 except Exception as e:
                     logger.error("Error in watcher loop: %s", e, exc_info=True)
@@ -3127,6 +3285,60 @@ class LockClient:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _verify_worktree_valid(self) -> bool:
+        """Return True when the project root is a valid, registered Git worktree.
+
+        Layer 2 defense-in-depth: if the worktree has been removed, pruned, or its
+        ``.git`` gitdir no longer resolves, this method returns False so the watcher can
+        self-terminate and free the directory handle.
+        """
+        try:
+            # Fast path: does .git exist and point to a real gitdir?
+            _git_file = os.path.join(_PROJECT_ROOT, ".git")
+            if not os.path.exists(_git_file):
+                logger.debug("Worktree .git file missing: %s", _git_file)
+                return False
+            # ``git rev-parse --is-inside-work-tree`` confirms both that git
+            # is available and that the directory is a worktree.
+            result = safe_subprocess.capture(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=_PROJECT_ROOT,
+            )
+            if not result.ok:
+                logger.debug(
+                    "rev-parse --is-inside-work-tree failed (rc=%d): %s",
+                    result.returncode,
+                    result.stderr.decode(errors="replace").strip(),
+                )
+                return False
+            out = result.stdout.decode(errors="replace").strip()
+            if out.lower() != "true":
+                logger.debug("Not inside a worktree: %s", _PROJECT_ROOT)
+                return False
+            # Also verify the gitdir resolves (worktree .git is a file
+            # pointing at the real gitdir).
+            try:
+                with open(_git_file, "r", encoding="utf-8") as _gf:
+                    _content = _gf.read().strip()
+                if _content.startswith("gitdir:"):
+                    _linked = _content.split(":", 1)[1].strip()
+                    if not os.path.exists(_linked):
+                        logger.debug(
+                            "Worktree gitdir link broken: %s -> %s",
+                            _git_file,
+                            _linked,
+                        )
+                        return False
+            except Exception:
+                # If we can't read the gitdir link, fall through to the
+                # rev-parse result (which already passed).
+                pass
+            return True
+        except Exception as exc:
+            logger.debug("Worktree validity check raised: %s", exc)
+            # Fail open — don't shut down on transient errors.
+            return True
+
     def _register_signal_handlers(self) -> None:
         """Register cleanup handlers for clean shutdown."""
         logger.debug("_register_signal_handlers called")

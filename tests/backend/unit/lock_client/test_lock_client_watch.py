@@ -1042,3 +1042,441 @@ def test_watch_touches_pid_heartbeat(monkeypatch, tmp_path):
     lc.watch(interval=1, timeout_mins=60)
 
     assert len(touch_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# _verify_worktree_valid  (Layer 2 — worktree-validity self-check)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_worktree_valid_git_file_missing(monkeypatch, tmp_path):
+    """Returns False when .git file doesn't exist."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    assert not lc._verify_worktree_valid()
+
+
+def test_verify_worktree_valid_rev_parse_fails(monkeypatch, tmp_path):
+    """Returns False when git rev-parse returns non-zero."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    # Create a .git file so the fast-path check passes
+    git_file = os.path.join(project, ".git")
+    with open(git_file, "w", encoding="utf-8") as f:
+        f.write("gitdir: /nonexistent\n")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    # Make capture return failure
+    from collab.safe_subprocess import CaptureResult
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda argv, cwd=None: CaptureResult(
+            argv=tuple(argv), returncode=128, stdout=b"", stderr=b"not a repo"
+        ),
+    )
+    assert not lc._verify_worktree_valid()
+
+
+def test_verify_worktree_valid_not_inside_worktree(monkeypatch, tmp_path):
+    """Returns False when rev-parse says we're not inside a worktree."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    git_file = os.path.join(project, ".git")
+    with open(git_file, "w", encoding="utf-8") as f:
+        f.write("gitdir: /nonexistent\n")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    from collab.safe_subprocess import CaptureResult
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda argv, cwd=None: CaptureResult(
+            argv=tuple(argv), returncode=0, stdout=b"false\n", stderr=b""
+        ),
+    )
+    assert not lc._verify_worktree_valid()
+
+
+def test_verify_worktree_valid_broken_gitdir(monkeypatch, tmp_path):
+    """Returns False when .git points to a non-existent gitdir."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    git_file = os.path.join(project, ".git")
+    with open(git_file, "w", encoding="utf-8") as f:
+        f.write("gitdir: /nonexistent/path\n")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    from collab.safe_subprocess import CaptureResult
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda argv, cwd=None: CaptureResult(
+            argv=tuple(argv), returncode=0, stdout=b"true\n", stderr=b""
+        ),
+    )
+    assert not lc._verify_worktree_valid()
+
+
+def test_verify_worktree_valid_success(monkeypatch, tmp_path):
+    """Returns True when worktree is valid."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    git_file = os.path.join(project, ".git")
+    real_gitdir = os.path.join(project, "real_gitdir")
+    os.makedirs(real_gitdir, exist_ok=True)
+    with open(git_file, "w", encoding="utf-8") as f:
+        f.write(f"gitdir: {real_gitdir}\n")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    from collab.safe_subprocess import CaptureResult
+
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda argv, cwd=None: CaptureResult(
+            argv=tuple(argv), returncode=0, stdout=b"true\n", stderr=b""
+        ),
+    )
+    assert lc._verify_worktree_valid()
+
+
+def test_verify_worktree_valid_exception_fail_open(monkeypatch, tmp_path):
+    """Returns True (fail-open) on unexpected exception."""
+    lc = mod.LockClient(developer_id="test_user")
+    project = str(tmp_path)
+    # Create .git file so the fast-path check passes
+    git_file = os.path.join(project, ".git")
+    with open(git_file, "w", encoding="utf-8") as f:
+        f.write("gitdir: /nonexistent\n")
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    # Make capture raise inside the method
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "capture",
+        lambda argv, cwd=None: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    # Exception is caught → fail-open → returns True
+    assert lc._verify_worktree_valid()
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat keeper constants (Layer 1)
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_heartbeat_grace_seconds_default():
+    """Default daemon heartbeat grace period is 30 seconds."""
+    assert mod._DAEMON_HEARTBEAT_GRACE_SECONDS == 30
+
+
+def test_worktree_validity_check_interval_default():
+    """Default worktree validity check interval is 60 seconds."""
+    assert mod._WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS == 60.0
+
+
+def test_heartbeat_keeper_script_exits_without_env():
+    """Heartbeat keeper exits when COLLAB_HEARTBEAT_KEEPER_FILE is not set."""
+    import subprocess as _sp
+
+    proc = _sp.run(
+        [mod.sys.executable, "-c", mod._HEARTBEAT_KEEPER_SCRIPT],
+        capture_output=True,
+        timeout=5,
+    )
+    assert proc.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# daemon_start heartbeat-file injection (Layer 1)
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_path):
+    """daemon_start injects --heartbeat-file when parent PID is detected."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    state_dir = str(tmp_path)
+    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
+    pid_file = os.path.join(state_dir, ".daemon.pid")
+    monkeypatch.setattr(mod, "PID_FILE", pid_file)
+
+    # No existing watcher
+    monkeypatch.setattr(mod.LockClient, "_read_pid", lambda self, strict=False: None)
+
+    # Fake parent IDE PID detection
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_parent_ide_pid",
+        lambda self: (12345, "vscode_pid"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: ("Code.exe", None)),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: True),
+    )
+
+    # Capture the command that would be spawned
+    spawn_calls = []
+
+    def _fake_spawn(
+        argv,
+        policy="watcher",
+        cwd=None,
+        creationflags=0,
+        start_new_session=False,
+        env=None,
+    ):
+        spawn_calls.append(list(argv))
+        import subprocess as _sp_mod
+
+        return _sp_mod.Popen(
+            [mod.sys.executable, "-c", "import time; time.sleep(0.1)"],
+            creationflags=creationflags,
+        )
+
+    monkeypatch.setattr(mod.safe_subprocess, "spawn_background", _fake_spawn)
+
+    # Prevent actual heartbeat keeper subprocess (would hang)
+    monkeypatch.setattr(mod.LockClient, "_write_pid", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
+
+    # _read_pid needs to return None first (no existing watcher), then a valid
+    # PID during the verification loop so the heartbeat-keeper path is reached.
+    _pid_state = {"count": 0}
+
+    def _read_pid_mock(self, strict=False):
+        _pid_state["count"] += 1
+        if _pid_state["count"] <= 1:
+            return None
+        return 99999
+
+    monkeypatch.setattr(mod.LockClient, "_read_pid", _read_pid_mock)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    assert len(spawn_calls) >= 1
+    cmd_flat = " ".join(spawn_calls[0])
+    assert "--heartbeat-file" in cmd_flat
+    assert "--heartbeat-grace-seconds" in cmd_flat
+
+
+def test_watch_worktree_validity_check_shutdown(monkeypatch, tmp_path):
+    """Watch() self-terminates when worktree becomes invalid."""
+    lc = _make_watch_client(monkeypatch, tmp_path)
+    _configure_watch_loop_common(monkeypatch, lc)
+
+    monkeypatch.setattr(mod.os, "getppid", lambda: 12345)
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+    )
+    # Return a known parent name to avoid zombie detection
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: ("Code.exe", None)),
+    )
+
+    # Accelerate the worktree check
+    monkeypatch.setattr(mod, "_WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS", 0.01)
+
+    # Mock time.time() so the interval check passes
+    time_counter = [0.0]
+
+    def _fake_time():
+        time_counter[0] += 1.0
+        return time_counter[0]
+
+    monkeypatch.setattr(mod.time, "time", _fake_time)
+
+    valid_states = [True, True, False]  # first two ticks ok, third = invalid
+
+    def _fake_valid(self):
+        return valid_states.pop(0)
+
+    monkeypatch.setattr(mod.LockClient, "_verify_worktree_valid", _fake_valid)
+
+    shutdown_reasons = []
+    monkeypatch.setattr(
+        lc,
+        "_graceful_shutdown",
+        lambda reason=None: shutdown_reasons.append(reason),
+    )
+
+    # Let the loop run a few iterations
+    ticks = [0]
+
+    def _tick_sleep(s):
+        ticks[0] += 1
+        if ticks[0] > 3:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", _tick_sleep)
+
+    lc._parent_pid = 12345
+    lc._initial_ppid = 12345
+    lc.watch(interval=0.01, timeout_mins=60)
+
+    assert "worktree_invalid" in shutdown_reasons
+
+
+def test_watch_worktree_validity_check_exception_handled(monkeypatch, tmp_path):
+    """Watch() survives transient exceptions during worktree check."""
+    lc = _make_watch_client(monkeypatch, tmp_path)
+    _configure_watch_loop_common(monkeypatch, lc)
+
+    monkeypatch.setattr(mod.os, "getppid", lambda: 12345)
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
+    )
+    # Return a known parent name to avoid zombie detection
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: ("Code.exe", None)),
+    )
+
+    monkeypatch.setattr(mod, "_WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS", 0.01)
+
+    # Mock time.time() so the interval check passes
+    time_counter = [0.0]
+
+    def _fake_time():
+        time_counter[0] += 1.0
+        return time_counter[0]
+
+    monkeypatch.setattr(mod.time, "time", _fake_time)
+
+    call_count = [0]
+
+    def _fake_valid(self):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("transient git error")
+        return True
+
+    monkeypatch.setattr(mod.LockClient, "_verify_worktree_valid", _fake_valid)
+
+    shutdown_reasons = []
+    monkeypatch.setattr(
+        lc,
+        "_graceful_shutdown",
+        lambda reason=None: shutdown_reasons.append(reason),
+    )
+
+    ticks = [0]
+
+    def _tick_sleep(s):
+        ticks[0] += 1
+        if ticks[0] > 3:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(mod.time, "sleep", _tick_sleep)
+
+    lc._parent_pid = 12345
+    lc._initial_ppid = 12345
+    lc.watch(interval=0.01, timeout_mins=60)
+
+    # Should NOT have shut down — exception is caught and fails open
+    assert "worktree_invalid" not in shutdown_reasons
+    assert call_count[0] >= 1
+
+
+# ---------------------------------------------------------------------------
+# daemon_start heartbeat keeper exception handling
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_start_heartbeat_keeper_spawn_failure(monkeypatch, tmp_path):
+    """daemon_start handles heartbeat-keeper spawn failure gracefully."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+
+    state_dir = str(tmp_path)
+    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
+    pid_file = os.path.join(state_dir, ".daemon.pid")
+    monkeypatch.setattr(mod, "PID_FILE", pid_file)
+
+    # Fake parent IDE PID detection
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_parent_ide_pid",
+        lambda self: (12345, "vscode_pid"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: ("Code.exe", None)),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: True),
+    )
+    monkeypatch.setattr(mod.LockClient, "_write_pid", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
+
+    # Mock spawn_background to return a fake Popen
+    spawn_calls = []
+
+    def _fake_spawn(
+        argv,
+        policy="watcher",
+        cwd=None,
+        creationflags=0,
+        start_new_session=False,
+        env=None,
+    ):
+        spawn_calls.append(list(argv))
+        import subprocess as _sp_mod
+
+        return _sp_mod.Popen(
+            [mod.sys.executable, "-c", "import time; time.sleep(0.1)"],
+            creationflags=creationflags,
+        )
+
+    monkeypatch.setattr(mod.safe_subprocess, "spawn_background", _fake_spawn)
+
+    # Make the watcher PID verification succeed
+    _pid_state = {"count": 0}
+
+    def _read_pid_mock(self, strict=False):
+        _pid_state["count"] += 1
+        if _pid_state["count"] <= 1:
+            return None
+        return 99999
+
+    monkeypatch.setattr(mod.LockClient, "_read_pid", _read_pid_mock)
+
+    # Make subprocess.Popen raise on the SECOND call (heartbeat keeper)
+    # to cover the exception handler while allowing spawn_background's
+    # own Popen to succeed.
+    import subprocess as _sp_mod
+
+    _real_popen = _sp_mod.Popen
+    _popen_count = [0]
+
+    class _SelectivePopen:
+        def __init__(self, *args, **kwargs):
+            _popen_count[0] += 1
+            if _popen_count[0] >= 2:
+                raise OSError("spawn failed")
+            self._real = _real_popen(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(_sp_mod, "Popen", _SelectivePopen)
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    # Should not crash — exception is caught and logged
+    assert len(spawn_calls) >= 1
