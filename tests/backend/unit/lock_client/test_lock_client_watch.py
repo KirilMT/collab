@@ -1176,7 +1176,7 @@ def test_worktree_validity_check_interval_default():
 
 
 def test_heartbeat_keeper_script_exits_without_env():
-    """Heartbeat keeper exits when COLLAB_HEARTBEAT_KEEPER_FILE is not set."""
+    """Heartbeat keeper exits when required env vars are missing."""
     import subprocess as _sp
 
     proc = _sp.run(
@@ -1187,13 +1187,110 @@ def test_heartbeat_keeper_script_exits_without_env():
     assert proc.returncode == 1
 
 
+def test_heartbeat_keeper_script_exits_when_session_pid_dead(monkeypatch, tmp_path):
+    """Keeper exits promptly when the monitored session PID is not alive."""
+    import subprocess as _sp
+
+    hb = str(tmp_path / ".daemon_heartbeat")
+    env = {
+        **os.environ,
+        "COLLAB_HEARTBEAT_KEEPER_FILE": hb,
+        "COLLAB_HEARTBEAT_SESSION_PID": "99999999",
+    }
+    proc = _sp.run(
+        [mod.sys.executable, "-c", mod._HEARTBEAT_KEEPER_SCRIPT],
+        env=env,
+        capture_output=True,
+        timeout=5,
+    )
+    assert proc.returncode == 0
+    assert not os.path.exists(hb)
+
+
 # ---------------------------------------------------------------------------
-# daemon_start heartbeat-file injection (Layer 1)
+# Session heartbeat owner resolution (Layer 1)
 # ---------------------------------------------------------------------------
 
 
-def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_path):
-    """daemon_start injects --heartbeat-file when parent PID is detected."""
+def test_session_owner_from_collab_session_pid_env(monkeypatch):
+    """COLLAB_SESSION_PID overrides process-tree detection."""
+    monkeypatch.setenv("COLLAB_SESSION_PID", "4242")
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: pid == 4242),
+    )
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=12345)
+    assert pid == 4242
+    assert method == "collab_session_pid_env"
+
+
+def test_session_owner_skips_shared_ide_parent(monkeypatch):
+    """Process-tree walk skips the shared VSCODE_PID main process."""
+    chain = {
+        100: ("python.exe", 200),
+        200: ("powershell.exe", 300),
+        300: ("Cursor.exe", 12345),
+        12345: ("Cursor.exe", 1),
+    }
+    monkeypatch.setattr(
+        mod.os,
+        "getppid",
+        lambda: 200,
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: chain.get(pid, (None, None))),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: True),
+    )
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=12345)
+    assert pid == 300
+    assert method == "process_tree_session"
+
+
+def test_session_owner_unknown_when_only_terminals(monkeypatch):
+    """No heartbeat owner when the ancestor chain has only terminals."""
+    chain = {
+        100: ("python.exe", 200),
+        200: ("powershell.exe", 12345),
+        12345: ("Cursor.exe", 1),
+    }
+    monkeypatch.setattr(mod.os, "getppid", lambda: 200)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: chain.get(pid, (None, None))),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: True),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_session_owner_from_workspace_cmdline",
+        lambda self, ide: (None, "unknown"),
+    )
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=12345)
+    assert pid is None
+    assert method == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# daemon_start heartbeat-file injection (Layer 1)
+# ---------------------------------------------------------------------------
+
+
+def _daemon_start_test_common(monkeypatch, tmp_path):
+    """Shared wiring for daemon_start Layer 1 tests."""
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
 
@@ -1201,11 +1298,8 @@ def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_pa
     monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
     pid_file = os.path.join(state_dir, ".daemon.pid")
     monkeypatch.setattr(mod, "PID_FILE", pid_file)
+    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
 
-    # No existing watcher
-    monkeypatch.setattr(mod.LockClient, "_read_pid", lambda self, strict=False: None)
-
-    # Fake parent IDE PID detection
     monkeypatch.setattr(
         mod.LockClient,
         "_get_parent_ide_pid",
@@ -1221,8 +1315,11 @@ def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_pa
         "_is_process_alive",
         staticmethod(lambda pid: True),
     )
+    monkeypatch.setattr(mod.LockClient, "_write_pid", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mod.LockClient, "_terminate_heartbeat_keeper", lambda self: None
+    )
 
-    # Capture the command that would be spawned
     spawn_calls = []
 
     def _fake_spawn(
@@ -1243,12 +1340,6 @@ def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_pa
 
     monkeypatch.setattr(mod.safe_subprocess, "spawn_background", _fake_spawn)
 
-    # Prevent actual heartbeat keeper subprocess (would hang)
-    monkeypatch.setattr(mod.LockClient, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
-
-    # _read_pid needs to return None first (no existing watcher), then a valid
-    # PID during the verification loop so the heartbeat-keeper path is reached.
     _pid_state = {"count": 0}
 
     def _read_pid_mock(self, strict=False):
@@ -1258,6 +1349,42 @@ def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_pa
         return 99999
 
     monkeypatch.setattr(mod.LockClient, "_read_pid", _read_pid_mock)
+    return spawn_calls
+
+
+def test_daemon_start_adds_heartbeat_when_session_owner_confirmed(
+    monkeypatch, tmp_path
+):
+    """daemon_start arms heartbeat only after keeper spawn is confirmed."""
+    spawn_calls = _daemon_start_test_common(monkeypatch, tmp_path)
+
+    class _FakeKeeper:
+        pid = 8888
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_session_heartbeat_owner_pid",
+        lambda self, ide_pid: (7777, "collab_session_pid_env"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_spawn_heartbeat_keeper",
+        lambda self, hb, session: _FakeKeeper(),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_confirm_heartbeat_keeper",
+        staticmethod(lambda proc, hb: True),
+    )
+    keeper_writes = []
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_write_keeper_pid",
+        lambda *a, **k: keeper_writes.append((a, k)),
+    )
 
     lc = mod.LockClient(developer_id="test_user")
     lc.daemon_start()
@@ -1266,6 +1393,63 @@ def test_daemon_start_adds_heartbeat_when_parent_pid_present(monkeypatch, tmp_pa
     cmd_flat = " ".join(spawn_calls[0])
     assert "--heartbeat-file" in cmd_flat
     assert "--heartbeat-grace-seconds" in cmd_flat
+    assert keeper_writes
+
+
+def test_daemon_start_no_heartbeat_without_session_owner(monkeypatch, tmp_path):
+    """daemon_start skips heartbeat when no per-window session owner exists."""
+    spawn_calls = _daemon_start_test_common(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_session_heartbeat_owner_pid",
+        lambda self, ide_pid: (None, "unknown"),
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    cmd_flat = " ".join(spawn_calls[0])
+    assert "--heartbeat-file" not in cmd_flat
+
+
+def test_daemon_start_no_heartbeat_when_keeper_unconfirmed(monkeypatch, tmp_path):
+    """Unconfirmed keeper spawn must not arm heartbeat on the watcher."""
+    spawn_calls = _daemon_start_test_common(monkeypatch, tmp_path)
+
+    class _FakeKeeper:
+        pid = 8888
+
+        def poll(self):
+            return None
+
+    terminated = []
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_session_heartbeat_owner_pid",
+        lambda self, ide_pid: (7777, "test"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_spawn_heartbeat_keeper",
+        lambda self, hb, session: _FakeKeeper(),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_confirm_heartbeat_keeper",
+        staticmethod(lambda proc, hb: False),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_terminate_process",
+        lambda self, pid: terminated.append(pid),
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    cmd_flat = " ".join(spawn_calls[0])
+    assert "--heartbeat-file" not in cmd_flat
+    assert 8888 in terminated
 
 
 def test_watch_worktree_validity_check_shutdown(monkeypatch, tmp_path):
@@ -1395,88 +1579,590 @@ def test_watch_worktree_validity_check_exception_handled(monkeypatch, tmp_path):
 
 
 def test_daemon_start_heartbeat_keeper_spawn_failure(monkeypatch, tmp_path):
-    """daemon_start handles heartbeat-keeper spawn failure gracefully."""
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
-
-    state_dir = str(tmp_path)
-    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
-    pid_file = os.path.join(state_dir, ".daemon.pid")
-    monkeypatch.setattr(mod, "PID_FILE", pid_file)
-
-    # Fake parent IDE PID detection
+    """daemon_start falls back to parent-PID only when keeper spawn fails."""
+    spawn_calls = _daemon_start_test_common(monkeypatch, tmp_path)
     monkeypatch.setattr(
         mod.LockClient,
-        "_get_parent_ide_pid",
-        lambda self: (12345, "vscode_pid"),
+        "_get_session_heartbeat_owner_pid",
+        lambda self, ide_pid: (7777, "test"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_spawn_heartbeat_keeper",
+        lambda self, hb, session: None,
+    )
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_start()
+
+    assert len(spawn_calls) >= 1
+    cmd_flat = " ".join(spawn_calls[0])
+    assert "--heartbeat-file" not in cmd_flat
+
+
+def test_daemon_stop_terminates_heartbeat_keeper(monkeypatch, tmp_path):
+    """daemon_stop reaps a recorded heartbeat keeper process."""
+    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
+    state_dir = str(tmp_path)
+    monkeypatch.setenv("COLLAB_STATE_DIR", state_dir)
+    keeper_file = os.path.join(state_dir, ".daemon_keeper.pid")
+    with open(keeper_file, "w", encoding="utf-8") as fh:
+        fh.write('{"pid": 5555}')
+
+    terminated = []
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_read_pid",
+        lambda self, strict=False: None,
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: pid == 5555),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_terminate_process",
+        lambda self, pid: terminated.append(pid),
+    )
+    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
+
+    lc = mod.LockClient(developer_id="test_user")
+    lc.daemon_stop()
+
+    assert terminated == [5555]
+    assert not os.path.exists(keeper_file)
+
+
+def test_watch_shutdown_when_daemon_heartbeat_stale_with_parent_alive(
+    monkeypatch, tmp_path
+):
+    """Keeper death leaves heartbeat stale and reaps watcher while IDE main lives."""
+    lc = _make_watch_client(monkeypatch, tmp_path)
+    _configure_watch_loop_common(monkeypatch, lc)
+
+    heartbeat = tmp_path / ".daemon_heartbeat"
+    heartbeat.write_text("stale", encoding="utf-8")
+    old = time.time() - 60
+    os.utime(heartbeat, (old, old))
+
+    shutdown_reasons = []
+    monkeypatch.setattr(
+        lc,
+        "_graceful_shutdown",
+        lambda **kw: shutdown_reasons.append(kw.get("reason")),
+    )
+    monkeypatch.setattr(mod.os, "getppid", lambda: 12345)
+    monkeypatch.setattr(
+        mod.LockClient, "_is_process_alive", staticmethod(lambda pid: True)
     )
     monkeypatch.setattr(
         mod.LockClient,
         "_get_process_info_local",
-        staticmethod(lambda pid: ("Code.exe", None)),
+        staticmethod(lambda pid: ("Cursor.exe", None)),
+    )
+    monkeypatch.setattr(mod, "_HEARTBEAT_STARTUP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(mod, "_DAEMON_HEARTBEAT_GRACE_SECONDS", 5)
+
+    lc.watch(
+        interval=0.01,
+        daemon_mode=True,
+        parent_pid=12345,
+        parent_name="Cursor.exe",
+        parent_method="vscode_pid",
+        heartbeat_file=str(heartbeat),
+        heartbeat_grace_seconds=5,
+    )
+
+    assert "heartbeat_stale" in shutdown_reasons
+
+
+# ---------------------------------------------------------------------------
+# Keeper lifecycle helpers (coverage for hardening paths)
+# ---------------------------------------------------------------------------
+
+
+def test_read_keeper_pid_file_empty(tmp_path, monkeypatch):
+    """Empty keeper metadata file is treated as missing."""
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    keeper_path = tmp_path / ".daemon_keeper.pid"
+    keeper_path.write_text("   \n", encoding="utf-8")
+    assert mod.LockClient._read_keeper_pid_file() is None
+
+
+def test_write_keeper_pid_replace_fallback(tmp_path, monkeypatch):
+    """_write_keeper_pid falls back when atomic replace fails."""
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    real_replace = mod.os.replace
+
+    def _fail_replace(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(mod.os, "replace", _fail_replace)
+    mod.LockClient._write_keeper_pid(
+        42,
+        session_owner_pid=7,
+        heartbeat_file=str(tmp_path / "hb"),
+        session_method="test",
+    )
+    data = mod.LockClient._read_keeper_pid_file()
+    assert data is not None
+    assert data["pid"] == 42
+    mod.os.replace = real_replace
+
+
+def test_write_keeper_pid_fsync_failure_still_writes(tmp_path, monkeypatch):
+    """Fsync failure during keeper write does not abort persistence."""
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+
+    def _fsync_fail(fd):
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr(mod.os, "fsync", _fsync_fail)
+    mod.LockClient._write_keeper_pid(99)
+    assert mod.LockClient._read_keeper_pid_file()["pid"] == 99
+
+
+def test_remove_keeper_pid_oserror_swallowed(tmp_path, monkeypatch):
+    """OSError while removing keeper metadata is swallowed."""
+    monkeypatch.delenv("COLLAB_TEST_MODE", raising=False)
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    keeper_path = tmp_path / ".daemon_keeper.pid"
+    keeper_path.write_text('{"pid": 1}', encoding="utf-8")
+
+    def _boom(path):
+        raise OSError("remove failed")
+
+    monkeypatch.setattr(mod.os, "remove", _boom)
+    mod.LockClient._remove_keeper_pid()
+
+
+def test_resolve_keeper_python_prefers_pythonw_on_windows(monkeypatch):
+    """_resolve_keeper_python prefers pythonw.exe for a windowless keeper."""
+    if mod.sys.platform != "win32":
+        monkeypatch.setattr(mod.sys, "platform", "win32")
+    venv = os.path.join("C:", os.sep, "venv", "Scripts")
+    python = os.path.join(venv, "python.exe")
+    pythonw = os.path.join(venv, "pythonw.exe")
+    monkeypatch.setattr(mod.sys, "executable", python)
+    monkeypatch.setattr(
+        mod.os.path,
+        "exists",
+        lambda p: p in (python, pythonw),
+    )
+    assert mod.LockClient._resolve_keeper_python() == pythonw
+
+    monkeypatch.setattr(mod.sys, "executable", pythonw)
+    assert mod.LockClient._resolve_keeper_python() == pythonw
+
+    monkeypatch.setattr(mod.sys, "executable", r"C:\tools\python3.exe")
+    monkeypatch.setattr(
+        mod.os.path,
+        "exists",
+        lambda p: p == r"C:\tools\pythonw3.exe",
+    )
+    assert mod.LockClient._resolve_keeper_python() == r"C:\tools\pythonw3.exe"
+
+
+def test_spawn_heartbeat_keeper_spawn_failure(monkeypatch, tmp_path):
+    """_spawn_heartbeat_keeper returns None when Popen fails."""
+    import subprocess as _sp
+
+    def _boom(*args, **kwargs):
+        raise OSError("spawn denied")
+
+    monkeypatch.setattr(_sp, "Popen", _boom)
+    lc = mod.LockClient(developer_id="test_user")
+    assert lc._spawn_heartbeat_keeper(str(tmp_path / "hb"), 1234) is None
+
+
+def test_confirm_heartbeat_keeper_exits_when_proc_dead():
+    """_confirm_heartbeat_keeper returns False when keeper already exited."""
+
+    class _DeadKeeper:
+        def poll(self):
+            return 1
+
+    assert (
+        mod.LockClient._confirm_heartbeat_keeper(_DeadKeeper(), "/no/such/file")
+        is False
+    )
+
+
+def test_confirm_heartbeat_keeper_poll_exception():
+    """_confirm_heartbeat_keeper returns False when poll() raises."""
+
+    class _BadKeeper:
+        def poll(self):
+            raise RuntimeError("poll failed")
+
+    assert mod.LockClient._confirm_heartbeat_keeper(_BadKeeper(), "/no/file") is False
+
+
+def test_is_session_owner_candidate_rejects_unknown():
+    """Non-IDE process names are not session-owner candidates."""
+    assert mod.LockClient._is_session_owner_candidate("notepad.exe") is False
+
+
+def test_is_session_owner_candidate_accepts_electron_helper():
+    """Electron helper processes qualify as session-owner candidates."""
+    assert mod.LockClient._is_session_owner_candidate("cursor helper.exe") is True
+
+
+def test_write_keeper_pid_outer_oserror_logged(tmp_path, monkeypatch):
+    """OSError while opening keeper metadata file is swallowed."""
+    import builtins
+
+    monkeypatch.setenv("COLLAB_STATE_DIR", str(tmp_path))
+    real_open = builtins.open
+
+    def _open_fail(path, *args, **kwargs):
+        if str(path).endswith(".daemon_keeper.pid.tmp"):
+            raise OSError("cannot open")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", _open_fail)
+    mod.LockClient._write_keeper_pid(77)
+    assert mod.LockClient._read_keeper_pid_file() is None
+
+
+def test_session_owner_skips_ide_parent_at_chain_top(monkeypatch):
+    """Walk skips shared IDE parent and stops when chain ends at it."""
+    chain = {
+        200: ("powershell.exe", 12345),
+        12345: ("Cursor.exe", 12345),
+    }
+    monkeypatch.setattr(mod.os, "getppid", lambda: 200)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(lambda pid: chain.get(pid, (None, None))),
     )
     monkeypatch.setattr(
         mod.LockClient,
         "_is_process_alive",
         staticmethod(lambda pid: True),
     )
-    monkeypatch.setattr(mod.LockClient, "_write_pid", lambda *a, **k: None)
-    monkeypatch.setattr(mod, "_state_path", lambda name: os.path.join(state_dir, name))
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_session_owner_from_workspace_cmdline",
+        lambda self, ide: (None, "unknown"),
+    )
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=12345)
+    assert pid is None
+    assert method == "unknown"
 
-    # Mock spawn_background to return a fake Popen
-    spawn_calls = []
 
-    def _fake_spawn(
-        argv,
-        policy="watcher",
-        cwd=None,
-        creationflags=0,
-        start_new_session=False,
-        env=None,
-    ):
-        spawn_calls.append(list(argv))
-        import subprocess as _sp_mod
+def test_session_owner_walk_exception_fail_open(monkeypatch):
+    """Process-tree walk exceptions return unknown without raising."""
+    monkeypatch.delenv("COLLAB_SESSION_PID", raising=False)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_session_owner_from_workspace_cmdline",
+        lambda self, ide: (None, "unknown"),
+    )
 
-        return _sp_mod.Popen(
-            [mod.sys.executable, "-c", "import time; time.sleep(0.1)"],
-            creationflags=creationflags,
-        )
+    def _boom():
+        raise RuntimeError("getppid failed")
 
-    monkeypatch.setattr(mod.safe_subprocess, "spawn_background", _fake_spawn)
+    monkeypatch.setattr(mod.os, "getppid", _boom)
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=1)
+    assert pid is None
+    assert method == "unknown"
 
-    # Make the watcher PID verification succeed
-    _pid_state = {"count": 0}
 
-    def _read_pid_mock(self, strict=False):
-        _pid_state["count"] += 1
-        if _pid_state["count"] <= 1:
-            return None
-        return 99999
+def test_session_owner_from_workspace_cmdline_match(monkeypatch, tmp_path):
+    """Workspace path in IDE cmdline resolves session owner when tree walk fails."""
+    project = str(tmp_path / "worktree")
+    os.makedirs(project)
+    monkeypatch.setenv("VSCODE_CWD", project)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
 
-    monkeypatch.setattr(mod.LockClient, "_read_pid", _read_pid_mock)
+    current_pid = 9000
 
-    # Make subprocess.Popen raise on the SECOND call (heartbeat keeper)
-    # to cover the exception handler while allowing spawn_background's
-    # own Popen to succeed.
-    import subprocess as _sp_mod
+    class _FakeProc:
+        def __init__(self, pid, name, cmdline):
+            self.info = {"pid": pid, "name": name, "cmdline": cmdline}
 
-    _real_popen = _sp_mod.Popen
-    _popen_count = [0]
+    class _FakePsutil:
+        NoSuchProcess = Exception
+        AccessDenied = Exception
+        ZombieProcess = Exception
 
-    class _SelectivePopen:
-        def __init__(self, *args, **kwargs):
-            _popen_count[0] += 1
-            if _popen_count[0] >= 2:
-                raise OSError("spawn failed")
-            self._real = _real_popen(*args, **kwargs)
+        @staticmethod
+        def process_iter(fields):
+            yield _FakeProc(12345, "Cursor.exe", ["cursor.exe"])
+            yield _FakeProc(5555, "Cursor.exe", ["cursor.exe", project])
 
-        def __getattr__(self, name):
-            return getattr(self._real, name)
+        class Process:
+            _ppid = {9000: 200, 200: 5555, 5555: 12345}
 
-    monkeypatch.setattr(_sp_mod, "Popen", _SelectivePopen)
+            def __init__(self, pid):
+                self.pid = pid
+
+            def ppid(self):
+                return _FakePsutil.Process._ppid.get(self.pid, 1)
+
+    monkeypatch.setattr(mod.os, "getpid", lambda: current_pid)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: pid in (5555, 12345, 200, current_pid)),
+    )
 
     lc = mod.LockClient(developer_id="test_user")
-    lc.daemon_start()
+    pid, method = lc._session_owner_from_workspace_cmdline(12345)
+    assert pid == 5555
+    assert method == "workspace_cmdline_match"
 
-    # Should not crash — exception is caught and logged
-    assert len(spawn_calls) >= 1
+
+def test_daemon_start_rolls_back_keeper_on_spawn_security_error(monkeypatch, tmp_path):
+    """SubprocessSecurityError during watcher spawn must reap the keeper."""
+    spawn_calls = _daemon_start_test_common(monkeypatch, tmp_path)
+    rolled_back = []
+
+    class FakeKeeper:
+        pid = 7777
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_session_heartbeat_owner_pid",
+        lambda self, ide_pid: (3333, "test"),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_spawn_heartbeat_keeper",
+        lambda self, hb, session: FakeKeeper(),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_confirm_heartbeat_keeper",
+        staticmethod(lambda proc, hb: True),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_write_keeper_pid",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_rollback_daemon_start_keeper",
+        lambda self, keeper: rolled_back.append(getattr(keeper, "pid", None)),
+    )
+    monkeypatch.setattr(
+        mod.safe_subprocess,
+        "spawn_background",
+        lambda *a, **k: (_ for _ in ()).throw(mod.SubprocessSecurityError("blocked")),
+    )
+
+    with mock.patch("builtins.print"):
+        mod.LockClient(developer_id="test_user").daemon_start()
+
+    assert rolled_back == [7777]
+    assert len(spawn_calls) == 0
+
+
+def test_rollback_daemon_start_keeper_terminates_alive_process(monkeypatch):
+    """_rollback_daemon_start_keeper terminates a live keeper subprocess."""
+
+    class AliveKeeper:
+        pid = 42
+
+        def poll(self):
+            return None
+
+    terminated: list[int] = []
+    lc = mod.LockClient(developer_id="test_user")
+    monkeypatch.setattr(lc, "_terminate_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(lc, "_terminate_heartbeat_keeper", lambda: None)
+    lc._rollback_daemon_start_keeper(AliveKeeper())
+    assert terminated == [42]
+
+
+def test_rollback_daemon_start_keeper_skips_dead_process(monkeypatch):
+    """_rollback_daemon_start_keeper does not terminate an exited keeper."""
+
+    class DeadKeeper:
+        pid = 42
+
+        def poll(self):
+            return 0
+
+    terminated: list[int] = []
+    lc = mod.LockClient(developer_id="test_user")
+    monkeypatch.setattr(lc, "_terminate_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(lc, "_terminate_heartbeat_keeper", lambda: None)
+    lc._rollback_daemon_start_keeper(DeadKeeper())
+    assert terminated == []
+
+
+def test_rollback_daemon_start_keeper_poll_exception(monkeypatch):
+    """_rollback_daemon_start_keeper tolerates poll() failures."""
+
+    class BadKeeper:
+        pid = 42
+
+        def poll(self):
+            raise RuntimeError("poll failed")
+
+    terminated: list[int] = []
+    lc = mod.LockClient(developer_id="test_user")
+    monkeypatch.setattr(lc, "_terminate_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(lc, "_terminate_heartbeat_keeper", lambda: None)
+    lc._rollback_daemon_start_keeper(BadKeeper())
+    assert terminated == []
+
+
+def test_session_owner_falls_back_to_workspace_cmdline(monkeypatch, tmp_path):
+    """Full resolution uses workspace cmdline when the ancestor walk finds nothing."""
+    project = str(tmp_path / "worktree")
+    os.makedirs(project)
+    monkeypatch.setenv("VSCODE_CWD", project)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    monkeypatch.setattr(mod.os, "getppid", lambda: 200)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_get_process_info_local",
+        staticmethod(
+            lambda pid: (
+                ("powershell.exe", 12345)
+                if pid == 200
+                else ("Cursor.exe", 1) if pid == 12345 else (None, None)
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: pid in (200, 5555, 12345, 9000)),
+    )
+    monkeypatch.setattr(mod.os, "getpid", lambda: 9000)
+
+    class _FakeProc:
+        def __init__(self, pid, name, cmdline):
+            self.info = {"pid": pid, "name": name, "cmdline": cmdline}
+
+    class _FakePsutil:
+        NoSuchProcess = Exception
+        AccessDenied = Exception
+        ZombieProcess = Exception
+
+        @staticmethod
+        def process_iter(fields):
+            yield _FakeProc(5555, "Cursor.exe", ["cursor.exe", project])
+
+        class Process:
+            _ppid = {9000: 200, 200: 5555, 5555: 12345}
+
+            def __init__(self, pid):
+                self.pid = pid
+
+            def ppid(self):
+                return _FakePsutil.Process._ppid.get(self.pid, 1)
+
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil)
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._get_session_heartbeat_owner_pid(ide_parent_pid=12345)
+    assert pid == 5555
+    assert method == "workspace_cmdline_match"
+
+
+def test_session_owner_workspace_psutil_import_error(monkeypatch, tmp_path):
+    """Workspace fallback returns unknown when psutil cannot be imported."""
+    project = str(tmp_path / "wt")
+    os.makedirs(project)
+    monkeypatch.setenv("VSCODE_CWD", project)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("blocked")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._session_owner_from_workspace_cmdline(12345)
+    assert pid is None
+    assert method == "unknown"
+
+
+def test_ancestor_depth_between_hops(monkeypatch):
+    """_ancestor_depth_between counts parent hops correctly."""
+
+    class _FakePsutil:
+        class Process:
+            _ppid = {30: 20, 20: 10}
+
+            def __init__(self, pid):
+                self.pid = pid
+
+            def ppid(self):
+                return _FakePsutil.Process._ppid.get(self.pid, 0)
+
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil)
+    assert mod.LockClient._ancestor_depth_between(10, 30) == 2
+    assert mod.LockClient._ancestor_depth_between(99, 30) is None
+
+
+def test_ancestor_depth_between_psutil_import_error(monkeypatch):
+    """_ancestor_depth_between returns None when psutil is unavailable."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("blocked")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    assert mod.LockClient._ancestor_depth_between(1, 2) is None
+
+
+def test_session_owner_workspace_skips_non_ancestor_match(monkeypatch, tmp_path):
+    """Workspace cmdline match is ignored when the process is not an ancestor."""
+    project = str(tmp_path / "wt")
+    os.makedirs(project)
+    monkeypatch.setenv("VSCODE_CWD", project)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", project)
+    monkeypatch.setattr(mod.os, "getpid", lambda: 9000)
+
+    class _FakeProc:
+        def __init__(self, pid, name, cmdline):
+            self.info = {"pid": pid, "name": name, "cmdline": cmdline}
+
+    class _FakePsutil:
+        NoSuchProcess = Exception
+        AccessDenied = Exception
+        ZombieProcess = Exception
+
+        @staticmethod
+        def process_iter(fields):
+            yield _FakeProc(5555, "Cursor.exe", ["cursor.exe", project])
+
+        class Process:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def ppid(self):
+                return 1
+
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil)
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_is_process_alive",
+        staticmethod(lambda pid: True),
+    )
+    lc = mod.LockClient(developer_id="test_user")
+    pid, method = lc._session_owner_from_workspace_cmdline(12345)
+    assert pid is None

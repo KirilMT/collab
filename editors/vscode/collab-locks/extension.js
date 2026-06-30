@@ -342,6 +342,47 @@ function detectCollab(workspaceRoot) {
   };
 }
 
+function terminateDaemonHeartbeatKeeper(stateDir) {
+  const keeperFile = path.join(stateDir, ".daemon_keeper.pid");
+  if (!fs.existsSync(keeperFile)) {
+    return;
+  }
+  try {
+    const raw = fs.readFileSync(keeperFile, "utf-8").trim();
+    if (!raw) {
+      return;
+    }
+    const meta = JSON.parse(raw);
+    const keeperPid = meta && meta.pid;
+    if (keeperPid && Number.isInteger(keeperPid) && keeperPid > 0) {
+      if (outputChannel) {
+        outputChannel.appendLine(
+          `[collab] Terminating daemon heartbeat keeper (PID: ${keeperPid})`,
+        );
+      }
+      try {
+        if (process.platform === "win32") {
+          execSync(`taskkill /F /PID ${keeperPid}`, { stdio: "ignore" });
+        } else {
+          process.kill(keeperPid, "SIGTERM");
+        }
+      } catch (e) {
+        logToCollab(
+          `Failed to terminate daemon heartbeat keeper ${keeperPid}: ${e.message}`,
+          "DEBUG",
+        );
+      }
+    }
+    try {
+      fs.unlinkSync(keeperFile);
+    } catch (e) {
+      logToCollab(`Failed to unlink keeper pid file: ${e.message}`, "DEBUG");
+    }
+  } catch (e) {
+    logToCollab(`Failed to parse daemon keeper metadata: ${e.message}`, "DEBUG");
+  }
+}
+
 function getVSCodeWindowPid() {
   try {
     if (process.env.VSCODE_PID) {
@@ -858,6 +899,8 @@ function startWatcher() {
     }
     logToCollab(`Cleared stale summary collection buffer`, "DEBUG");
   }
+
+  terminateDaemonHeartbeatKeeper(stateDir);
 
   // Gracefully stop any existing watcher from a previous session.
   if (fs.existsSync(pidFile)) {
@@ -1550,6 +1593,8 @@ function deactivate() {
       `[collab] No watcher PID found during deactivation; skipping watcher stop`,
     );
   }
+
+  terminateDaemonHeartbeatKeeper(stateDir);
 
   if (watcherHeartbeatInterval) {
     try {

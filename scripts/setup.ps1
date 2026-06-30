@@ -120,6 +120,48 @@ function Initialize-SetupConsole {
     $script:SetupUseEmoji = $script:SetupUseAnsi -and $utf8Ready -and -not $env:CI -and -not $env:TF_BUILD
 }
 
+function Set-CollabDaemonSessionPidEnv {
+    <#
+    .SYNOPSIS
+        Pre-resolve the per-window IDE session PID for collab daemon-start (issue #165).
+
+        Ensures ``COLLAB_SESSION_PID`` is set before ``daemon-start`` runs so the
+        heartbeat keeper tracks the Agents/worktree window, not the shared
+        ``VSCODE_PID`` or ephemeral setup shell.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($env:COLLAB_SESSION_PID)) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        return
+    }
+
+    try {
+        $sessionScript = @'
+from collab.lock_client import LockClient
+client = LockClient(developer_id="setup")
+ide_pid, _ = client._get_parent_ide_pid()
+if ide_pid:
+    session_pid, _ = client._get_session_heartbeat_owner_pid(ide_pid)
+    if session_pid:
+        print(session_pid)
+'@
+        $sessionOut = & $PythonPath -c $sessionScript 2>$null
+        if ($sessionOut -match '^\s*(\d+)\s*$') {
+            $env:COLLAB_SESSION_PID = $Matches[1]
+        }
+    }
+    catch {
+        # Best-effort; daemon-start performs the same resolution internally.
+    }
+}
+
 function Get-SetupStatusToken {
     param(
         [ValidateSet('OK', 'WARN', 'FAILED', 'SKIP')]
@@ -1117,6 +1159,7 @@ Write-SetupStepHeader -Step 9 -Message 'Ensuring Collaborative Daemon is running
 
 if (Test-Path $pythonPath) {
     $collabExe = Join-Path (Split-Path $pythonPath) "collab.exe"
+    Set-CollabDaemonSessionPidEnv -PythonPath $pythonPath
     & $collabExe daemon-status | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "   Starting daemon in background..." -ForegroundColor Gray

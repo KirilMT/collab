@@ -353,31 +353,85 @@ _WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS = float(
 )
 
 # Inline script for the heartbeat-keeper subprocess spawned by daemon-start.
-# Runs as a lightweight console-attached process that touches a heartbeat file
-# every 2 s.  When the hosting terminal / console is destroyed (window close),
-# the OS delivers CTRL_CLOSE_EVENT (Windows) or SIGHUP (Unix) and the keeper
-# dies naturally, letting the watcher's heartbeat-staleness detection reap it.
+# Touches a heartbeat file every 2 s while COLLAB_HEARTBEAT_SESSION_PID is
+# alive.  The session PID is resolved at daemon-start time (per-window Cursor
+# utility / extension-host process, or COLLAB_SESSION_PID override) — NOT the
+# shared VSCODE_PID and NOT the ephemeral setup-script console.
 _HEARTBEAT_KEEPER_SCRIPT = r"""
-import time, os, sys
+import os, sys, time
+
 hb = os.getenv("COLLAB_HEARTBEAT_KEEPER_FILE")
-if not hb:
+session_raw = os.getenv("COLLAB_HEARTBEAT_SESSION_PID")
+if not hb or not session_raw:
     sys.exit(1)
-# Create the heartbeat file on first touch so the watcher sees it.
+try:
+    session_pid = int(session_raw)
+except Exception:
+    sys.exit(1)
+if session_pid <= 0:
+    sys.exit(1)
+
+
+def _pid_alive(pid):
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
+        if not handle:
+            return False
+        code = wintypes.DWORD()
+        ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return int(code.value) == STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 try:
     os.makedirs(os.path.dirname(hb), exist_ok=True)
 except Exception:
     pass
-try:
-    while True:
-        try:
-            with open(hb, "w") as f:
-                f.write(str(time.time()) + "\n")
-        except Exception:
-            pass
-        time.sleep(2)
-except KeyboardInterrupt:
-    pass
+
+while _pid_alive(session_pid):
+    try:
+        with open(hb, "w", encoding="utf-8") as f:
+            f.write(str(time.time()) + "\n")
+    except Exception:
+        pass
+    time.sleep(2)
 """
+
+# Process names skipped when resolving the per-window session owner PID.
+_SESSION_CHAIN_SKIP_EXE_NAMES = frozenset(
+    {
+        "windowsterminal.exe",
+        "conhost.exe",
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "bash.exe",
+        "sh.exe",
+        "zsh.exe",
+        "fish.exe",
+        "python.exe",
+        "pythonw.exe",
+        "collab.exe",
+        "collab-watcher.exe",
+    }
+)
+
+# How long daemon-start waits for the keeper to create the heartbeat file.
+_HEARTBEAT_KEEPER_CONFIRM_SECONDS = float(
+    os.getenv("COLLAB_HEARTBEAT_KEEPER_CONFIRM_SECONDS", "2.0")
+)
 
 
 def _min_auto_lock_hold_seconds() -> int:
@@ -1905,32 +1959,76 @@ class LockClient:
             logger.debug("No parent IDE detected - watcher will run independently")
 
         # -----------------------------------------------------------------
-        # Layer 1 — Session heartbeat for daemon-started watchers
+        # Layer 1 — Session heartbeat for daemon-started watchers
         #
-        # When an IDE session is present (parent_pid is set), provide a
-        # heartbeat file so the watcher can self-terminate when the owning
-        # terminal / console is destroyed (e.g. a worktree / Agents window
-        # is closed while other IDE windows remain open).  A lightweight
-        # heartbeat-keeper subprocess — NOT detached from the console —
-        # touches the file every 2 s.  When the console dies the keeper
-        # dies, the heartbeat goes stale, and the watcher exits.
+        # When an IDE session is present (parent_pid is set), resolve a
+        # per-window session owner PID (NOT the shared VSCODE_PID) and spawn
+        # a heartbeat-keeper that touches .daemon_heartbeat while that process
+        # is alive.  The watcher is only armed with --heartbeat-file after the
+        # keeper is confirmed running — spawn failure falls back to parent-PID
+        # monitoring only (no 3 s self-destruct).
         #
-        # This is defense-in-depth on top of parent-PID monitoring (which
-        # only fires when the *entire* IDE quits).  The extension-owned
-        # heartbeat path (startWatcher / deactivate) is unchanged.
+        # The extension-owned heartbeat path (startWatcher / deactivate) is
+        # unchanged.
         # -----------------------------------------------------------------
+        _daemon_heartbeat: Optional[str] = None
         _heartbeat_keeper_proc = None
+        _session_owner_pid: Optional[int] = None
+        _session_owner_method: Optional[str] = None
         if parent_pid:
-            _daemon_heartbeat = _state_path(".daemon_heartbeat")
-            cmd.extend(["--heartbeat-file", _daemon_heartbeat])
-            cmd.extend(
-                ["--heartbeat-grace-seconds", str(_DAEMON_HEARTBEAT_GRACE_SECONDS)]
+            _session_owner_pid, _session_owner_method = (
+                self._get_session_heartbeat_owner_pid(parent_pid)
             )
-            logger.debug(
-                "Providing daemon heartbeat file: %s (grace: %ds)",
-                _daemon_heartbeat,
-                _DAEMON_HEARTBEAT_GRACE_SECONDS,
-            )
+            if _session_owner_pid:
+                _daemon_heartbeat = _state_path(".daemon_heartbeat")
+                self._terminate_heartbeat_keeper()
+                _heartbeat_keeper_proc = self._spawn_heartbeat_keeper(
+                    _daemon_heartbeat, _session_owner_pid
+                )
+                if _heartbeat_keeper_proc and self._confirm_heartbeat_keeper(
+                    _heartbeat_keeper_proc, _daemon_heartbeat
+                ):
+                    cmd.extend(["--heartbeat-file", _daemon_heartbeat])
+                    cmd.extend(
+                        [
+                            "--heartbeat-grace-seconds",
+                            str(_DAEMON_HEARTBEAT_GRACE_SECONDS),
+                        ]
+                    )
+                    self._write_keeper_pid(
+                        _heartbeat_keeper_proc.pid,
+                        session_owner_pid=_session_owner_pid,
+                        heartbeat_file=_daemon_heartbeat,
+                        session_method=_session_owner_method,
+                    )
+                    logger.debug(
+                        (
+                            "Daemon heartbeat armed: file=%s grace=%ds "
+                            "session_owner=%d (%s) keeper=%d"
+                        ),
+                        _daemon_heartbeat,
+                        _DAEMON_HEARTBEAT_GRACE_SECONDS,
+                        _session_owner_pid,
+                        _session_owner_method,
+                        _heartbeat_keeper_proc.pid,
+                    )
+                else:
+                    if _heartbeat_keeper_proc is not None:
+                        self._terminate_process(_heartbeat_keeper_proc.pid)
+                    _heartbeat_keeper_proc = None
+                    logger.debug(
+                        (
+                            "Heartbeat keeper not confirmed for session owner "
+                            "%d (%s); watcher will use parent-PID only"
+                        ),
+                        _session_owner_pid,
+                        _session_owner_method,
+                    )
+            else:
+                logger.debug(
+                    "No per-window session owner resolved; "
+                    "watcher will use parent-PID only"
+                )
 
         if open_dashboard:
             cmd.append("--open-dashboard")
@@ -1969,6 +2067,7 @@ class LockClient:
             except SubprocessSecurityError as exc:
                 logger.error("Refusing to start watcher: %s", exc)
                 print(f"❌ Refusing to start watcher: {exc}")
+                self._rollback_daemon_start_keeper(_heartbeat_keeper_proc)
                 return
         else:
             # Unix/Linux/Mac: only use start_new_session if NOT tracking a parent
@@ -1995,6 +2094,7 @@ class LockClient:
             except SubprocessSecurityError as exc:
                 logger.error("Refusing to start watcher: %s", exc)
                 print(f"❌ Refusing to start watcher: {exc}")
+                self._rollback_daemon_start_keeper(_heartbeat_keeper_proc)
                 return
         if sys.platform != "win32":
             # On Linux/Mac, the spawned proc.pid is the real child.
@@ -2023,64 +2123,6 @@ class LockClient:
 
         if actual_pid:
             print(f"✅ Started (PID: {actual_pid})")
-
-            # -----------------------------------------------------------------
-            # Spawn the heartbeat-keeper subprocess (Layer 1).
-            #
-            # The keeper is a minimal Python process that touches the daemon
-            # heartbeat file every 2 s.  It is deliberately NOT detached from
-            # the parent console so that it receives CTRL_CLOSE_EVENT (Windows)
-            # or SIGHUP (Unix) when the hosting terminal / IDE window closes.
-            # When the keeper dies the heartbeat goes stale and the watcher
-            # self-exits via _heartbeat_should_shutdown().
-            #
-            # We use python.exe (not pythonw.exe) on Windows so the process
-            # remains a console application attached to the parent console.
-            # -----------------------------------------------------------------
-            if _heartbeat_keeper_proc is None and parent_pid:
-                try:
-                    _keeper_python = sys.executable
-                    if sys.platform == "win32":
-                        _pythonw = os.path.join(
-                            os.path.dirname(sys.executable), "pythonw.exe"
-                        )
-                        if (
-                            os.path.exists(_pythonw)
-                            and os.path.abspath(sys.executable).lower()
-                            == os.path.abspath(_pythonw).lower()
-                        ):
-                            _keeper_python = os.path.join(
-                                os.path.dirname(sys.executable), "python.exe"
-                            )
-                        elif "pythonw" in os.path.basename(sys.executable).lower():
-                            _keeper_python = sys.executable.replace("pythonw", "python")
-                    _keeper_env: dict = {
-                        **os.environ,
-                        "COLLAB_HEARTBEAT_KEEPER_FILE": _daemon_heartbeat,
-                    }
-                    _keeper_argv = [_keeper_python, "-c", _HEARTBEAT_KEEPER_SCRIPT]
-                    import subprocess as _sp
-
-                    _kf: int = 0
-                    if sys.platform == "win32":
-                        # CREATE_NO_WINDOW but NOT DETACHED_PROCESS —
-                        # keep the process attached to the console.
-                        _kf = 0x08000000  # CREATE_NO_WINDOW
-                    _heartbeat_keeper_proc = _sp.Popen(
-                        _keeper_argv,
-                        env=_keeper_env,
-                        stdin=_sp.DEVNULL,
-                        stdout=_sp.DEVNULL,
-                        stderr=_sp.DEVNULL,
-                        creationflags=_kf if sys.platform == "win32" else 0,
-                    )
-                    logger.debug(
-                        "Heartbeat keeper spawned (PID: %d) for %s",
-                        _heartbeat_keeper_proc.pid,
-                        _daemon_heartbeat,
-                    )
-                except Exception as _exc:
-                    logger.debug("Failed to spawn heartbeat keeper: %s", _exc)
         else:
             start_error = DaemonStartError(
                 "Watcher process exited or failed to record PID. "
@@ -2121,6 +2163,7 @@ class LockClient:
 
             # 3) Remove the PID file so stale state is cleared.
             self._remove_pid()
+            self._terminate_heartbeat_keeper()
 
             if killed_any:
                 logger.info(
@@ -2313,6 +2356,9 @@ class LockClient:
             if not watcher_found and not reaped:
                 print("No running watcher found.")
                 logger.info("No running watcher found for this workspace")
+
+            # Reap the daemon-start heartbeat keeper if present.
+            self._terminate_heartbeat_keeper()
 
             # Final cleanup: ensure canonical PID file removed
             try:
@@ -4953,6 +4999,347 @@ class LockClient:
             logger.debug("tasklist query failed for PID %d: %s", pid, e)
 
         return None, None
+
+    @staticmethod
+    def _keeper_pid_path() -> str:
+        """Return the path to the heartbeat-keeper PID metadata file."""
+        return _state_path(".daemon_keeper.pid")
+
+    @staticmethod
+    def _read_keeper_pid_file() -> Optional[Dict[str, Any]]:
+        """Read heartbeat-keeper metadata written by daemon-start."""
+        keeper_path = LockClient._keeper_pid_path()
+        try:
+            if not os.path.exists(keeper_path):
+                return None
+            with open(keeper_path, "r", encoding="utf-8") as fh:
+                raw = fh.read().strip()
+            if not raw:
+                return None
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except Exception as exc:
+            logger.debug("Could not read keeper PID file: %s", exc)
+            return None
+
+    @staticmethod
+    def _write_keeper_pid(
+        keeper_pid: int,
+        *,
+        session_owner_pid: Optional[int] = None,
+        heartbeat_file: Optional[str] = None,
+        session_method: Optional[str] = None,
+    ) -> None:
+        """Persist heartbeat-keeper metadata for daemon-stop / extension cleanup."""
+        meta: Dict[str, Any] = {
+            "pid": int(keeper_pid),
+            "started_at": _safe_now().astimezone(timezone.utc).isoformat(),
+        }
+        if session_owner_pid:
+            meta["session_owner_pid"] = int(session_owner_pid)
+        if heartbeat_file:
+            meta["heartbeat_file"] = heartbeat_file
+        if session_method:
+            meta["session_method"] = session_method
+        keeper_path = LockClient._keeper_pid_path()
+        try:
+            tmp = keeper_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(meta))
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())
+                except Exception:
+                    pass
+            try:
+                os.replace(tmp, keeper_path)
+            except Exception:
+                with open(keeper_path, "w", encoding="utf-8") as fh2:
+                    fh2.write(json.dumps(meta))
+        except OSError as exc:
+            logger.debug("Could not write keeper PID file: %s", exc)
+
+    @staticmethod
+    def _remove_keeper_pid() -> None:
+        """Remove the heartbeat-keeper PID metadata file."""
+        if os.getenv("COLLAB_TEST_MODE") == "1":
+            return
+        try:
+            keeper_path = LockClient._keeper_pid_path()
+            if os.path.exists(keeper_path):
+                os.remove(keeper_path)
+        except OSError:
+            pass
+
+    def _rollback_daemon_start_keeper(self, keeper_proc: Any) -> None:
+        """Reap heartbeat keeper when watcher startup aborts before finishing."""
+        if keeper_proc is not None:
+            try:
+                keeper_alive = keeper_proc.poll() is None
+            except Exception:
+                keeper_alive = False
+            if keeper_alive:
+                logger.debug(
+                    "Rolling back heartbeat keeper PID %d after aborted daemon-start",
+                    keeper_proc.pid,
+                )
+                self._terminate_process(keeper_proc.pid)
+        self._terminate_heartbeat_keeper()
+
+    def _terminate_heartbeat_keeper(self) -> None:
+        """Stop the daemon-start heartbeat keeper if one is recorded."""
+        meta = self._read_keeper_pid_file()
+        if not meta:
+            return
+        keeper_pid = meta.get("pid")
+        if isinstance(keeper_pid, int) and keeper_pid > 0:
+            if self._is_process_alive(keeper_pid):
+                logger.debug("Terminating heartbeat keeper PID %d", keeper_pid)
+                self._terminate_process(keeper_pid)
+        self._remove_keeper_pid()
+
+    @staticmethod
+    def _resolve_keeper_python() -> str:
+        """Return a windowless Python interpreter for the heartbeat keeper."""
+        keeper_python = sys.executable
+        if sys.platform == "win32":
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            if os.path.exists(pythonw):
+                keeper_python = pythonw
+            else:
+                base = os.path.basename(sys.executable)
+                base_lower = base.lower()
+                if base_lower.startswith("python") and not base_lower.startswith(
+                    "pythonw"
+                ):
+                    pythonw_base = "pythonw" + base[6:]
+                    candidate = os.path.join(
+                        os.path.dirname(sys.executable), pythonw_base
+                    )
+                    if os.path.exists(candidate):
+                        keeper_python = candidate
+        return keeper_python
+
+    def _spawn_heartbeat_keeper(
+        self, heartbeat_file: str, session_owner_pid: int
+    ) -> Optional[Any]:
+        """Spawn a detached keeper that touches *heartbeat_file* while session lives."""
+        try:
+            import subprocess as _sp
+
+            keeper_env: dict = {
+                **os.environ,
+                "COLLAB_HEARTBEAT_KEEPER_FILE": heartbeat_file,
+                "COLLAB_HEARTBEAT_SESSION_PID": str(session_owner_pid),
+            }
+            keeper_argv = [
+                self._resolve_keeper_python(),
+                "-c",
+                _HEARTBEAT_KEEPER_SCRIPT,
+            ]
+            creation_flags = 0
+            if sys.platform == "win32":
+                # pythonw.exe + CREATE_NO_WINDOW — no visible console flash.
+                # Lifetime is governed by session-PID polling inside the keeper.
+                creation_flags = 0x08000000  # CREATE_NO_WINDOW
+            proc = _sp.Popen(
+                keeper_argv,
+                env=keeper_env,
+                stdin=_sp.DEVNULL,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                creationflags=creation_flags,
+            )
+            logger.debug(
+                "Heartbeat keeper spawned (PID: %d) session_owner=%d file=%s",
+                proc.pid,
+                session_owner_pid,
+                heartbeat_file,
+            )
+            return proc
+        except Exception as exc:
+            logger.debug("Failed to spawn heartbeat keeper: %s", exc)
+            return None
+
+    @staticmethod
+    def _confirm_heartbeat_keeper(keeper_proc: Any, heartbeat_file: str) -> bool:
+        """Return True when the keeper is alive and has created the heartbeat file."""
+        deadline = time.time() + _HEARTBEAT_KEEPER_CONFIRM_SECONDS
+        while time.time() < deadline:
+            try:
+                if keeper_proc.poll() is not None:
+                    return False
+            except Exception:
+                return False
+            if os.path.exists(heartbeat_file):
+                return True
+            time.sleep(0.05)
+        return False
+
+    @staticmethod
+    def _is_session_owner_candidate(name_lower: str) -> bool:
+        """Return True when *name_lower* looks like a per-window IDE process."""
+        if name_lower in (
+            "cursor.exe",
+            "code.exe",
+            "antigravity.exe",
+            "vscodium.exe",
+            "node.exe",
+        ):
+            return True
+        if "helper" in name_lower and any(
+            token in name_lower for token in ("cursor", "code", "electron")
+        ):
+            return True
+        return False
+
+    def _get_session_heartbeat_owner_pid(
+        self, ide_parent_pid: Optional[int]
+    ) -> Tuple[Optional[int], str]:
+        """Resolve a per-window process for daemon-start heartbeat ownership.
+
+        Unlike ``_get_parent_ide_pid()`` (shared ``VSCODE_PID``), this targets processes
+        whose lifetime tracks a single IDE window — e.g. a Cursor utility/renderer child
+        — so closing one Agents worktree window reaps the watcher without quitting the
+        entire IDE.
+
+        Override explicitly via ``COLLAB_SESSION_PID`` when auto-detection is
+        insufficient (documented for integrators).
+        """
+        explicit = os.getenv("COLLAB_SESSION_PID")
+        if explicit and explicit.isdigit():
+            pid = int(explicit)
+            if self._is_process_alive(pid):
+                logger.debug("Session heartbeat owner from COLLAB_SESSION_PID: %d", pid)
+                return pid, "collab_session_pid_env"
+
+        try:
+            current_pid: Optional[int] = os.getppid()
+            visited: set[int] = set()
+            while current_pid and current_pid not in visited and len(visited) < 25:
+                visited.add(current_pid)
+                if current_pid == ide_parent_pid:
+                    name, ppid = self._get_process_info_local(current_pid)
+                    if not ppid or ppid == current_pid:
+                        break
+                    current_pid = ppid
+                    continue
+
+                name, ppid = self._get_process_info_local(current_pid)
+                if name:
+                    name_lower = name.lower()
+                    if (
+                        name_lower not in _SESSION_CHAIN_SKIP_EXE_NAMES
+                        and self._is_session_owner_candidate(name_lower)
+                        and self._is_process_alive(current_pid)
+                    ):
+                        logger.debug(
+                            "Session heartbeat owner via process tree: %s (PID %d)",
+                            name,
+                            current_pid,
+                        )
+                        return current_pid, "process_tree_session"
+
+                if not ppid or ppid == current_pid:
+                    break
+                current_pid = ppid
+        except Exception as exc:
+            logger.debug("Session owner process-tree walk failed: %s", exc)
+
+        workspace_pid, workspace_method = self._session_owner_from_workspace_cmdline(
+            ide_parent_pid
+        )
+        if workspace_pid:
+            return workspace_pid, workspace_method
+
+        return None, "unknown"
+
+    def _session_owner_from_workspace_cmdline(
+        self, ide_parent_pid: Optional[int]
+    ) -> Tuple[Optional[int], str]:
+        """Fallback: match a per-window IDE process by workspace path in its cmdline.
+
+        When the ancestor chain is only ``terminal → shared VSCODE_PID`` (no
+        intermediate utility/renderer), walk still fails but the window-scoped process
+        often has ``VSCODE_CWD`` or the project root in its command line.
+        """
+        markers: List[str] = []
+        for env_key in ("VSCODE_CWD", "CURSOR_WORKSPACE_FOLDER"):
+            raw = os.getenv(env_key)
+            if raw:
+                markers.append(os.path.normcase(os.path.abspath(raw)))
+        project_root = os.path.normcase(os.path.abspath(_PROJECT_ROOT))
+        if project_root not in markers:
+            markers.append(project_root)
+        if not markers:
+            return None, "unknown"
+
+        try:
+            import psutil
+        except ImportError:
+            logger.debug("psutil unavailable for workspace cmdline session scan")
+            return None, "unknown"
+
+        best_pid: Optional[int] = None
+        best_depth = 10_000
+        current_pid = os.getpid()
+
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                pid = proc.info.get("pid")
+                if not isinstance(pid, int) or pid <= 0:
+                    continue
+                if ide_parent_pid and pid == ide_parent_pid:
+                    continue
+                name = (proc.info.get("name") or "").lower()
+                if not self._is_session_owner_candidate(name):
+                    continue
+                if not self._is_process_alive(pid):
+                    continue
+                cmd_parts = proc.info.get("cmdline") or []
+                cmdline = os.path.normcase(" ".join(str(part) for part in cmd_parts))
+                if not any(marker in cmdline for marker in markers):
+                    continue
+                depth = self._ancestor_depth_between(pid, current_pid)
+                if depth is None:
+                    continue
+                if depth < best_depth:
+                    best_depth = depth
+                    best_pid = pid
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        if best_pid:
+            logger.debug(
+                "Session heartbeat owner via workspace cmdline match (PID %d)",
+                best_pid,
+            )
+            return best_pid, "workspace_cmdline_match"
+        return None, "unknown"
+
+    @staticmethod
+    def _ancestor_depth_between(
+        ancestor_pid: int, descendant_pid: int
+    ) -> Optional[int]:
+        """Return hop count from *descendant_pid* up to *ancestor_pid*, or None."""
+        try:
+            import psutil
+        except ImportError:
+            return None
+
+        depth = 0
+        current: Optional[int] = descendant_pid
+        visited: set[int] = set()
+        while current and current not in visited and depth < 25:
+            if current == ancestor_pid:
+                return depth
+            visited.add(current)
+            try:
+                current = psutil.Process(current).ppid()
+            except Exception:
+                return None
+            depth += 1
+        return None
 
     def _get_parent_ide_pid(self) -> Tuple[Optional[int], Optional[str]]:
         """Identify the IDE or terminal process that owns this session.
