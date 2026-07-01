@@ -249,6 +249,34 @@ def _get_state_dir() -> str:
             return os.getcwd()
 
 
+def _state_dir_for_root(root: str) -> str:
+    """Return the runtime state directory for an ARBITRARY project root.
+
+    Mirrors the non-test hashing used by :func:`_get_state_dir` so a specific worktree's
+    isolated namespace (heartbeat, PID, stop-request, keeper) can be resolved from any
+    process. Used by ``worktree-unregister`` (#168) to target a single worktree's
+    watcher without disturbing watchers in other worktrees.
+
+    ``COLLAB_STATE_DIR`` precedence is intentional and required for correctness: when it
+    is set, the running watcher's :func:`_get_state_dir` uses that exact directory, so
+    resolution here MUST use the same one or teardown would target the wrong namespace.
+    Setting a single ``COLLAB_STATE_DIR`` therefore collapses all roots onto one shared
+    namespace (only one daemon at a time) — it is a deliberate test/custom-deployment
+    knob and is mutually exclusive with per-worktree isolation. In normal use it is
+    unset and every worktree hashes its own root into a distinct, isolated directory, so
+    this is never a multi-worktree hazard in production.
+    """
+    state_dir = _read_clean_env_path("COLLAB_STATE_DIR")
+    if state_dir:
+        return os.path.abspath(str(state_dir))
+    import hashlib as _hashlib
+
+    # Match _get_state_dir(): normalize slashes/case for cross-runtime parity.
+    norm_root = os.path.abspath(root).replace("/", "\\").lower().rstrip("\\")
+    h = _hashlib.sha1(norm_root.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    return os.path.abspath(os.path.join(tempfile.gettempdir(), f"collab_runtime_{h}"))
+
+
 def _resolve_runtime_root(project_root: str) -> str:
     """Resolve persistent runtime root for the current project.
 
@@ -2205,8 +2233,14 @@ class LockClient:
                     proc.pid,
                 )
 
-    def daemon_stop(self) -> None:
-        """Stop the running watcher daemon."""
+    def daemon_stop(self) -> bool:
+        """Stop the running watcher daemon.
+
+        Returns ``True`` when a live watcher (or an orphaned ``collab.exe`` launcher
+        wrapper) was found and reaped, ``False`` when nothing was running. The return
+        value lets callers such as :meth:`worktree_unregister` report an accurate result
+        and CLI exit code.
+        """
         # Ensure file-based collab logging is configured for CLI actions,
         # then temporarily prevent collab.* logs from propagating to the root
         # console handler so INFO-level records produced by this command are
@@ -2249,7 +2283,7 @@ class LockClient:
                         )
                     )
                     self._remove_pid()
-                    return
+                    return False
 
                 # Attempt to discover live watcher processes related to this repo.
                 # Note: even when no Python watcher is found we still fall through
@@ -2398,11 +2432,187 @@ class LockClient:
                 self._remove_pid()
             except Exception:
                 pass
+
+            return watcher_found or bool(reaped)
         finally:
             try:
                 collab_logger.propagate = _old_prop
             except Exception:
                 pass
+
+    def worktree_unregister(self, worktree_path: str) -> bool:
+        """Stop the watcher + heartbeat keeper for ONE specific worktree.
+
+        Deterministic teardown primitive (#168). Targets only the given
+        worktree's isolated state namespace, so finishing work in a worktree
+        (for example switching chats in a Cursor Agents window) can release that
+        worktree's file handles — letting the folder be deleted on Windows —
+        without affecting watchers running in other worktrees. Safe to run from
+        any directory and idempotent: clears stale markers and returns ``False``
+        when no live watcher is found.
+        """
+        raw = str(worktree_path or "").strip()
+        if not raw:
+            print("✗ worktree-unregister requires a worktree path.")
+            return False
+        target = os.path.abspath(os.path.expanduser(raw))
+
+        # Current worktree → reuse the fully battle-tested in-process stop path
+        # (handles watcher discovery, launcher reaping, and PID cleanup). Its
+        # boolean result flows straight through so the return value / exit code
+        # is accurate whether or not a watcher was actually running.
+        if os.path.normcase(target) == os.path.normcase(os.path.abspath(_PROJECT_ROOT)):
+            return self.daemon_stop()
+
+        state_dir = _state_dir_for_root(target)
+        pid_file = os.path.join(state_dir, agent_identity.daemon_pid_basename(None))
+        stopped = self._stop_worktree_namespace(state_dir, pid_file, target)
+        if stopped:
+            print(f"✅ Stopped watcher for worktree: {target}")
+        else:
+            print(f"No running watcher found for worktree: {target}")
+        return stopped
+
+    def _stop_worktree_namespace(
+        self, state_dir: str, pid_file: str, target_root: str
+    ) -> bool:
+        """Signal + reap the watcher/keeper recorded in a specific state namespace.
+
+        Writes a scoped ``.stop_request`` (token-matched when possible) so the target
+        watcher shuts down gracefully, then force-terminates it and its heartbeat keeper
+        if still alive. Only touches files/PIDs recorded in *state_dir* — it never
+        performs global process reaping, so sibling worktrees are unaffected.
+        """
+        watcher_pid: Optional[int] = None
+        token: Optional[str] = None
+        try:
+            if os.path.isfile(pid_file):
+                with open(pid_file, "r", encoding="utf-8") as fh:
+                    meta = json.loads(fh.read().strip() or "{}")
+                if isinstance(meta, dict):
+                    raw_pid = meta.get("pid")
+                    watcher_pid = int(raw_pid) if raw_pid else None
+                    tok = meta.get("token")
+                    token = str(tok) if tok else None
+        except Exception as exc:
+            logger.debug(
+                "worktree-unregister: unreadable PID file %s: %s", pid_file, exc
+            )
+
+        # Write a scoped stop request the target watcher polls for in its own
+        # state dir (token-matched to avoid PID-reuse false positives).
+        try:
+            os.makedirs(state_dir, exist_ok=True)
+            if token:
+                payload = f"TOKEN:{token}"
+            elif watcher_pid:
+                payload = f"PID:{watcher_pid}"
+            else:
+                payload = "PID:0"
+            stop_file = os.path.join(state_dir, ".stop_request")
+            with open(stop_file, "w", encoding="utf-8") as sf:
+                sf.write(payload)
+                sf.flush()
+                try:
+                    os.fsync(sf.fileno())
+                except Exception:
+                    pass
+            logger.info(
+                "worktree-unregister: wrote stop request %s (%s) for %s",
+                stop_file,
+                payload,
+                target_root,
+            )
+        except Exception as exc:
+            logger.debug("worktree-unregister: failed to write stop request: %s", exc)
+
+        found = bool(watcher_pid and self._is_process_alive(watcher_pid))
+        if found and watcher_pid is not None:
+            # Wait ~8s for graceful self-exit, then force-terminate.
+            for _ in range(16):
+                if not self._is_process_alive(watcher_pid):
+                    break
+                time.sleep(0.5)
+            if self._is_process_alive(watcher_pid):
+                logger.info(
+                    "worktree-unregister: force-terminating watcher PID %d",
+                    watcher_pid,
+                )
+                self._terminate_process(int(watcher_pid))
+
+        # Reap the heartbeat keeper recorded in this namespace, if any.
+        self._terminate_keeper_in_dir(state_dir)
+
+        # Defense-in-depth (Windows): reap orphaned ``collab.exe`` /
+        # ``collab-watcher.exe`` console-script wrappers bound to THIS worktree's
+        # namespace. The Python watcher + keeper are the primary file-handle
+        # blockers, but a legacy wrapper spawned by an older IDE extension can
+        # outlive them and keep the venv ``.exe`` image locked. This closes the
+        # cross-worktree parity gap with :meth:`daemon_stop`. A reaped wrapper
+        # counts as a stop so the caller reports success accurately.
+        if self._reap_launchers_in_namespace(state_dir, pid_file, target_root):
+            found = True
+
+        # Remove the PID marker so status/start no longer sees a stale watcher.
+        try:
+            if os.path.isfile(pid_file):
+                os.remove(pid_file)
+        except OSError as exc:
+            logger.debug("worktree-unregister: could not remove PID file: %s", exc)
+
+        return found
+
+    def _reap_launchers_in_namespace(
+        self, state_dir: str, pid_file: str, target_root: str
+    ) -> int:
+        """Reap orphaned ``collab.exe`` launcher wrappers for ONE worktree namespace.
+
+        Cross-worktree teardown (#168) cannot call :meth:`_reap_collab_launchers`
+        directly: that method matches wrappers against the *module-global*
+        namespace (``PID_FILE`` / ``_PROJECT_ROOT`` / ``_COLLAB_ROOT``) of the
+        current process, which points at the caller's own worktree. This wrapper
+        temporarily retargets those globals at *target_root* so the existing,
+        strictly ``--pid-file``-scoped matcher only ever reaps wrappers that
+        belong to the target worktree — sibling worktrees are never touched. The
+        globals are restored unconditionally, even on error, so the caller's own
+        namespace is left exactly as it was. Returns the number of wrappers
+        reaped (always ``0`` off Windows or in test mode).
+        """
+        global PID_FILE, _PROJECT_ROOT, _COLLAB_ROOT
+        saved = (PID_FILE, _PROJECT_ROOT, _COLLAB_ROOT)
+        try:
+            PID_FILE = pid_file
+            _PROJECT_ROOT = target_root
+            _COLLAB_ROOT = state_dir
+            return self._reap_collab_launchers()
+        except Exception as exc:
+            logger.debug("worktree-unregister: launcher reap failed: %s", exc)
+            return 0
+        finally:
+            PID_FILE, _PROJECT_ROOT, _COLLAB_ROOT = saved
+
+    def _terminate_keeper_in_dir(self, state_dir: str) -> None:
+        """Terminate + clear the heartbeat keeper recorded in *state_dir*."""
+        keeper_path = os.path.join(state_dir, ".daemon_keeper.pid")
+        try:
+            if not os.path.isfile(keeper_path):
+                return
+            with open(keeper_path, "r", encoding="utf-8") as fh:
+                meta = json.loads(fh.read().strip() or "{}")
+            keeper_pid = meta.get("pid") if isinstance(meta, dict) else None
+            if isinstance(keeper_pid, int) and keeper_pid > 0:
+                if self._is_process_alive(keeper_pid):
+                    logger.debug(
+                        "worktree-unregister: terminating heartbeat keeper PID %d",
+                        keeper_pid,
+                    )
+                    self._terminate_process(keeper_pid)
+            try:
+                os.remove(keeper_path)
+            except OSError:
+                pass
+        except Exception as exc:
+            logger.debug("worktree-unregister: keeper reap failed: %s", exc)
 
     def daemon_status(self) -> bool:
         """Check if the watcher daemon is running.
@@ -3333,6 +3543,26 @@ class LockClient:
                     # binding.
                     # -----------------------------------------------------------------
                     if _WORKTREE_VALIDITY_CHECK_INTERVAL_SECONDS > 0:
+                        # Layer 3 (#168) — prompt worktree-gone reap. A cheap
+                        # per-iteration existence check: when the folder or its
+                        # ``.git`` marker has vanished (deleted via OS file
+                        # explorer or ``git worktree remove``), confirm with the
+                        # authoritative validity check and self-exit within one
+                        # poll interval instead of waiting for the ~60s Layer-2
+                        # cycle — releasing the directory handle promptly so the
+                        # folder can be deleted (critical on Windows, where a
+                        # live watcher pins the ``.venv``).
+                        _root_present = os.path.isdir(_PROJECT_ROOT) and os.path.exists(
+                            os.path.join(_PROJECT_ROOT, ".git")
+                        )
+                        if not _root_present and not self._verify_worktree_valid():
+                            logger.info(
+                                "Worktree %s no longer present. Shutting down...",
+                                _PROJECT_ROOT,
+                            )
+                            self._graceful_shutdown(reason="worktree_gone")
+                            return
+
                         _now_ts = time.time()
                         if (
                             _now_ts - _last_worktree_check

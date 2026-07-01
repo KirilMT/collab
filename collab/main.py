@@ -202,7 +202,32 @@ def _run_cli() -> None:
     ds.add_argument("--open-dashboard", action="store_true")
 
     # daemon-stop
-    sub.add_parser("daemon-stop", help="Stop the watcher daemon")
+    dstop = sub.add_parser("daemon-stop", help="Stop the watcher daemon")
+    dstop.add_argument(
+        "--worktree",
+        dest="worktree",
+        default=None,
+        help=(
+            "Stop the watcher for a SPECIFIC worktree path (from any directory) "
+            "instead of the current one. Useful when finishing a worktree/chat "
+            "so its folder can be deleted."
+        ),
+    )
+
+    # worktree-unregister (deterministic per-worktree teardown, #168)
+    wtu = sub.add_parser(
+        "worktree-unregister",
+        help=(
+            "Stop the watcher + heartbeat keeper for a specific worktree so its "
+            "folder can be removed (no effect on other worktrees)"
+        ),
+    )
+    wtu.add_argument(
+        "worktree_path",
+        nargs="?",
+        default=None,
+        help="Path to the worktree to unregister (defaults to current directory)",
+    )
 
     # daemon-status
     sub.add_parser("daemon-status", help="Check watcher daemon status")
@@ -364,7 +389,11 @@ def _run_cli() -> None:
         _print_summary(install_agent_hooks(force=getattr(args, "force", False)))
         sys.exit(0)
 
-    local_only = args.command in ("daemon-status", "daemon-stop")
+    local_only = args.command in (
+        "daemon-status",
+        "daemon-stop",
+        "worktree-unregister",
+    )
 
     # ``claim`` always runs as an AI agent. Enable agent mode so a stable agent
     # identity is generated/persisted even when the caller (IDE hook) did not set
@@ -412,6 +441,7 @@ def _run_cli() -> None:
         "acquire-batch",
         "release-batch",
         "daemon-stop",
+        "worktree-unregister",
         "reconcile",
         "history",
         "history-prune",
@@ -579,7 +609,18 @@ def _run_cli() -> None:
             # Suppress collab.* info logs from echoing to the terminal while
             # performing the stop action (they will still be written to
             # logs/collab.log).
-            client.daemon_stop()
+            worktree = getattr(args, "worktree", None)
+            if worktree:
+                client.worktree_unregister(worktree)
+            else:
+                client.daemon_stop()
+
+        elif args.command == "worktree-unregister":
+            # Deterministic per-worktree teardown (#168). Defaults to the current
+            # directory when no path is supplied.
+            target = getattr(args, "worktree_path", None) or os.getcwd()
+            ok = client.worktree_unregister(target)
+            sys.exit(0 if ok else 1)
 
         elif args.command == "daemon-status":
             running = client.daemon_status()

@@ -184,3 +184,25 @@ All GitHub Actions (tests, linting) **must pass** before merging.
 
 **Step 6.2: Merge**
 Once approved and checks pass, click **"Merge pull request"**.
+
+---
+
+### 7. Cleaning Up Worktrees (Multi-Chat / Parallel Development)
+
+If you develop with Git worktrees — for example a separate worktree per Cursor
+Agents chat — each worktree runs its **own** background lock watcher. Cursor has
+**no per-chat teardown event**, so that watcher keeps running (holding the
+folder/venv open, blocking deletion on Windows) until you release it. When you
+finish work in a worktree, do one of the following:
+
+```sh
+# Preferred — deterministic, works from any directory, idempotent:
+collab worktree-unregister <path-to-worktree>
+# (equivalent: collab daemon-stop --worktree <path-to-worktree>)
+
+# Or just remove the worktree — the watcher auto-exits within one poll interval:
+git worktree remove <path-to-worktree>
+```
+
+Closing the whole Agents window also cleans up everything that window launched.
+See `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup" for the full policy.
