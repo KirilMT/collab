@@ -162,10 +162,13 @@ alter publication supabase_realtime add table file_locks;
 -- ---------------------------------------------------------------------------
 -- Atomic lock acquisition function (RPC)
 -- ---------------------------------------------------------------------------
--- This function attempts to insert a lock for file_path. Same-developer
--- renewal is permitted when the agent identity matches (or the caller is the
--- human taking over any agent lock).  Different agents of the same developer
--- now conflict so concurrent worktree edits are surfaced at edit time (#150).
+-- This function attempts to insert a lock for file_path. Attribution is
+-- STICKY toward the AI agent (#169): an agent claim upgrades/renews the lock to
+-- ``origin=agent``, and a human acquire (background watcher OR explicit commit)
+-- never downgrades an existing agent lock. Same-developer renewal always
+-- succeeds EXCEPT when a *different* agent of the same developer already holds
+-- the file -- that still conflicts so concurrent worktree edits are surfaced at
+-- edit time (#150/#153). Cross-developer acquisition always conflicts.
 --
 -- Returns status, lock_token, owner, agent_id, agent_label, agent_kind, and
 -- the *previous* branch name (existing_branch) when a same-developer renewal
@@ -220,18 +223,52 @@ begin
   )
   on conflict (file_path) do update
     set developer_id = excluded.developer_id,
-        branch_name = excluded.branch_name,
-        lock_token = excluded.lock_token,
-        reason = excluded.reason,
-        acquired_at = now(),
+        branch_name  = excluded.branch_name,
+        lock_token   = excluded.lock_token,
         is_ephemeral = excluded.is_ephemeral,
-        agent_id = excluded.agent_id,
-        agent_label = excluded.agent_label,
-        origin = excluded.origin,
-        agent_kind = excluded.agent_kind
+        -- STICKY ATTRIBUTION (#169): an agent claim upgrades/renews the lock to
+        -- ``origin=agent``; a human acquire (background watcher OR explicit
+        -- commit) NEVER downgrades an existing agent lock. This makes "who
+        -- edited" atomic and race-free at the only serialization point (the
+        -- upsert), instead of relying on client-side timing that lost the race.
+        agent_id = case
+                     when excluded.agent_id is not null then excluded.agent_id
+                     else file_locks.agent_id
+                   end,
+        origin = case
+                   when excluded.agent_id is not null then 'agent'
+                   when file_locks.agent_id is not null then file_locks.origin
+                   else coalesce(excluded.origin, 'human')
+                 end,
+        agent_label = case
+                        when excluded.agent_id is not null then excluded.agent_label
+                        else file_locks.agent_label
+                      end,
+        agent_kind = case
+                       when excluded.agent_id is not null then excluded.agent_kind
+                       else file_locks.agent_kind
+                     end,
+        -- Preserve the AI-agent reason when a human auto-lock renews an agent
+        -- lock (do not overwrite "AI agent edit" with "Auto-Watch Sync").
+        reason = case
+                   when excluded.agent_id is null
+                        and file_locks.agent_id is not null
+                     then file_locks.reason
+                   else excluded.reason
+                 end,
+        -- Never reset acquisition time on renewal: durations stay honest and a
+        -- background poll cannot make a long-held lock look brand-new (#170).
+        acquired_at = file_locks.acquired_at
     where file_locks.developer_id = excluded.developer_id
-      and (excluded.agent_id is null  -- human always wins
-           or file_locks.agent_id is not distinct from excluded.agent_id)
+      -- Same developer may renew/upgrade their own lock. The ONLY same-developer
+      -- block is cross-agent: two DIFFERENT agents of one developer editing the
+      -- same file still conflict (edit-time signal from #153). Cross-developer
+      -- conflicts are blocked by the developer_id equality above.
+      and not (
+        file_locks.agent_id is not null
+        and excluded.agent_id is not null
+        and file_locks.agent_id is distinct from excluded.agent_id
+      )
   returning file_locks.lock_token, file_locks.developer_id, file_locks.agent_id,
             file_locks.agent_label, file_locks.agent_kind into rec;
 

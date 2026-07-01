@@ -1208,12 +1208,21 @@ class LockClient:
         if isinstance(data, list) and len(data) > 0:
             row = data[0]
             if row.get("status") == "ok":
+                # Sticky attribution (#169): the RPC returns the *stored* owner
+                # after the upsert. When a human auto-lock renewed an existing
+                # agent lock, the row stays ``origin=agent`` — reflect that in the
+                # log instead of claiming a human "Auto-Watch Sync" reason.
+                stored_agent_id = row.get("agent_id")
+                if stored_agent_id and not self.agent_id:
+                    effective_reason = f"preserved AI agent lock ({reason or 'sync'})"
+                else:
+                    effective_reason = reason or "No reason"
                 logger.info(
                     "🔒 [LOCKED] %s — @%s (branch: %s, reason: %s)",
                     self._normalize_file_path(file_path),
                     self.developer_id,
                     branch or "main",
-                    reason or "No reason",
+                    effective_reason,
                 )
                 # Cross-branch advisory: warn when renewing a lock that was
                 # previously held by the same developer on a *different* branch.

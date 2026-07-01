@@ -76,9 +76,10 @@ Lock ownership is keyed on **`(developer_id, agent_id)`**:
 | `agent_kind`   | AI runtime family for display (`cursor`, `claude-code`, `copilot`, ...)  |
 
 When `agent_id` is `NULL`, behavior matches the original human-only model. The same `developer_id`
-may re-acquire any of their own locks regardless of `agent_id` (human commit after agent edit,
-agent claim after human auto-lock, etc.). A human may also `force-release` any lock held under their
-own `developer_id` (including other agents' locks) without an admin key.
+may re-acquire any of their own locks, but attribution is **sticky toward the agent** (#169): an agent
+claim after a human auto-lock upgrades the lock to `origin=agent`, while a human commit after an agent
+edit succeeds **without** downgrading it back to `human`. A human may also `force-release` any lock held
+under their own `developer_id` (including other agents' locks) without an admin key.
 
 ### Conflict Prevention and Lock Lifecycle
 
@@ -113,10 +114,14 @@ ambient IDE environment variables:
   `COLLAB_WATCHER_AGENT_ID`.
 - An **AI agent** claims the files it edits via `collab claim` (or an IDE edit hook), producing
   `origin=agent` with a unique `agent_id`.
-- The `acquire_lock` RPC lets the same `developer_id` **take over** their own lock regardless of
-  `agent_id` (e.g. agent claim after human auto-lock, or human pre-commit acquire after agent edit).
-  The background watcher still **skips** files already held by the developer's agent so bulk auto-watch
-  does not downgrade attribution; it cleans up the developer's agent locks once the work is pushed.
+- **Sticky attribution (#169):** the `acquire_lock` RPC keeps ownership atomic and race-free. An
+  agent claim **upgrades/renews** the lock to `origin=agent`; a human acquire — whether the background
+  watcher **or** an explicit pre-commit/commit — **never downgrades** an existing agent lock (it keeps
+  `origin`, `agent_id`, `agent_label`, `agent_kind`, and the AI-agent `reason`). The same `developer_id`
+  can always renew their own lock; the only same-developer conflict is **cross-agent** (two different
+  agents editing one file — the #150/#153 edit-time signal). This removes the previous dependence on
+  client-side timing (`dev_other_locked`), which lost the race and mislabelled agent edits as `User`.
+  A renewal also never resets `acquired_at`, so lock durations stay honest.
 
 The dashboard renders `origin`/`agent_kind`/`agent_label` as a friendly **"AI Agent"** badge (runtime
 icon + task) for agent locks and a **"User"** chip for human locks. The raw `agent_id` is shown only
