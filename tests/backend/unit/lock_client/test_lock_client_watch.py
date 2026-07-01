@@ -1739,8 +1739,7 @@ def test_remove_keeper_pid_oserror_swallowed(tmp_path, monkeypatch):
 
 def test_resolve_keeper_python_prefers_pythonw_on_windows(monkeypatch):
     """_resolve_keeper_python prefers pythonw.exe for a windowless keeper."""
-    if mod.sys.platform != "win32":
-        monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(mod.sys, "platform", "win32")
     venv = os.path.join("C:", os.sep, "venv", "Scripts")
     python = os.path.join(venv, "python.exe")
     pythonw = os.path.join(venv, "pythonw.exe")
@@ -1755,13 +1754,17 @@ def test_resolve_keeper_python_prefers_pythonw_on_windows(monkeypatch):
     monkeypatch.setattr(mod.sys, "executable", pythonw)
     assert mod.LockClient._resolve_keeper_python() == pythonw
 
-    monkeypatch.setattr(mod.sys, "executable", r"C:\tools\python3.exe")
+    # Use os.path.join so paths parse on Linux CI (POSIX) and Windows alike.
+    tools = os.path.join("C:", os.sep, "tools")
+    python3 = os.path.join(tools, "python3.exe")
+    pythonw3 = os.path.join(tools, "pythonw3.exe")
+    monkeypatch.setattr(mod.sys, "executable", python3)
     monkeypatch.setattr(
         mod.os.path,
         "exists",
-        lambda p: p == r"C:\tools\pythonw3.exe",
+        lambda p: p == pythonw3,
     )
-    assert mod.LockClient._resolve_keeper_python() == r"C:\tools\pythonw3.exe"
+    assert mod.LockClient._resolve_keeper_python() == pythonw3
 
 
 def test_spawn_heartbeat_keeper_spawn_failure(monkeypatch, tmp_path):
