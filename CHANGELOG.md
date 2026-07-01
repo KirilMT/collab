@@ -11,11 +11,10 @@ and this project adheres to
 
 ## [0.9.3](https://github.com/KirilMT/collab/compare/v0.9.2...v0.9.3) (2026-07-01)
 
-
 ### Bug Fixes
 
-* **daemon:** prevent orphaned watchers when Agents/worktree IDE windows close ([#166](https://github.com/KirilMT/collab/issues/166)) ([6ed3553](https://github.com/KirilMT/collab/commit/6ed3553416b73301c1add3e9676490b2abfc8ae2))
-* **locks:** sticky agent attribution, scratch-file ignores, and self-conflict silence ([#174](https://github.com/KirilMT/collab/issues/174)) ([0e2419f](https://github.com/KirilMT/collab/commit/0e2419f353a5a15cd292e642b26a58cffe97701d))
+- **daemon:** prevent orphaned watchers when Agents/worktree IDE windows close ([#166](https://github.com/KirilMT/collab/issues/166)) ([6ed3553](https://github.com/KirilMT/collab/commit/6ed3553416b73301c1add3e9676490b2abfc8ae2))
+- **locks:** sticky agent attribution, scratch-file ignores, and self-conflict silence ([#174](https://github.com/KirilMT/collab/issues/174)) ([0e2419f](https://github.com/KirilMT/collab/commit/0e2419f353a5a15cd292e642b26a58cffe97701d))
 
 ## [0.9.2](https://github.com/KirilMT/collab/compare/v0.9.1...v0.9.2) (2026-06-28)
 
