@@ -145,3 +145,61 @@ def test_reconcile_releases_stale_claims(monkeypatch):
     # open) nor c.py (another developer).
     assert client.reconcile_pr_claims() == 1
     assert released == ["a.py"]
+
+
+# --- probe_claim_columns / claims_supported ---------------------------------
+
+
+def test_probe_claim_columns_true(monkeypatch):
+    from ._helpers import FakeClient
+
+    assert mod.probe_claim_columns(FakeClient(FakeResponse(data=[]))) is True
+
+
+def test_probe_claim_columns_false_on_error():
+    class Raising:
+        def table(self, *a, **k):
+            return self
+
+        def select(self, *a, **k):
+            return self
+
+        def limit(self, *a, **k):
+            return self
+
+        def execute(self):
+            raise RuntimeError("column is_pr_claim does not exist")
+
+    assert mod.probe_claim_columns(Raising()) is False
+
+
+def test_claims_supported_true_cached(monkeypatch):
+    client = _client(monkeypatch, FakeResponse(data=[]))
+    calls = {"n": 0}
+
+    def counting(_c):
+        calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(mod, "probe_claim_columns", counting)
+    assert client.claims_supported() is True
+    assert client.claims_supported() is True  # cached
+    assert calls["n"] == 1
+
+
+def test_claims_supported_local_only_is_false(monkeypatch):
+    monkeypatch.setattr(
+        mod, "probe_claim_columns", lambda _c: (_ for _ in ()).throw(AssertionError())
+    )
+    client = mod.LockClient(developer_id="dev_a", local_only=True)
+    assert client.claims_supported() is False
+
+
+def test_claims_supported_probe_exception_is_false(monkeypatch):
+    client = _client(monkeypatch, FakeResponse(data=[]))
+
+    def boom(_c):
+        raise RuntimeError("probe blew up")
+
+    monkeypatch.setattr(mod, "probe_claim_columns", boom)
+    assert client.claims_supported() is False

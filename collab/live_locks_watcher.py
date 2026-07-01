@@ -782,37 +782,213 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
             logger.exception("Failed to acquire lock for %s", fp)
 
 
-def _process_releases(client, released: set[str]) -> None:
+def _fetch_developer_claim_paths(client) -> set[str]:
+    """Return the file paths this developer currently holds as PR claims.
+
+    A running watcher uses this so it never deletes a PR claim (``is_pr_claim=true``)
+    that was retained on push. Returns an empty set on any error or when the claim
+    columns are absent (pre-migration), so the caller safely degrades to the ordinary
+    release behavior.
+    """
+    if not DEVELOPER_ID:
+        return set()
+    try:
+        res = (
+            client.table("file_locks")
+            .select("file_path")
+            .eq("developer_id", DEVELOPER_ID)
+            .eq("is_pr_claim", True)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+    except Exception as exc:
+        logger.debug("Failed to fetch PR claims for release guard: %s", exc)
+        return set()
+    return {row.get("file_path", "") for row in rows if row.get("file_path")}
+
+
+def _promote_lock_to_claim(client, file_path: str, branch: Optional[str]) -> bool:
+    """Promote this developer's lock on ``file_path`` to a persistent PR claim.
+
+    Sets ``is_pr_claim=true`` (tied to ``branch`` and stamped ``claimed_at``) instead of
+    deleting the lock, so a pushed branch's files stay protected until the branch is
+    merged or deleted. This makes claim retention work even when no collab pre-push hook
+    is installed (the daemon itself creates the claim). Returns True on a successful
+    update; never raises.
+    """
+    if _is_ephemeral_dev(DEVELOPER_ID):
+        return False
+    try:
+        client.table("file_locks").update(
+            {
+                "is_pr_claim": True,
+                "claim_branch": branch or "",
+                "claimed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("file_path", file_path).eq("developer_id", DEVELOPER_ID).execute()
+    except Exception:
+        logger.exception("Failed to promote %s to a PR claim", file_path)
+        return False
+    return True
+
+
+def _process_releases(client, released: set[str], branch: Optional[str] = None) -> None:
     """Process local releases for files no longer modified.
+
+    When ``COLLAB_PR_CLAIMS=1`` the watcher is *claim-aware* (#181): it never deletes a
+    file already held as a PR claim, and it promotes a released file that is still part
+    of the current branch's PR diff (vs the base ref, e.g. ``origin/main``) to a
+    persistent claim instead of releasing it. This keeps a pushed branch's files
+    protected until the branch is merged/deleted, even while the daemon runs --
+    previously the daemon deleted the very claims the pre-push hook created.
 
     Extracted so tests can simulate exceptions when removing locks from the local-owned
     set without running the entire main loop.
     """
+    if not released:
+        return
+
+    from collab import overlap
+
+    claims_enabled = overlap.is_pr_claims_enabled()
+    existing_claims: set[str] = set()
+    claim_diff: set[str] = set()
+    if claims_enabled:
+        existing_claims = _fetch_developer_claim_paths(client)
+        if branch is None:
+            resolved = _get_current_branch()
+            branch = resolved or None
+        try:
+            _, changed = overlap.head_changed_files(_PROJECT_ROOT)
+            claim_diff = set(changed)
+        except Exception as exc:
+            logger.debug("PR-claim diff resolution failed: %s", exc)
+
     for fp in released:
         # Was this file in conflict?
         if fp in _active_conflicts:
             _active_conflicts.discard(fp)
             msg = f"Conflict cleared: {fp} (file reverted or resolved)"
             logger.info(_color(msg, Fore.BLUE) if _HAS_COLORAMA else msg)
-        else:
-            try:
-                if _is_ephemeral_dev(DEVELOPER_ID):
-                    logger.info("[EPHEMERAL-RELEASE] %s", fp)
-                else:
-                    client.table("file_locks").delete().eq("file_path", fp).eq(
-                        "developer_id", DEVELOPER_ID
-                    ).execute()
-                    logger.info(
-                        _color(f"[RELEASED] {fp}", Fore.MAGENTA)
-                        if _HAS_COLORAMA
-                        else f"[RELEASED] {fp}"
-                    )
-                    # If we released a lock we held locally, remove it
-                    # from the local-owned set so remote scans don't keep it there.
-                    _local_owned_locks.discard(fp)
-            except Exception:
-                # Ensure full traceback is captured in errors.log for diagnostics
-                logger.exception("Failed to release lock for %s", fp)
+            continue
+
+        if claims_enabled:
+            if fp in existing_claims:
+                # Already a PR claim -> never delete here; the claim reconciler
+                # releases it once the branch is merged/deleted.
+                logger.debug("[CLAIM-KEEP] %s (existing PR claim retained)", fp)
+                continue
+            if fp in claim_diff and _promote_lock_to_claim(client, fp, branch):
+                logger.info(
+                    _color(f"[CLAIMED] {fp}", Fore.CYAN)
+                    if _HAS_COLORAMA
+                    else f"[CLAIMED] {fp}"
+                )
+                continue
+
+        try:
+            if _is_ephemeral_dev(DEVELOPER_ID):
+                logger.info("[EPHEMERAL-RELEASE] %s", fp)
+            else:
+                client.table("file_locks").delete().eq("file_path", fp).eq(
+                    "developer_id", DEVELOPER_ID
+                ).execute()
+                logger.info(
+                    _color(f"[RELEASED] {fp}", Fore.MAGENTA)
+                    if _HAS_COLORAMA
+                    else f"[RELEASED] {fp}"
+                )
+                # If we released a lock we held locally, remove it
+                # from the local-owned set so remote scans don't keep it there.
+                _local_owned_locks.discard(fp)
+        except Exception:
+            # Ensure full traceback is captured in errors.log for diagnostics
+            logger.exception("Failed to release lock for %s", fp)
+
+
+def _reconcile_pr_claims(client) -> int:
+    """Release this developer's PR claims whose branch is merged or gone (daemon-side).
+
+    Mirrors :meth:`collab.lock_client.LockClient.reconcile_pr_claims` but
+    operates on the watcher's raw Supabase client, so a long-running daemon
+    promptly releases claims when a PR is merged or its branch is deleted --
+    without waiting for the next push or the DB-side 30-day expiry. Inert
+    unless ``COLLAB_PR_CLAIMS=1``. Never raises; returns the number released.
+    """
+    from collab import overlap
+
+    if not overlap.is_pr_claims_enabled() or not DEVELOPER_ID:
+        return 0
+    if _is_ephemeral_dev(DEVELOPER_ID):
+        return 0
+    try:
+        res = (
+            client.table("file_locks")
+            .select("file_path,claim_branch")
+            .eq("developer_id", DEVELOPER_ID)
+            .eq("is_pr_claim", True)
+            .execute()
+        )
+        claims = getattr(res, "data", None) or []
+    except Exception as exc:
+        logger.debug("Claim reconcile fetch failed: %s", exc)
+        return 0
+
+    branches = {
+        str(claim.get("claim_branch")) for claim in claims if claim.get("claim_branch")
+    }
+    if not branches:
+        return 0
+
+    try:
+        stale = overlap.stale_claim_branches(_PROJECT_ROOT, list(branches))
+    except Exception as exc:
+        logger.debug("stale_claim_branches failed in daemon: %s", exc)
+        return 0
+    if not stale:
+        return 0
+
+    released = 0
+    for claim in claims:
+        if claim.get("claim_branch") not in stale:
+            continue
+        fp = claim.get("file_path", "")
+        if not fp:
+            continue
+        try:
+            client.table("file_locks").delete().eq("file_path", fp).eq(
+                "developer_id", DEVELOPER_ID
+            ).execute()
+            _local_owned_locks.discard(fp)
+            released += 1
+            msg = f"[CLAIM-RELEASED] {fp} (branch merged/deleted)"
+            logger.info(_color(msg, Fore.MAGENTA) if _HAS_COLORAMA else msg)
+        except Exception:
+            logger.exception("Failed to release stale claim for %s", fp)
+    return released
+
+
+def _warn_if_claims_migration_missing(client) -> bool:
+    """Warn at daemon startup when ``COLLAB_PR_CLAIMS=1`` but the migration is absent.
+
+    Prevents the silent degrade (pushed files released instead of retained) by making
+    the missing ``supabase/schema.sql`` migration visible in the daemon log (#181).
+    Returns True when a warning was emitted; False when claims are disabled or the
+    migration is present.
+    """
+    from collab import overlap
+    from collab.lock_client import probe_claim_columns
+
+    if not overlap.is_pr_claims_enabled():
+        return False
+    if probe_claim_columns(client):
+        return False
+    logger.warning(
+        "COLLAB_PR_CLAIMS=1 but the claim migration is not applied "
+        "(missing 'is_pr_claim' column). Pushed-branch files will be RELEASED, "
+        "not retained as claims. Apply supabase/schema.sql to enable PR claims."
+    )
+    return True
 
 
 def _resolve_watcher_identity(
@@ -1119,6 +1295,10 @@ def _reconcile_on_startup(client) -> None:
 
     logger.debug("Starting lock reconciliation...")
 
+    from collab import overlap
+
+    claims_enabled = overlap.is_pr_claims_enabled()
+
     # Step A: Fetch existing owned locks from Supabase
     try:
         res = _scoped_owned_query(client.table("file_locks").select("*")).execute()
@@ -1220,6 +1400,17 @@ def _reconcile_on_startup(client) -> None:
                 msg = f"[RESUMED] {fp} - lock re-adopted from this machine"
                 logger.info(_color(msg, Fore.GREEN) if _HAS_COLORAMA else msg)
         else:
+            # A PR claim (#181) is intentionally retained even though its file is
+            # clean/pushed: it protects the open PR's files until the branch is
+            # merged/deleted. The claim reconciler releases it then, so the watcher
+            # must not treat it as a stale lock across restarts.
+            if claims_enabled and lock.get("is_pr_claim"):
+                _local_owned_locks.add(fp)
+                logger.debug(
+                    "[CLAIM-KEEP] %s - PR claim retained across watcher restart", fp
+                )
+                continue
+
             # File is clean — release immediately.
             # Unlike agent locks, the developer's own watcher has authoritative
             # knowledge of the working tree. Delaying here would leave
@@ -1601,6 +1792,13 @@ def _graceful_shutdown() -> None:
 
 _PID_FILE_HEARTBEAT_INTERVAL_SECONDS = float(
     os.getenv("COLLAB_PID_FILE_HEARTBEAT_INTERVAL_SECONDS", "10.0")
+)
+
+# How often the daemon reconciles PR claims (releases claims whose branch was
+# merged/deleted) when ``COLLAB_PR_CLAIMS=1``. Each pass forces a pruning ``git
+# fetch``, so this is deliberately infrequent. Set to <= 0 to disable.
+_CLAIM_RECONCILE_INTERVAL_SECONDS = float(
+    os.getenv("COLLAB_CLAIM_RECONCILE_INTERVAL_SECONDS", "300.0")
 )
 
 
@@ -2112,12 +2310,21 @@ def main() -> None:
     last_heartbeat = datetime.now()
     last_pid_heartbeat = datetime.now()
     last_parent_check = datetime.now()
+    last_claim_reconcile = datetime.now()
+
+    # Warn loudly (once, at startup) when PR claims are enabled but the Supabase
+    # migration is missing, instead of silently releasing at push (#181).
+    _warn_if_claims_migration_missing(client)
 
     # Initial remote lock scan
     _scan_remote_locks(client)
 
     # Startup reconciliation: sync Supabase lock state with local git
     _reconcile_on_startup(client)
+
+    # Release any PR claims whose branch was already merged/deleted before startup
+    # (no-op unless COLLAB_PR_CLAIMS=1).
+    _reconcile_pr_claims(client)
 
     # Initialize last_modified from current git state (post-reconciliation)
     # so the first polling iteration does not re-process already-locked files.
@@ -2158,6 +2365,16 @@ def main() -> None:
                 last_remote_scan = now
                 _scan_remote_locks(client)
 
+            # Periodically release PR claims whose branch was merged/deleted so a
+            # long-running daemon frees them promptly (not just at next push / expiry).
+            if (
+                _CLAIM_RECONCILE_INTERVAL_SECONDS > 0
+                and (now - last_claim_reconcile).total_seconds()
+                >= _CLAIM_RECONCILE_INTERVAL_SECONDS
+            ):
+                last_claim_reconcile = now
+                _reconcile_pr_claims(client)
+
             # Get files that are in progress (dirty OR committed-but-unpushed)
             try:
                 current_modified = _run_git_status_porcelain()
@@ -2182,7 +2399,7 @@ def main() -> None:
 
                 # Files no longer modified locally
                 released = last_modified - current_modified
-                _process_releases(client, released)
+                _process_releases(client, released, branch)
 
                 last_modified = current_modified
             else:

@@ -921,7 +921,7 @@ def test_main_loop_processes_new_and_released_files(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod,
         "_process_releases",
-        lambda _c, rel: processed["released"].append(set(rel)),
+        lambda _c, rel, _branch=None: processed["released"].append(set(rel)),
     )
 
     sleeps = [0]

@@ -74,10 +74,25 @@ hooks bundled with the installed wheel into the repo's git hooks directory (hono
 passed. The installed hooks resolve the project `.venv` first, so commits from VS Code / Cursor
 Source Control behave the same as a venv-activated terminal.
 
+Each installed hook is **content-stamped** with a fingerprint marker
+(`# collab-hook v=<version> fp=<fingerprint>`). On re-run (#181), `init-hooks`:
+
+- **auto-updates** collab hooks whose fingerprint has drifted from the packaged template — **no
+  `--force` needed**, so template changes reach existing clones on the next run;
+- leaves **up-to-date** collab hooks untouched;
+- **never clobbers** a pre-commit-framework-managed slot (even with `--force`); the collab
+  lock lifecycle runs through `.pre-commit-config.yaml` for those slots instead;
+- **backs up** a custom hook to `<hook>.bak` before overwriting it when `--force` is passed.
+
+The command prints what happened per hook: `Installed`, `Updated (template changed)`,
+`Backed up before overwrite`, `Managed by pre-commit (...), left as-is` (framework-owned
+slots — expected, not actionable), and `Skipped existing custom hooks (rerun with --force
+to back up & replace)`.
+
 ```bash
 pip install collab-runtime
-collab init-hooks            # install into the current git repo
-collab init-hooks --force    # overwrite existing non-collab hooks
+collab init-hooks            # install / auto-update collab hooks in the current repo
+collab init-hooks --force    # also overwrite custom hooks (backed up to <hook>.bak first)
 ```
 
 The hooks invoke `python -m collab.githooks <acquire-staged|release-all>` from the project venv; no

@@ -45,6 +45,19 @@ The daemon runs an asynchronous loop that performs the following tasks:
 - **Heartbeat**: Periodically updates its own session record to signal liveness.
 - **Synchronization**: Reconciles local lock state with the remote database.
 - **Event Handling**: Responds to real-time events (locks acquired/released by others).
+- **Claim-aware release (`COLLAB_PR_CLAIMS=1`, #181)**: when the watcher observes a file that is no
+  longer "in progress" locally, it is **claim-aware** before deleting the row. It (a) never deletes a
+  row that is already `is_pr_claim=true`, and (b) **promotes** a released file to a persistent claim
+  when that file is part of the current branch's pushed diff — so a running daemon reinforces claims
+  instead of racing the pre-push hook and destroying them. The startup reconcile likewise **retains**
+  claims for otherwise-clean files rather than treating them as stale locks.
+- **Claim reconciliation (daemon-side, #181)**: on a slow cadence (`_CLAIM_RECONCILE_INTERVAL_SECONDS`,
+  default 300s) the daemon releases claims whose `claim_branch` has been merged or deleted on the
+  remote (git-only, squash-merge-safe), mirroring the client reconciler so liberation happens even
+  when no push/checkout occurs.
+- **Fail-loud on missing migration (#181)**: if `COLLAB_PR_CLAIMS=1` but the claim columns/RPCs are
+  absent from the target database, the daemon logs a clear warning at startup instead of silently
+  degrading to full release.
 
 ### Worktree & window lifecycle (multi-worktree safety)
 
@@ -117,7 +130,8 @@ Collab prevents merge conflicts by ensuring only one developer can modify a file
 - **PR-aware persistent claims (edit-time cross-PR protection, `COLLAB_PR_CLAIMS=1`, opt-in)**: extends the lock lifecycle beyond "in progress locally" to "open PR on the remote". On push, instead of releasing, the files changed on the pushed branch (vs the base) are retained as **claims** — ordinary `file_locks` rows with `is_pr_claim=true`, `claim_branch`, `claimed_at` — so the _existing_ cross-developer machinery (watcher warning + pre-commit block) protects them at **edit time** for any other developer. Implementation notes:
   - The `acquire_lock` RPC does not touch the claim columns on renewal, so an owner re-editing a claimed file does not demote the claim (sticky).
   - Retention is atomic via the `release_all_except(developer_id, keep_paths, branch)` RPC, which preserves attribution columns (`origin`/`agent_id`).
-  - **Release is git-only** (no GitHub token): the client reconciler (`reconcile_pr_claims` → `overlap.stale_claim_branches`) force-prunes-fetches and releases a claim when its branch is **deleted on the remote** (primary, squash-merge-safe) or **merged** into the base. A DB-side `release_stale_claims` pg_cron (default 30 days) guarantees liberation even if the owner's daemon never runs.
+  - **Release is git-only** (no GitHub token): both the client reconciler (`reconcile_pr_claims` → `overlap.stale_claim_branches`) **and** the background daemon (`_reconcile_pr_claims`, #181) force-prunes-fetches and release a claim when its branch is **deleted on the remote** (primary, squash-merge-safe) or **merged** into the base. A DB-side `release_stale_claims` pg_cron (default 30 days) guarantees liberation even if the owner's daemon never runs.
+  - **The daemon is claim-aware (#181):** a running watcher never deletes `is_pr_claim=true` rows and will itself promote pushed-branch files to claims, so live-daemon setups get the same end-to-end protection as hook-only setups (previously the watcher's release path deleted claims immediately after the pre-push hook created them). If the migration is missing while `COLLAB_PR_CLAIMS=1`, both the daemon and the pre-push path warn loudly and fall back to full release.
   - Single-owner-per-file (PK `file_path`) ⇒ **last-writer-wins**; squash-merge relies on delete-on-merge; a closed-but-not-deleted PR falls to the expiry; the migration is manual and the runtime degrades to today's behavior if the columns/RPCs are absent.
 - **Cross-Branch Overlap Detection (client)**: Collab detects when changes on the current branch would conflict with other unmerged branches (local or remote-tracking).
   - **Advisory (Default)**: Warnings are issued during `git push` but do not block the operation.
@@ -216,6 +230,25 @@ Before running `pip install -e .`, each hook performs a defensive cleanup:
    `pip install` operations.
 4. **Run `pip install -e .`** — restores editable mode.
 5. **Restart the daemon** — launched in background (`&`) so the hook never blocks.
+
+#### Hook Distribution & Auto-Update (#181)
+
+`collab init-hooks` installs the bundled templates and **content-stamps** each one with a marker
+(`# collab-hook v=<version> fp=<fingerprint>`, a 12-char SHA-256 of the normalized template). On
+subsequent runs the installer compares fingerprints and behaves as follows:
+
+| Existing hook state                  | Behavior                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| **Fresh** (no hook)                  | Written and stamped.                                                                        |
+| **Collab hook, fingerprint matches** | Left untouched (up-to-date).                                                                |
+| **Collab hook, fingerprint drifted** | **Auto-updated** — no `--force` needed, so template changes reach existing clones.          |
+| **Pre-commit-managed slot**          | Never clobbered (the framework owns it); use `.pre-commit-config.yaml` instead.             |
+| **Custom (non-collab) hook**         | Preserved unless `--force`; with `--force` the original is backed up to `<hook>.bak` first. |
+
+This means updated hook logic (e.g. the claim-aware pre-push message) propagates to collaborators on
+the next `setup-dev` / `collab init-hooks` run — the setup-dev scripts call `collab init-hooks` after
+the pre-commit framework install, and pre-commit-owned slots are detected and skipped automatically so
+the two hook systems compose instead of fighting over `.git/hooks`.
 
 #### Health Check (Editable Detection)
 

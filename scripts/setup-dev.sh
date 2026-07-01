@@ -335,6 +335,22 @@ else
     echo -e "   ${YELLOW}Pre-commit not found. Skipping hook installation.${NC}"
 fi
 
+# Version-aware collab hook sync (#181): install/update collab-managed hooks and
+# auto-refresh templates whose content changed since the last run. Pre-commit-owned
+# slots (pre-commit / pre-push / commit-msg) are detected and skipped automatically,
+# so this composes with framework mode above instead of fighting over .git/hooks.
+if [ -x ".venv/bin/python" ]; then
+    HOOK_PYTHON=".venv/bin/python"
+else
+    HOOK_PYTHON=".venv/Scripts/python"
+fi
+echo -e "   Syncing collab-managed git hooks (version-aware)..."
+if "$HOOK_PYTHON" -m collab init-hooks 2>&1 | sed 's/^/     /'; then
+    echo -e "   ${WHITE}Collab hooks synced${NC} ${GREEN}OK${NC}"
+else
+    echo -e "   ${YELLOW}Collab hook sync returned non-zero (non-fatal)${NC}"
+fi
+
 # Step 6: Supabase Setup
 echo -e "\n${YELLOW}[Dev Step 6/6] Configure Supabase locking settings...${NC}"
 if [ ! -f ".env" ]; then
