@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional, Protocol, cast
 
 from dotenv import load_dotenv
 
-from . import agent_identity, platform_probe, safe_subprocess
+from . import agent_identity, path_filter, platform_probe, safe_subprocess
 from .env_secrets import effective_anon_key, effective_service_role_key
 
 # NOTE: do NOT import collab-local modules before the runtime root and sys.path
@@ -488,21 +488,13 @@ def _min_auto_lock_hold_seconds() -> int:
 
 
 def _should_ignore_path(path: str) -> bool:
-    """Return True for paths the watcher should skip."""
-    norm = path.replace("\\", "/")
-    if "/.git/" in norm or norm.startswith(".git/"):
-        return True
-    # Ignore runtime instance folders: they are environment artifacts and
-    # should not produce collaborative file locks.
-    if (
-        norm == "instance"
-        or norm.startswith("instance/")
-        or norm.endswith("/instance")
-        or "/instance/" in norm
-    ):
-        return True
-    # Do not ignore runtime-relative project paths here.
-    return False
+    """Return True for paths the watcher should skip.
+
+    Delegates to :func:`collab.path_filter.should_ignore_lock_path`, which also
+    honors ``COLLAB_LOCK_IGNORE`` and a project ``.collabignore`` so transient
+    scratch files never produce short-lived locks (#170).
+    """
+    return path_filter.should_ignore_lock_path(path, _PROJECT_ROOT)
 
 
 def _color(text: str, color: str) -> str:
@@ -735,6 +727,19 @@ def _process_new_files(client, branch: str, new_files: set[str]) -> None:
                     data[0].get("agent_label"),
                     data[0].get("agent_kind"),
                 )
+                # #172: a conflict against your OWN developer id is never a
+                # cross-developer merge risk. Under sticky attribution (#169) this
+                # only happens for same-developer CROSS-AGENT edits, which the
+                # per-poll watcher would otherwise spam as WARNING + desktop
+                # notification. Log it once at DEBUG and skip the notification.
+                if str(owner) == DEVELOPER_ID:
+                    logger.debug(
+                        "Self-lock on %s held by %s (same developer) — "
+                        "no cross-developer conflict; not renewing this poll.",
+                        fp,
+                        owner_display,
+                    )
+                    continue
                 _active_conflicts.add(fp)
                 msg = (
                     f"CONFLICT: {fp} is locked by {owner_display} -- "

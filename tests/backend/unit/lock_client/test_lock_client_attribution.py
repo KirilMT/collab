@@ -259,3 +259,71 @@ def test_acquire_human_ok_without_agent_uses_plain_reason(
     assert not any(
         "preserved AI agent lock" in rec.getMessage() for rec in caplog.records
     )
+
+
+def test_acquire_same_developer_conflict_is_debug_not_warning(
+    monkeypatch, tmp_path, caplog
+):
+    """#172: a conflict against your own developer id (same-developer cross-agent) must
+    not emit a WARNING/notification — it is not a cross-developer merge risk."""
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[
+                {
+                    "status": "conflict",
+                    "owner": "alice",
+                    "agent_id": "agent-other",
+                    "agent_label": "other",
+                    "agent_kind": "cursor",
+                }
+            ],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    client = _make_client(monkeypatch, tmp_path, recorder)  # developer_id="alice"
+
+    with caplog.at_level(logging.DEBUG, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file), reason="Auto-Watch Sync")
+
+    assert ok is False
+    assert not any(
+        "CONFLICT" in rec.getMessage() and rec.levelno >= logging.WARNING
+        for rec in caplog.records
+    )
+    assert any("Self-lock" in rec.getMessage() for rec in caplog.records)
+
+
+def test_acquire_cross_developer_conflict_warns(monkeypatch, tmp_path, caplog):
+    """A genuine cross-developer conflict still emits the WARNING."""
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[{"status": "conflict", "owner": "bob"}],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    client = _make_client(monkeypatch, tmp_path, recorder)  # developer_id="alice"
+
+    with caplog.at_level(logging.DEBUG, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file))
+
+    assert ok is False
+    assert any(
+        "CONFLICT" in rec.getMessage() and rec.levelno >= logging.WARNING
+        for rec in caplog.records
+    )
+
+
+def test_should_ignore_path_delegates_to_path_filter():
+    """LockClient._should_ignore_path delegates to the shared path filter (#170)."""
+    assert mod.LockClient._should_ignore_path("scratch.tmp") is True
+    assert mod.LockClient._should_ignore_path("collab/lock_client.py") is False
