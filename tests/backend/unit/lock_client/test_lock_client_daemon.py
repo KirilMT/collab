@@ -772,6 +772,24 @@ def test_is_admin_property(monkeypatch):
     assert client.is_admin is True
 
 
+def test_placeholder_service_role_key_falls_back_to_anon(monkeypatch):
+    """Fresh .env from .env.example must not send placeholder service role key."""
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "your_service_role_key_here")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "real-anon-jwt")
+    monkeypatch.setattr(mod, "SUPABASE_SERVICE_ROLE_KEY", "your_service_role_key_here")
+    monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "real-anon-jwt")
+    captured: dict[str, str] = {}
+
+    def _capture_create_client(_url, key):
+        captured["key"] = key
+        return None
+
+    monkeypatch.setattr(mod, "_supabase_create_client", _capture_create_client)
+    client = getattr(mod, "LockClient")()
+    assert client.is_admin is False
+    assert captured["key"] == "real-anon-jwt"
+
+
 # RESTORED: test_lockclient_class_and_methods_exist
 def test_lockclient_class_and_methods_exist():
     assert hasattr(mod, "LockClient")

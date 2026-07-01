@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional, Protocol, cast
 from dotenv import load_dotenv
 
 from . import agent_identity, platform_probe, safe_subprocess
+from .env_secrets import effective_anon_key, effective_service_role_key
 
 # NOTE: do NOT import collab-local modules before the runtime root and sys.path
 # setup is complete. The import for `logging_config` is moved
@@ -901,8 +902,8 @@ def _start_dashboard_server() -> str | None:
 
     injected = {
         "url": SUPABASE_URL or "",
-        "anonKey": SUPABASE_ANON_KEY or "",
-        "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
+        "anonKey": effective_anon_key(SUPABASE_ANON_KEY) or "",
+        "serviceKey": effective_service_role_key(SUPABASE_SERVICE_ROLE_KEY),
         "user": DEVELOPER_ID or "",
     }
     url, _html_path = prepare_dashboard_server(
@@ -1441,11 +1442,10 @@ def _graceful_shutdown() -> None:
     _shutdown_done = True
 
     dev_id = DEVELOPER_ID
-    if dev_id and SUPABASE_URL and SUPABASE_ANON_KEY and create_client is not None:
+    anon_key = effective_anon_key(SUPABASE_ANON_KEY)
+    if dev_id and SUPABASE_URL and anon_key and create_client is not None:
         try:
-            client = cast(Callable[..., Any], create_client)(
-                SUPABASE_URL, SUPABASE_ANON_KEY
-            )
+            client = cast(Callable[..., Any], create_client)(SUPABASE_URL, anon_key)
 
             # Determine which files are still in progress
             # (dirty OR committed-but-unpushed)
@@ -1913,7 +1913,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    if not SUPABASE_URL or not effective_anon_key(SUPABASE_ANON_KEY):
         logger.error(
             "Missing SUPABASE_URL or SUPABASE_ANON_KEY in .env.\n"
             "See .env.example for setup."
@@ -2047,7 +2047,9 @@ def main() -> None:
         sys.exit(1)
     # static analyzers may still treat create_client as Optional; cast for
     # their sake so they recognize the value is callable beyond this point.
-    client = cast(Callable[..., Any], create_client)(SUPABASE_URL, SUPABASE_ANON_KEY)
+    client = cast(Callable[..., Any], create_client)(
+        SUPABASE_URL, effective_anon_key(SUPABASE_ANON_KEY)
+    )
 
     # Start local dashboard server for a clickable URL
     dashboard_url = _start_dashboard_server()

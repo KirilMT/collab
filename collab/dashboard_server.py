@@ -230,9 +230,11 @@ def load_runtime_supabase_config(project_root: str) -> dict[str, Any]:
             val = os.getenv(name)
         return val
 
+    from .env_secrets import effective_anon_key, effective_service_role_key
+
     url = pick("SUPABASE_URL") or ""
-    anon = pick("SUPABASE_ANON_KEY") or ""
-    service = pick("SUPABASE_SERVICE_ROLE_KEY") or None
+    anon = effective_anon_key(pick("SUPABASE_ANON_KEY")) or ""
+    service = effective_service_role_key(pick("SUPABASE_SERVICE_ROLE_KEY"))
     user = _resolve_developer_name(project_root, file_vals)
     from . import agent_identity
 

@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from . import agent_identity, overlap, platform_probe, safe_subprocess
+from .env_secrets import effective_env_secret
 from .errors import (
     ConfigurationError,
     DaemonStartError,
@@ -289,6 +290,17 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 LOCK_STRICT = os.getenv("LOCK_STRICT", "0") == "1"
+
+
+def _effective_service_role_key() -> Optional[str]:
+    """Service role key for API calls, or None when placeholder/unset."""
+    return effective_env_secret(SUPABASE_SERVICE_ROLE_KEY)
+
+
+def _effective_anon_key() -> Optional[str]:
+    """Anon key for API calls, or None when placeholder/unset."""
+    return effective_env_secret(SUPABASE_ANON_KEY)
+
 
 # Expiry semantics: this project enforces NO automatic expiry. Locks persist
 # until released explicitly. The DB RPC ignores time-based expiry; the
@@ -621,7 +633,7 @@ def _quiet_console_loggers(names: Optional[List[str]] = None):
 
 def _validate_credentials() -> None:
     """Validate that Supabase credentials are present, exit with clear error if not."""
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    if not SUPABASE_URL or not _effective_anon_key():
         logger.error(
             "Missing Supabase credentials.\n"
             "  SUPABASE_URL=%s\n"
@@ -630,7 +642,7 @@ def _validate_credentials() -> None:
             "and fill in your Supabase project credentials.\n"
             "See README.md for setup instructions.",
             SUPABASE_URL or "(not set)",
-            "(set)" if SUPABASE_ANON_KEY else "(not set)",
+            "(set)" if _effective_anon_key() else "(not set)",
         )
         sys.exit(1)
 
@@ -707,7 +719,7 @@ def _ensure_lock_service_reachable() -> None:
         return
 
     url = _current_supabase_url()
-    anon = os.getenv("SUPABASE_ANON_KEY") or SUPABASE_ANON_KEY
+    anon = _effective_anon_key()
     if not url or not anon:
         raise ConfigurationError(
             "Supabase credentials are not configured",
@@ -823,7 +835,7 @@ class LockClient:
         self._parent_monitor_started: bool = False
         self._parent_monitor_handle: Optional[int] = None
         self._parent_monitor_thread: Optional[threading.Thread] = None
-        self._is_admin: bool = bool(SUPABASE_SERVICE_ROLE_KEY)
+        self._is_admin: bool = bool(_effective_service_role_key())
         # Treat certain developer ids as ephemeral (e.g. CI/test accounts) so
         # they do not persist locks to the DB. This list is enforced in-code to
         # avoid relying on environment configuration being correct.
@@ -846,7 +858,7 @@ class LockClient:
 
         if not self.local_only and not getattr(self, "_is_ephemeral", False):
             _validate_credentials()
-            key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+            key = _effective_service_role_key() or _effective_anon_key()
             create_client = cast(Any, _get_create_client())
             self._client = cast(Any, create_client(SUPABASE_URL, key))
 
@@ -2666,8 +2678,8 @@ class LockClient:
 
         injected = {
             "url": SUPABASE_URL or "",
-            "anonKey": SUPABASE_ANON_KEY or "",
-            "serviceKey": SUPABASE_SERVICE_ROLE_KEY or None,
+            "anonKey": _effective_anon_key() or "",
+            "serviceKey": _effective_service_role_key(),
             "user": self.developer_id or "",
         }
         return prepare_dashboard_server(
