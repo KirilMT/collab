@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from . import agent_identity, overlap, platform_probe, safe_subprocess
+from . import agent_identity, overlap, path_filter, platform_probe, safe_subprocess
 from .env_secrets import effective_env_secret
 from .errors import (
     ConfigurationError,
@@ -1208,12 +1208,21 @@ class LockClient:
         if isinstance(data, list) and len(data) > 0:
             row = data[0]
             if row.get("status") == "ok":
+                # Sticky attribution (#169): the RPC returns the *stored* owner
+                # after the upsert. When a human auto-lock renewed an existing
+                # agent lock, the row stays ``origin=agent`` — reflect that in the
+                # log instead of claiming a human "Auto-Watch Sync" reason.
+                stored_agent_id = row.get("agent_id")
+                if stored_agent_id and not self.agent_id:
+                    effective_reason = f"preserved AI agent lock ({reason or 'sync'})"
+                else:
+                    effective_reason = reason or "No reason"
                 logger.info(
                     "🔒 [LOCKED] %s — @%s (branch: %s, reason: %s)",
                     self._normalize_file_path(file_path),
                     self.developer_id,
                     branch or "main",
-                    reason or "No reason",
+                    effective_reason,
                 )
                 # Cross-branch advisory: warn when renewing a lock that was
                 # previously held by the same developer on a *different* branch.
@@ -1242,14 +1251,26 @@ class LockClient:
                     row.get("agent_label"),
                     conflict_kind,
                 )
-                logger.warning(
-                    (
-                        "⚠️ CONFLICT: %s is locked by %s — your changes may "
-                        "cause a merge conflict."
-                    ),
-                    self._normalize_file_path(file_path),
-                    owner_display,
-                )
+                # #172: a conflict against your OWN developer id is not a
+                # cross-developer merge risk. Under sticky attribution (#169) this
+                # is only same-developer CROSS-AGENT; log at DEBUG so the polling
+                # daemon does not spam "locked by yourself" warnings.
+                if str(owner) == self.developer_id:
+                    logger.debug(
+                        "Self-lock on %s held by %s (same developer) — "
+                        "no cross-developer conflict.",
+                        self._normalize_file_path(file_path),
+                        owner_display,
+                    )
+                else:
+                    logger.warning(
+                        (
+                            "⚠️ CONFLICT: %s is locked by %s — your changes may "
+                            "cause a merge conflict."
+                        ),
+                        self._normalize_file_path(file_path),
+                        owner_display,
+                    )
                 return False, agent_identity.format_conflict_message(
                     file_path,
                     str(owner),
@@ -4326,24 +4347,13 @@ class LockClient:
 
     @staticmethod
     def _should_ignore_path(path: str) -> bool:
-        """Return True for paths the watcher should skip."""
-        norm = path.replace("\\", "/")
-        if "/.git/" in norm or norm.startswith(".git/"):
-            return True
-        # Ignore runtime instance folders: they are environment artifacts and
-        # should not produce collaborative file locks.
-        if (
-            norm == "instance"
-            or norm.startswith("instance/")
-            or norm.endswith("/instance")
-            or "/instance/" in norm
-        ):
-            return True
-        # Ignore collab metadata files that the watcher itself creates
-        if ".startup_summary.json" in norm or ".shutdown_complete" in norm:
-            return True
-        # Do not ignore other runtime-relative project paths here.
-        return False
+        """Return True for paths the watcher should skip.
+
+        Delegates to :func:`collab.path_filter.should_ignore_lock_path`, which
+        also honors ``COLLAB_LOCK_IGNORE`` and a project ``.collabignore`` so
+        transient scratch files never produce short-lived locks (#170).
+        """
+        return path_filter.should_ignore_lock_path(path, _PROJECT_ROOT)
 
     @staticmethod
     def _read_pid(*, strict: bool = False) -> Optional[int]:

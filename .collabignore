@@ -1,0 +1,18 @@
+# Collab: working-tree paths that must NEVER acquire a collaborative lock.
+#
+# One glob pattern (fnmatch) per line; matched against the project-relative
+# POSIX path AND the basename. A trailing "/" matches a directory prefix; a
+# trailing "/**" matches anything beneath a directory. Blank lines and lines
+# starting with "#" are ignored.
+#
+# Built-in temp suffixes (*.tmp, *.temp, *.bak, *.backup, *.orig, *.swp, *.swo,
+# *~, *.isorted) and VCS/instance folders are always ignored without listing
+# them here. Add project-specific transient/scratch files below.
+
+# Transient diagnostic / simulation scratch files created during development
+.sim_*
+.tmp_*
+
+# Temporary issue/PR body drafts written by tooling before submission
+.issue_body_temp.md
+*_temp.md
