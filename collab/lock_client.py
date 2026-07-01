@@ -4466,9 +4466,10 @@ class LockClient:
                         "No upstream (@{u}); locking in-progress files vs %s",
                         base_ref,
                     )
-                range_spec = (
-                    "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
-                )
+                # Three-dot range: only commits reachable from HEAD but not base_ref
+                # (#178). Two-dot @{u}..HEAD is an endpoint diff and phantom-locks
+                # remote files when local main is behind upstream.
+                range_spec = f"{base_ref}...HEAD"
                 for path in self._paths_from_git_diff_name_status(range_spec):
                     norm = self._normalize_file_path(path)
                     if norm and not self._should_ignore_path(norm):

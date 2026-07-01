@@ -1017,13 +1017,40 @@ def _get_sibling_worktree_dirty_files() -> set[str]:
     return sibling_files
 
 
+def _paths_from_git_diff_name_status(range_spec: str) -> list[str]:
+    """Parse ``git diff --name-status`` output into path strings.
+
+    Mirrors :meth:`collab.lock_client.LockClient._paths_from_git_diff_name_status`
+    exactly so both watchers treat renames/copies identically (destination path
+    only), skip directory entries, and agree on the committed-but-unpushed file
+    set (#178 parity). Returns an empty list when the diff produced no output.
+    """
+    diff_out = _git_capture_text(["git", "diff", "--name-status", range_spec])
+    paths: list[str] = []
+    for line in diff_out.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        parts = raw.split(None, 1)
+        if len(parts) != 2:
+            continue
+        payload = parts[1].strip()
+        if "\t" in payload:
+            payload = payload.split("\t")[-1].strip()
+        if " -> " in payload:
+            payload = payload.split(" -> ")[-1].strip()
+        if payload and not payload.endswith("/"):
+            paths.append(payload)
+    return paths
+
+
 def _get_modified_and_unpushed_files() -> set[str]:
     """Return the set of files that are 'in progress' for this developer.
 
     Includes both:
     - Dirty/staged files (git status --porcelain)
-    - Committed but not yet on the remote base (git diff <base>..HEAD), where the base
-      is the upstream when configured, otherwise origin/<branch> or origin/main.
+    - Committed but not yet on the remote base (git diff <base>...HEAD), where the
+      base is the upstream when configured, otherwise origin/<branch> or origin/main.
 
     This matches the definition used by lock_client.py to ensure both watchers agree on
     which files should be locked.
@@ -1046,13 +1073,13 @@ def _get_modified_and_unpushed_files() -> set[str]:
     try:
         base_ref = _resolve_lock_diff_base_ref()
         if base_ref:
-            range_spec = "@{u}..HEAD" if base_ref == "@{u}" else f"{base_ref}...HEAD"
-            diff_out = _git_capture_text(["git", "diff", "--name-only", range_spec])
-            if diff_out:
-                for line in diff_out.splitlines():
-                    p = _normalize_path(line.strip(), _PROJECT_ROOT)
-                    if p and not _should_ignore_path(p):
-                        result.add(p)
+            # Three-dot range: only local unpushed commits (#178). Two-dot
+            # @{u}..HEAD phantom-locks remote files when behind upstream.
+            range_spec = f"{base_ref}...HEAD"
+            for path in _paths_from_git_diff_name_status(range_spec):
+                p = _normalize_path(path, _PROJECT_ROOT)
+                if p and not _should_ignore_path(p):
+                    result.add(p)
     except Exception:
         # No base ref or diff failed - fall back to status-only. This is safe: we
         # just won't lock committed-but-unpushed files, which beats crashing.

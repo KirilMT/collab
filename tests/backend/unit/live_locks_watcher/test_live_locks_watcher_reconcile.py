@@ -432,7 +432,7 @@ def test_get_modified_and_unpushed_files_status_exception(monkeypatch):
         if len(argv) >= 2 and argv[1] == "rev-parse":
             return "origin/main"
         if len(argv) >= 2 and argv[1] == "diff":
-            return "collab/from_diff.py"
+            return "M\tcollab/from_diff.py"
         return ""
 
     patch_git_capture(monkeypatch, mod, _git)
@@ -464,7 +464,7 @@ def test_get_modified_and_unpushed_files_origin_main_fallback(monkeypatch):
             return "abc123"
         if argv[1] == "diff":
             assert "origin/main...HEAD" in joined
-            return "collab/lock_client.py"
+            return "M\tcollab/lock_client.py"
         return ""
 
     patch_git_capture(monkeypatch, mod, _git)
@@ -472,6 +472,79 @@ def test_get_modified_and_unpushed_files_origin_main_fallback(monkeypatch):
     monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
     out = mod._get_modified_and_unpushed_files()
     assert "collab/lock_client.py" in out
+
+
+def test_get_modified_and_unpushed_files_upstream_uses_three_dot_range(monkeypatch):
+    """#178: watcher must diff @{u}...HEAD, not two-dot endpoint diff."""
+    mod = load_watcher_module()
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+
+    def _git(argv, **_k):
+        joined = " ".join(argv)
+        if argv[1] == "status":
+            return ""
+        if "symbolic-full-name" in joined and "@{u}" in joined:
+            return "origin/main"
+        if argv[1] == "diff":
+            assert "@{u}...HEAD" in joined
+            assert "@{u}..HEAD" not in joined
+            return ""
+        return ""
+
+    patch_git_capture(monkeypatch, mod, _git)
+    monkeypatch.setattr(mod, "_git_capture_status_porcelain", lambda: "")
+    monkeypatch.setattr(mod, "_normalize_path", lambda p, root: p)
+    monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    out = mod._get_modified_and_unpushed_files()
+    assert out == set()
+
+
+def test_get_modified_and_unpushed_files_name_status_rename_parity(monkeypatch):
+    """#178 parity: watcher parses --name-status (renames -> destination only)."""
+    mod = load_watcher_module()
+    monkeypatch.delenv("COLLAB_LOCK_BASE_REF", raising=False)
+
+    def _git(argv, **_k):
+        joined = " ".join(argv)
+        if argv[1] == "status":
+            return ""
+        if "symbolic-full-name" in joined and "@{u}" in joined:
+            return "origin/main"
+        if argv[1] == "diff":
+            assert "--name-status" in argv
+            # Modify, rename (score), and a directory-like entry to be skipped.
+            return (
+                "M\tcollab/mod.py\n"
+                "R100\told/name.py\tcollab/new_name.py\n"
+                "A\tsome/dir/\n"
+            )
+        return ""
+
+    patch_git_capture(monkeypatch, mod, _git)
+    monkeypatch.setattr(mod, "_git_capture_status_porcelain", lambda: "")
+    monkeypatch.setattr(mod, "_normalize_path", lambda p, root: p.replace("\\", "/"))
+    monkeypatch.setattr(mod, "_should_ignore_path", lambda p: False)
+    out = mod._get_modified_and_unpushed_files()
+    assert out == {"collab/mod.py", "collab/new_name.py"}
+    assert "old/name.py" not in out
+    assert "some/dir/" not in out
+
+
+def test_watcher_paths_from_git_diff_name_status_matches_lock_client(monkeypatch):
+    """The watcher helper mirrors LockClient parsing byte-for-byte on same input."""
+    mod = load_watcher_module()
+    payload = (
+        "M\tcollab/a.py\n"
+        "\n"
+        "BADLINE\n"
+        "R100\told/b.py -> collab/b.py\n"
+        "A\tsome/dir/\n"
+    )
+    monkeypatch.setattr(mod, "_git_capture_text", lambda argv, **k: payload)
+    out = mod._paths_from_git_diff_name_status("@{u}...HEAD")
+    assert "collab/a.py" in out
+    assert "collab/b.py" in out
+    assert all(not p.endswith("/") for p in out)
 
 
 def test_resolve_lock_diff_base_ref_none_when_no_remote(monkeypatch):
