@@ -449,6 +449,36 @@ Before editing:
 
 See skill `file-locking` for full procedure.
 
+### Worktree Lifecycle & Chat-Switch Cleanup (MANDATORY)
+
+Each Git worktree (for example a per-chat worktree in a Cursor Agents window)
+runs its **own** background lock watcher in an isolated state namespace. Cursor
+exposes **no per-chat teardown event**, so a watcher does NOT stop automatically
+when you switch chats or consider the work "done". A still-running watcher keeps
+the worktree's files/venv open and, on Windows, blocks deleting the folder
+("folder in use"). This is a hard constraint documented in issue #168.
+
+**Rule: when you finish work in a worktree, you MUST release its watcher.** Do
+exactly one of the following before abandoning/switching away from a worktree:
+
+1. **Deterministic teardown (preferred, works from any directory):**
+   ```bash
+   collab worktree-unregister <path-to-worktree>
+   ```
+   Equivalent: `collab daemon-stop --worktree <path-to-worktree>`. This stops
+   only that worktree's watcher + heartbeat keeper (and reaps any orphaned
+   `collab.exe` launcher wrapper bound to it) — sibling worktrees are untouched.
+   It is idempotent and safe to run when nothing is running.
+2. **Let Layer 3 auto-reap:** delete the folder or run `git worktree remove
+<path>`. The watcher self-exits within one poll interval when its worktree
+   disappears — no manual command needed.
+3. **Close the Agents window** to clean up _everything_ that window launched
+   (window-scoped keeper reaps its watchers).
+
+AI agents: treat worktree cleanup as part of "task done" — if you created or
+worked inside a throwaway worktree, run `collab worktree-unregister <path>` (or
+remove the worktree) before reporting completion. Never leave orphaned watchers.
+
 ### File Safety
 
 - Never use destructive restore commands to undo unrelated work.

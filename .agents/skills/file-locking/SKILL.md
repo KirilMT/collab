@@ -89,3 +89,30 @@ collab claim path/to/file.py --label "<short task>" --reason "AI agent edit"
   (plain VS Code + Copilot, JetBrains), run `collab claim` for the files you edit.
 - The background watcher attributes everything else to the human, so only files an agent actually
   edits are shown as AI-agent work.
+
+---
+
+## Step 5: Finishing a Worktree Chat (Release the Watcher)
+
+Each Git worktree — including a per-chat worktree in a Cursor Agents window —
+runs its **own** lock watcher in an isolated state namespace. Cursor exposes
+**no per-chat teardown event**, so that watcher does **not** stop automatically
+when you switch chats or finish the task. A lingering watcher keeps the
+worktree's files and virtualenv open and, on Windows, blocks deleting the folder
+("folder in use"). This is the hard constraint tracked in issue #168.
+
+**When you finish work in a worktree, release its watcher — do one of:**
+
+| Action                             | Command / Step                                                                      | Effect                                                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Deterministic teardown (preferred) | `collab worktree-unregister <path>` (alias: `collab daemon-stop --worktree <path>`) | Stops only that worktree's watcher + keeper and reaps its orphaned `collab.exe` wrapper. Sibling worktrees untouched. Idempotent. |
+| Remove the worktree                | delete the folder or `git worktree remove <path>`                                   | Layer 3 auto-reaps: the watcher self-exits within one poll interval.                                                              |
+| Clean up everything                | close the Agents window                                                             | Window-scoped keeper reaps all watchers that window launched.                                                                     |
+
+`worktree-unregister` is safe from **any** directory and safe to run when nothing
+is running (returns "no running watcher"). Treat this cleanup as part of "task
+done": never leave an orphaned watcher behind.
+
+> Note: `COLLAB_STATE_DIR` is a test/custom-deployment knob that forces a single
+> shared state namespace for all roots (mutually exclusive with per-worktree
+> isolation). Leave it unset in normal use so each worktree stays isolated.

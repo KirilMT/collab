@@ -46,6 +46,33 @@ The daemon runs an asynchronous loop that performs the following tasks:
 - **Synchronization**: Reconciles local lock state with the remote database.
 - **Event Handling**: Responds to real-time events (locks acquired/released by others).
 
+### Worktree & window lifecycle (multi-worktree safety)
+
+Each worktree gets its **own isolated state namespace** (heartbeat, PID, stop-request and keeper
+files under a directory keyed by a hash of the project root), so multiple worktrees never share a
+watcher. The watcher's shutdown is defense-in-depth:
+
+- **Layer 1 — window-scoped heartbeat keeper** (#165/#166): the daemon-start keeper touches a
+  heartbeat file only while the per-window session process is alive (`COLLAB_SESSION_PID`, not the
+  shared `VSCODE_PID`), so closing one Agents/worktree window reaps that window's watcher without
+  quitting the whole IDE.
+- **Layer 2 — periodic worktree-validity self-check** (~60s): `git worktree remove`/prune is always
+  reaped, IDE-agnostic.
+- **Layer 3 — prompt worktree-gone reap** (#168): a cheap per-iteration existence check exits within
+  one poll interval when the worktree folder or its `.git` marker disappears (e.g. deleted via the OS
+  file explorer), releasing directory handles quickly — the authoritative validity check confirms
+  before exit so a transient stat miss never reaps a still-valid worktree.
+- **Deterministic teardown** (#168): `collab worktree-unregister <path>` (alias
+  `collab daemon-stop --worktree <path>`) stops **only** the target worktree's watcher + keeper from
+  any directory, and reaps any orphaned `collab.exe` launcher wrapper bound to that same namespace
+  (Windows) — full parity with the current-worktree `daemon_stop` path. Launcher reaping is achieved
+  by briefly retargeting the module namespace globals so the existing strictly `--pid-file`-scoped
+  matcher only touches the target's wrappers; globals are restored unconditionally, so sibling
+  worktrees are never affected. This covers the case where a chat/worktree is finished but its folder
+  is still valid on disk — Cursor exposes no per-chat lifecycle signal, so this is the explicit, safe
+  primitive. Note: per-worktree isolation relies on `COLLAB_STATE_DIR` being **unset** (the default);
+  setting it forces a single shared namespace and is reserved for test/custom deployments.
+
 ---
 
 ## State Management

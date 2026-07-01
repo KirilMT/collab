@@ -106,6 +106,35 @@ If the watcher works from your IDE but not CLI, compare which Python binary each
 
 ---
 
+## Cannot delete a finished worktree folder (Windows: "folder in use")
+
+**Symptoms:** After finishing work in a Git **worktree** — often after switching to a new chat in a
+Cursor **Agents** window without closing the window — you cannot delete the worktree folder, or
+`git worktree remove` complains the directory is busy. On Windows, Explorer reports the folder (or
+`.venv`) is in use.
+
+**Cause:** A background watcher is still running for that worktree and holds file handles. Closing a
+single chat inside an open Agents window does not stop the watcher — Cursor exposes no per-chat
+lifecycle signal — so the watcher lives until the **window** closes.
+
+**Fix (recommended — deterministic, from any directory):**
+
+```bash
+collab worktree-unregister /path/to/worktree-a
+# or, equivalently:
+collab daemon-stop --worktree /path/to/worktree-a
+```
+
+This stops **only** that worktree's watcher and heartbeat keeper (never other worktrees), releasing
+its handles so the folder can be deleted.
+
+**Automatic reap:** If you delete the worktree folder or run `git worktree remove` first, the
+watcher detects the missing worktree and self-exits within one poll interval (Layer 3), typically a
+few seconds — no manual command needed. Closing the Agents window remains the reliable "clean up
+everything for this window" action.
+
+---
+
 ## Locks on deleted or moved files
 
 **Symptoms:** `collab active` lists paths you deleted locally (e.g. `src/__init__.py` during a refactor).

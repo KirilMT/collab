@@ -102,6 +102,14 @@ If you suspect a lock is stale or the watcher is unresponsive:
 3. Check `collab active`.
 4. If still blocked, check `collab status path/to/file.py` to see the exact owner.
 
+### Worktree cleanup when finishing a chat
+
+Cursor has no per-chat teardown event, so a per-worktree watcher keeps running
+(and locks the folder/venv on Windows) until you release it. When done with a
+worktree, run `collab worktree-unregister <path>` (or `collab daemon-stop
+--worktree <path>`), or delete the folder / `git worktree remove <path>` to let
+it auto-reap. See `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
+
 ---
 
 ## Tool Limitations

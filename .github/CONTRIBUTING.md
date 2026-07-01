@@ -116,6 +116,16 @@ If you suspect a lock is stale or the watcher is unresponsive:
 3. Check `collab active`.
 4. If still blocked, check `collab status path/to/file.py` to see the exact owner.
 
+### Finishing a worktree (multi-chat development)
+
+Each Git worktree (e.g. a per-chat worktree in a Cursor Agents window) runs its
+own lock watcher. Cursor has **no per-chat teardown event**, so the watcher keeps
+running — and on Windows keeps the folder/venv locked — until you release it.
+When done with a worktree, run `collab worktree-unregister <path>` (alias
+`collab daemon-stop --worktree <path>`), or delete the folder / `git worktree
+remove <path>` to let it auto-reap within one poll interval. Full policy:
+`AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
+
 ## Branching and PR Flow
 
 Branching and push policy is defined in `.github/GIT_WORKFLOW.md`.

@@ -110,14 +110,15 @@ additions (runtime fingerprinting, extra install guidance, etc.) on top.
 
 ## Daemon and watcher
 
-| Command          | Options                                                                    | Description                                      |
-| ---------------- | -------------------------------------------------------------------------- | ------------------------------------------------ |
-| `daemon-start`   | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Start background watcher                         |
-| `daemon-stop`    | —                                                                          | Stop watcher                                     |
-| `daemon-status`  | —                                                                          | Print running/stopped; exit code reflects state  |
-| `daemon-restart` | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Stop and restart the watcher daemon              |
-| `cleanup`        | —                                                                          | Kill orphaned watcher processes; preserves locks |
-| `watch`          | See [watch options](#watch-internal)                                       | Foreground watcher (used by daemon-start)        |
+| Command               | Options                                                                    | Description                                          |
+| --------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `daemon-start`        | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Start background watcher                             |
+| `daemon-stop`         | `--worktree <path>`                                                        | Stop watcher (current worktree, or a specific one)   |
+| `daemon-status`       | —                                                                          | Print running/stopped; exit code reflects state      |
+| `daemon-restart`      | `--interval` (default 5), `--timeout` (minutes, 0=off), `--open-dashboard` | Stop and restart the watcher daemon                  |
+| `worktree-unregister` | `[worktree_path]` (defaults to cwd)                                        | Stop the watcher + heartbeat keeper for one worktree |
+| `cleanup`             | —                                                                          | Kill orphaned watcher processes; preserves locks     |
+| `watch`               | See [watch options](#watch-internal)                                       | Foreground watcher (used by daemon-start)            |
 
 **Examples:**
 
@@ -126,7 +127,26 @@ collab daemon-start --interval 10
 collab daemon-status
 collab daemon-restart --interval 10
 collab daemon-stop
+
+# Finish a worktree/chat and release its file handles so the folder can be
+# deleted — runs from ANY directory and only affects that worktree:
+collab worktree-unregister /path/to/worktree-a
+collab daemon-stop --worktree /path/to/worktree-a   # equivalent
 ```
+
+### Per-worktree teardown (`worktree-unregister`)
+
+`worktree-unregister` (and the equivalent `daemon-stop --worktree <path>`) stops **only** the
+watcher and heartbeat keeper bound to the given worktree's isolated state namespace — and reaps any
+orphaned `collab.exe` launcher wrapper bound to that same namespace (Windows), matching the cleanup
+`daemon-stop` performs for the current worktree. Use it when you finish work in a Git worktree — for
+example switching chats in a Cursor **Agents** window — so the worktree's `.venv`/file handles are
+released and the folder can be deleted (important on Windows, where a live watcher or wrapper pins
+the directory). Launcher reaping is strictly `--pid-file`-scoped to the target, so sibling worktrees
+are never touched. It is safe to run from any directory, idempotent (a no-op when nothing is
+running), and returns a non-zero exit code only from `worktree-unregister` when no watcher was
+found. Deleting a worktree folder or running `git worktree remove` is also reaped automatically
+within one poll interval by the watcher's Layer-3 self-check.
 
 ### `watch` (internal)
 

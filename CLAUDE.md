@@ -48,6 +48,22 @@ If any target file is locked by another developer — **stop and report**. Do no
 
 ---
 
+## Worktree Cleanup When Finishing a Chat
+
+Cursor has **no per-chat teardown event**, so a per-worktree lock watcher does
+not stop on its own when you switch chats. Before abandoning a worktree, release
+its watcher (otherwise the folder/venv stays locked on Windows):
+
+```bash
+collab worktree-unregister <path-to-worktree>   # or: collab daemon-stop --worktree <path>
+```
+
+Deleting the folder or running `git worktree remove <path>` also works (Layer 3
+auto-reaps within one poll interval). Treat this as part of "task done". Full
+policy: `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
+
+---
+
 ## Autonomous Execution
 
 - Auto-run all standard operations: python, pytest, ruff, black, isort, mypy
