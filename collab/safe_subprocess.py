@@ -54,6 +54,8 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
 _ALLOWED_WATCHER_FLAGS = frozenset(
     {
         "--daemon",
+        "--heartbeat-file",
+        "--heartbeat-grace-seconds",
         "--interval",
         "--open-dashboard",
         "--parent-method",
@@ -154,7 +156,14 @@ def _validate_watcher_argv(argv: Sequence[str]) -> None:
         token = argv[idx]
         if token not in _ALLOWED_WATCHER_FLAGS:
             raise SubprocessSecurityError(f"watcher flag not allowed: {token!r}")
-        if token in {"--interval", "--timeout", "--parent-pid", "--pid-file"}:
+        if token in {
+            "--interval",
+            "--timeout",
+            "--parent-pid",
+            "--pid-file",
+            "--heartbeat-file",
+            "--heartbeat-grace-seconds",
+        }:
             idx += 2
             continue
         if token in {"--parent-name", "--parent-method"}:

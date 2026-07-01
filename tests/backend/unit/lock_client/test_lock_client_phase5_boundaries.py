@@ -239,6 +239,8 @@ def test_ensure_lock_service_reachable_configuration_errors(monkeypatch):
 
     monkeypatch.setenv("SUPABASE_URL", "://no-host")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "key")
+    monkeypatch.setattr(mod, "SUPABASE_URL", "://no-host")
+    monkeypatch.setattr(mod, "SUPABASE_ANON_KEY", "key")
     with pytest.raises(ConfigurationError, match="invalid"):
         mod._ensure_lock_service_reachable()
 
