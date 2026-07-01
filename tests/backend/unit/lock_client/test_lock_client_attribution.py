@@ -182,3 +182,148 @@ def test_reconcile_skips_and_cleans_agent_locks(monkeypatch, tmp_path):
 
     assert "a.py" not in acquired  # never fights the agent's in-progress lock
     assert released == ["b.py"]  # cleans up the agent's stale lock on push
+
+
+def test_acquire_human_renewal_reflects_preserved_agent_attribution(
+    monkeypatch, tmp_path, caplog
+):
+    """Sticky attribution (#169): a human auto-lock that renews an existing agent lock
+    gets an ``ok`` whose returned row still carries the agent identity.
+
+    The client must not claim a human "Auto-Watch Sync" reason for it — it logs that the
+    AI-agent lock was preserved.
+    """
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[
+                {
+                    "status": "ok",
+                    "lock_token": "t",
+                    "developer_id": "alice",
+                    "agent_id": "agent-x",
+                    "agent_label": "fix-ci",
+                    "agent_kind": "cursor",
+                }
+            ],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    # Human client (no agent identity) — the background watcher case.
+    client = _make_client(monkeypatch, tmp_path, recorder)
+
+    with caplog.at_level(logging.INFO, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file), reason="Auto-Watch Sync")
+
+    assert ok is True
+    # The human watcher sends human origin ...
+    assert recorder.rpc_params["p_origin"] == "human"
+    assert recorder.rpc_params["p_agent_id"] is None
+    # ... but the log reflects that the stored lock stayed an AI-agent lock.
+    assert any("preserved AI agent lock" in rec.getMessage() for rec in caplog.records)
+
+
+def test_acquire_human_ok_without_agent_uses_plain_reason(
+    monkeypatch, tmp_path, caplog
+):
+    """A human lock on a file with no agent owner logs the plain reason (no spurious
+    "preserved AI agent lock" note)."""
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[
+                {
+                    "status": "ok",
+                    "lock_token": "t",
+                    "developer_id": "alice",
+                    "agent_id": None,
+                }
+            ],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    client = _make_client(monkeypatch, tmp_path, recorder)
+
+    with caplog.at_level(logging.INFO, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file), reason="Auto-Watch Sync")
+
+    assert ok is True
+    assert not any(
+        "preserved AI agent lock" in rec.getMessage() for rec in caplog.records
+    )
+
+
+def test_acquire_same_developer_conflict_is_debug_not_warning(
+    monkeypatch, tmp_path, caplog
+):
+    """#172: a conflict against your own developer id (same-developer cross-agent) must
+    not emit a WARNING/notification — it is not a cross-developer merge risk."""
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[
+                {
+                    "status": "conflict",
+                    "owner": "alice",
+                    "agent_id": "agent-other",
+                    "agent_label": "other",
+                    "agent_kind": "cursor",
+                }
+            ],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    client = _make_client(monkeypatch, tmp_path, recorder)  # developer_id="alice"
+
+    with caplog.at_level(logging.DEBUG, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file), reason="Auto-Watch Sync")
+
+    assert ok is False
+    assert not any(
+        "CONFLICT" in rec.getMessage() and rec.levelno >= logging.WARNING
+        for rec in caplog.records
+    )
+    assert any("Self-lock" in rec.getMessage() for rec in caplog.records)
+
+
+def test_acquire_cross_developer_conflict_warns(monkeypatch, tmp_path, caplog):
+    """A genuine cross-developer conflict still emits the WARNING."""
+    import logging
+
+    recorder = _RpcRecorder(
+        FakeResponse(
+            status=200,
+            data=[{"status": "conflict", "owner": "bob"}],
+        )
+    )
+    test_file = tmp_path / "app.py"
+    test_file.write_text("# code")
+
+    client = _make_client(monkeypatch, tmp_path, recorder)  # developer_id="alice"
+
+    with caplog.at_level(logging.DEBUG, logger="collab.lock_client"):
+        ok, _ = client.acquire(str(test_file))
+
+    assert ok is False
+    assert any(
+        "CONFLICT" in rec.getMessage() and rec.levelno >= logging.WARNING
+        for rec in caplog.records
+    )
+
+
+def test_should_ignore_path_delegates_to_path_filter():
+    """LockClient._should_ignore_path delegates to the shared path filter (#170)."""
+    assert mod.LockClient._should_ignore_path("scratch.tmp") is True
+    assert mod.LockClient._should_ignore_path("collab/lock_client.py") is False
