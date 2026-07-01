@@ -209,6 +209,43 @@ If that fails too, fix hook/`PATH` resolution before blaming the IDE.
 
 ---
 
+## PR claims not holding after push (`COLLAB_PR_CLAIMS=1`)
+
+**Symptoms:** With `COLLAB_PR_CLAIMS=1`, files changed on a pushed branch should stay locked as
+persistent **claims** until the PR is merged/deleted, but the locks disappear right after `git push`
+— especially when the background daemon is running.
+
+**Cause & fix (#181):**
+
+1. **Missing Supabase migration.** The claim columns (`is_pr_claim`, `claim_branch`, `claimed_at`)
+   and RPCs (`release_all_except`, `release_stale_claims`) must exist in the target database. If they
+   are absent, the daemon logs a clear warning at startup and the pre-push path warns and falls back
+   to a full release. Apply `supabase/schema.sql` (or the claims migration) to your Supabase project,
+   then restart the daemon. Verify the warning is gone in `logs/collab.log`.
+2. **Stale daemon from before the fix.** Older watcher builds deleted claim rows unconditionally
+   during release, racing the pre-push hook. Update collab (`pip install -e .` / `pip install -U
+collab-runtime`), then `collab daemon-stop` and `collab daemon-start`. The current daemon is
+   **claim-aware**: it never deletes `is_pr_claim=true` rows and promotes pushed-branch files to
+   claims itself.
+3. **Verify:** after pushing, run `collab active` — the pushed-branch files should still be listed
+   (as claims). They are released automatically once the branch is **merged or deleted** on the
+   remote (git-only reconcile), or after the DB safety-net expiry (default 30 days).
+
+---
+
+## Updated git hooks not taking effect on collaborators' clones
+
+**Symptoms:** A hook template changed upstream (e.g. the claim-aware pre-push message), but a
+teammate's clone still runs the old hook.
+
+**Fix (#181):** Re-run `collab init-hooks` (or `./scripts/setup-dev.*`, which calls it). Installed
+hooks carry a fingerprint marker (`# collab-hook v=<version> fp=<fingerprint>`); when the packaged
+template's fingerprint differs, collab **auto-updates** the hook — no `--force` needed. Pre-commit-
+framework-managed slots are detected and skipped (manage those via `.pre-commit-config.yaml`); a
+custom hook is backed up to `<hook>.bak` before being overwritten when `--force` is passed.
+
+---
+
 ## Still stuck?
 
 1. `collab --help` and `collab daemon-status`

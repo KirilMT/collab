@@ -370,14 +370,29 @@ def _run_cli() -> None:
 
         hooks_summary = install_hooks(force=getattr(args, "force", False))
         installed = hooks_summary.get("installed") or []
+        updated = hooks_summary.get("updated") or []
         skipped = hooks_summary.get("skipped") or []
+        precommit_managed = hooks_summary.get("precommit_managed") or []
+        backed_up = hooks_summary.get("backed_up") or []
+        # ``installed`` includes freshly written + auto-updated hooks; show fresh
+        # installs separately from template updates to avoid double-listing.
+        fresh = [name for name in installed if name not in updated]
         print(f"✓ Installed collab git hooks into {hooks_summary.get('hooks_dir')}")
-        if installed:
-            print(f"  Installed: {', '.join(installed)}")
+        if fresh:
+            print(f"  Installed: {', '.join(fresh)}")
+        if updated:
+            print(f"  Updated (template changed): {', '.join(updated)}")
+        if backed_up:
+            print(f"  Backed up before overwrite: {', '.join(backed_up)}")
+        if precommit_managed:
+            print(
+                "  Managed by pre-commit (.pre-commit-config.yaml), left as-is: "
+                f"{', '.join(precommit_managed)}"
+            )
         if skipped:
             print(
-                "  Skipped (existing non-collab hooks; rerun with --force): "
-                f"{', '.join(skipped)}"
+                "  Skipped existing custom hooks (rerun with --force to back up "
+                f"& replace): {', '.join(skipped)}"
             )
         sys.exit(0)
 

@@ -33,9 +33,30 @@ repos:
         # All files in one call — prevents repeated output
         stages: [pre-commit]
 
+      # Collab lock lifecycle, expressed pre-commit-natively so it composes
+      # with validation instead of fighting over .git/hooks (#181). Acquire
+      # locks for staged files at commit time (no-op when the daemon runs).
+      - id: collab-acquire-locks
+        name: Collab Acquire Locks (staged files)
+        entry: python -m collab.githooks acquire-staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: pre-push-validation
         name: Pre-Push Full Validation
         entry: python scripts/validate_code.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # Release locks after successful validation; with COLLAB_PR_CLAIMS=1 the
+      # pushed branch's files are retained as PR claims instead (dogfoods #181).
+      - id: collab-release-locks
+        name: Collab Release Locks / Retain PR Claims
+        entry: python -m collab.githooks release-all
         language: system
         pass_filenames: false
         always_run: true

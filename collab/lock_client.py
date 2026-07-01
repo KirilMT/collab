@@ -808,6 +808,20 @@ def _is_lock_service_error(exc: BaseException) -> bool:
     )
 
 
+def probe_claim_columns(client: Any) -> bool:
+    """Return True when the PR-claim migration is applied on the target database.
+
+    Probes for the ``is_pr_claim`` column with a bounded ``select ... limit(1)``.
+    Returns False when the column is absent (migration not applied) or on any error, so
+    callers can warn loudly instead of silently degrading (#181). Never raises.
+    """
+    try:
+        client.table("file_locks").select("is_pr_claim").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Supabase Lock Client
 # ---------------------------------------------------------------------------
@@ -852,6 +866,8 @@ class LockClient:
         self.origin = agent_identity.resolve_origin(self.agent_id)
         _refresh_pid_file(self.agent_id)
         self._client: Optional[Any] = None
+        # Cached result of the one-time PR-claim migration probe (None = unknown).
+        self._claims_supported: Optional[bool] = None
         self._branch_name: Optional[str] = None
         self._session_token: Optional[str] = None
         self._parent_pid: Optional[int] = None
@@ -1593,6 +1609,24 @@ class LockClient:
                 if file_path and self._release_developer_scope(file_path):
                     released += 1
         return released
+
+    def claims_supported(self) -> bool:
+        """Return True when the PR-claim migration is applied (cached per client).
+
+        Used to warn loudly when ``COLLAB_PR_CLAIMS=1`` is set but the Supabase
+        migration (``supabase/schema.sql``) has not been applied, so the feature does
+        not silently degrade to full release on push (#181). Local-only/ephemeral
+        clients report False (no database to check).
+        """
+        if self._claims_supported is None:
+            if self.local_only or getattr(self, "_is_ephemeral", False):
+                self._claims_supported = False
+            else:
+                try:
+                    self._claims_supported = probe_claim_columns(self._require_client())
+                except Exception:
+                    self._claims_supported = False
+        return self._claims_supported
 
     def force_release(self, file_path: str) -> Tuple[bool, str]:
         """Force-release a lock on file_path.

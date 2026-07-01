@@ -66,7 +66,18 @@ elif [ $OVERLAP_EXIT -ne 0 ]; then
     exit $OVERLAP_EXIT
 fi
 
-echo "[collab] Releasing all locks after successful pre-push validation..." >&2
+# Message reflects retain-vs-release: when COLLAB_PR_CLAIMS is enabled the pushed
+# branch's files are retained as persistent claims (the rest are released); the
+# Python runtime prints the exact per-file outcome.
+PR_CLAIMS_LOWER="$(printf '%s' "${COLLAB_PR_CLAIMS:-0}" | tr '[:upper:]' '[:lower:]')"
+case "$PR_CLAIMS_LOWER" in
+    1 | true | yes | on)
+        echo "[collab] Retaining pushed-branch files as PR claims (COLLAB_PR_CLAIMS enabled); releasing other locks..." >&2
+        ;;
+    *)
+        echo "[collab] Releasing all locks after successful pre-push validation..." >&2
+        ;;
+esac
 "$PYTHON" -m collab.githooks release-all
 
 exit 0

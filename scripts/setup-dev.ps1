@@ -448,6 +448,26 @@ else {
     Write-Host "   (Will be installed via requirements-dev.txt later)" -ForegroundColor Gray
 }
 
+# Version-aware collab hook sync (#181): install/update collab-managed hooks and
+# auto-refresh templates whose content changed since the last run. Pre-commit-owned
+# slots (pre-commit / pre-push / commit-msg) are detected and skipped automatically,
+# so this composes with framework mode above instead of fighting over .git/hooks.
+Write-Host "   Syncing collab-managed git hooks (version-aware)..." -ForegroundColor Yellow
+try {
+    & $pythonPath -m collab init-hooks 2>&1 |
+        ForEach-Object { Write-Host "     $_" -ForegroundColor Gray }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "   Collab hooks synced " -NoNewline -ForegroundColor White
+        Write-SetupEmit (Get-SetupStatusToken 'OK') -Color Green
+    }
+    else {
+        Write-Host "   Collab hook sync returned non-zero (non-fatal)" -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "   Collab hook sync failed (non-fatal): $_" -ForegroundColor Yellow
+}
+
 # Step 6: Supabase Setup (required for shared locking)
 Write-SetupDevStepHeader -Step 6 -Message 'Configure Supabase locking settings...'
 
