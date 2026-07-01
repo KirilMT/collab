@@ -1629,8 +1629,8 @@ function deactivate() {
   // "Genuinely clean" matches the watcher's criteria — a file is considered
   // "in progress" (lock preserved) when it appears in EITHER:
   //   1. ``git status --porcelain``  (dirty / staged)
-  //   2. ``git diff --name-only @{u}..HEAD``  (committed-but-unpushed,
-  //      with fallback to ``origin/main...HEAD`` when no upstream exists).
+  //   2. ``git diff --name-only @{u}...HEAD``  (committed-but-unpushed,
+  //      three-dot merge-base diff; fallback ``origin/main...HEAD`` when no upstream).
   //
   // All async operations are properly awaited, and any failure preserves
   // every lock (fail-safe: never release locks we aren't sure about).
@@ -1737,7 +1737,8 @@ function deactivate() {
  *
  * Matches the watcher's ``_get_modified_and_unpushed_files()`` criteria:
  * files that appear in ``git status --porcelain`` (dirty/staged) **or**
- * ``git diff --name-only <base>..HEAD`` (committed-but-unpushed).
+ * ``git diff --name-only <base>...HEAD`` (committed-but-unpushed; three-dot
+ * merge-base range so a branch merely behind upstream never phantom-locks — #178).
  *
  * Returns ``null`` when ``git status`` itself fails (callers should treat
  * this as "could not determine — preserve all locks").
@@ -1807,7 +1808,7 @@ function resolveDiffRangeSpec(workspaceRoot) {
       encoding: "utf8",
       stdio: "ignore",
     });
-    return "@{u}..HEAD";
+    return "@{u}...HEAD";
   } catch {
     // No upstream — continue to fallback
   }

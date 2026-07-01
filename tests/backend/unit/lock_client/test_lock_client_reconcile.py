@@ -669,3 +669,74 @@ def test_get_modified_and_unpushed_files_skips_status_dir_suffix(monkeypatch):
     out = set(out_list)
     assert "apps/reporting/instance/" not in out
     assert "src/real.py" in out
+
+
+def test_get_modified_and_unpushed_files_upstream_uses_three_dot_range(monkeypatch):
+    """#178: @{u} must use three-dot diff so behind branches do not phantom-lock."""
+    c = mod.LockClient(local_only=True)
+    seen_ranges: list[str] = []
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_run_git_status",
+        staticmethod(lambda: ("", True)),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_resolve_lock_diff_base_ref",
+        classmethod(lambda cls: "@{u}"),
+    )
+
+    def fake_paths(range_spec: str) -> list[str]:
+        seen_ranges.append(range_spec)
+        return []
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_paths_from_git_diff_name_status",
+        staticmethod(fake_paths),
+    )
+    monkeypatch.setattr(c, "_should_ignore_path", lambda _p: False)
+    monkeypatch.setattr(c, "_get_sibling_worktree_dirty_files", lambda: set())
+
+    out_list, git_ok = c._get_modified_and_unpushed_files()
+    assert git_ok is True
+    assert seen_ranges == ["@{u}...HEAD"]
+    assert out_list == []
+
+
+def test_get_modified_and_unpushed_files_no_phantom_when_behind_upstream(monkeypatch):
+    """#178: clean tree behind upstream must not add remote diff paths."""
+    c = mod.LockClient(local_only=True)
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_run_git_status",
+        staticmethod(lambda: ("", True)),
+    )
+
+    def fake_capture(args, **_kwargs):
+        joined = " ".join(args)
+
+        class R:
+            ok = True
+            timed_out = False
+            stdout = b""
+
+        if "symbolic-full-name" in joined and "@{u}" in joined:
+            R.stdout = b"origin/main\n"
+            return R
+        if "diff" in joined and "--name-status" in joined:
+            assert "@{u}...HEAD" in joined
+            return R
+        if "status" in joined and "porcelain" in joined:
+            return R
+        return R
+
+    monkeypatch.setattr(mod.safe_subprocess, "capture", fake_capture)
+    monkeypatch.setattr(c, "_normalize_file_path", lambda p: p)
+    monkeypatch.setattr(c, "_should_ignore_path", lambda _p: False)
+    monkeypatch.setattr(c, "_get_sibling_worktree_dirty_files", lambda: set())
+
+    out_list, _ = c._get_modified_and_unpushed_files()
+    assert out_list == []
