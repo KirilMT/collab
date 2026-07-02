@@ -62,6 +62,17 @@ Deleting the folder or running `git worktree remove <path>` also works (Layer 3
 auto-reaps within one poll interval). Treat this as part of "task done". Full
 policy: `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
 
+If locks from a **dead/deleted worktree** still appear in `collab active` after
+process teardown, heal Supabase rows (same developer):
+
+```bash
+collab prune-orphans
+# or: collab reconcile --prune-orphans
+```
+
+Do **not** force-release other developers' locks. See `AGENTS.md` → "Orphan Lock
+Rows After Ungraceful Exit" and skill `file-locking`.
+
 ---
 
 ## Autonomous Execution

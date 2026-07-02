@@ -101,6 +101,10 @@ If you suspect a lock is stale or the watcher is unresponsive:
 2. If stopped, run `collab daemon-start`.
 3. Check `collab active`.
 4. If still blocked, check `collab status path/to/file.py` to see the exact owner.
+5. If locks remain after a deleted worktree or hard-killed daemon (your own
+   Auto-Watch rows, no local work for those paths): `collab prune-orphans`
+   (or `collab reconcile --prune-orphans`). Never force-release other
+   developers' locks. See `AGENTS.md` → "Orphan Lock Rows After Ungraceful Exit".
 
 ### Worktree cleanup when finishing a chat
 
@@ -109,6 +113,8 @@ Cursor has no per-chat teardown event, so a per-worktree watcher keeps running
 worktree, run `collab worktree-unregister <path>` (or `collab daemon-stop
 --worktree <path>`), or delete the folder / `git worktree remove <path>` to let
 it auto-reap. See `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
+If Supabase lock rows remain after ungraceful exit, run `collab prune-orphans`
+(same developer only).
 
 ---
 

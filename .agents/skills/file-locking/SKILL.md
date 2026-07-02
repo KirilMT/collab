@@ -116,3 +116,37 @@ done": never leave an orphaned watcher behind.
 > Note: `COLLAB_STATE_DIR` is a test/custom-deployment knob that forces a single
 > shared state namespace for all roots (mutually exclusive with per-worktree
 > isolation). Leave it unset in normal use so each worktree stays isolated.
+
+---
+
+## Step 6: Orphan Lock Rows After Ungraceful Exit (#182)
+
+Process teardown (Step 5) stops the watcher. If the daemon was killed hard or the
+worktree folder disappeared before graceful release, **Supabase lock rows can
+remain** and still show on `collab active` / the dashboard as the human developer's
+Auto-Watch locks — even though no live watcher holds them.
+
+| Situation                                                                     | Action                                                                                          |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Your own stale Auto-Watch locks, no local dirty/unpushed work for those paths | `collab prune-orphans` or `collab reconcile --prune-orphans`                                    |
+| Preview only                                                                  | `collab prune-orphans --dry-run`                                                                |
+| Faster release of very recent own Auto-Watch orphans                          | `collab prune-orphans --aggressive`                                                             |
+| Other developers' old Auto-Watch rows (admin only)                            | `collab prune-orphans --foreign-auto-watch --max-age-hours 24` with `SUPABASE_SERVICE_ROLE_KEY` |
+
+**Rules (same as force-release policy):**
+
+- Prefer `worktree-unregister` first so graceful release runs when possible.
+- `prune-orphans` only releases **this developer's** non-claim locks that are
+  **not** in the local in-progress set (dirty/staged/unpushed + sibling worktrees).
+- Never releases PR claims (`is_pr_claim`).
+- Never force-releases another developer's locks without admin + `--foreign-auto-watch`.
+- If git status is unreliable, prune refuses and exits non-zero (no mass release).
+- A fresh watcher (`daemon-start` / `watch`) also runs an own-lock orphan prune on
+  startup.
+
+Env: `COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS` (default 24 for foreign Auto-Watch),
+`COLLAB_ORPHAN_AUTO_WATCH_GRACE_SECONDS` (default 30 with `--aggressive`).
+
+DB safety net (optional, re-run `supabase/schema.sql`): `release_stale_auto_locks(72)`
+
+- pg_cron expires Auto-Watch rows older than 72h if no client ever prunes.

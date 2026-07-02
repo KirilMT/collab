@@ -55,10 +55,14 @@ pytest --cov=collab --cov=scripts --cov-report=term-missing tests/backend
 
 ### Key Fixtures Available (tests/conftest.py)
 
-| Fixture          | Purpose                                |
-| ---------------- | -------------------------------------- |
-| `mock_env`       | Mocks environment variables            |
-| `temp_workspace` | Temporary directory for test isolation |
+| Fixture / guard                      | Purpose                                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Session isolation                    | `COLLAB_TEST_MODE=1`, isolated `COLLAB_STATE_DIR` / `COLLAB_PID_FILE` before collection                |
+| `_reap_test_daemons_after_each_test` | Autouse: force-kills **test-scoped** watcher/daemon processes after every test (#183)                  |
+| `pytest_sessionfinish`               | Re-scan + kill leftovers; fail-loud if any test daemon remains (`COLLAB_STRICT_TEST_DAEMON=1` default) |
+| `list_orphan_test_watcher_pids`      | Helper used by the guard (also unit-tested)                                                            |
+
+Production daemons (paths under `.collab/`, no `collab_test_` / `pytest-of-` / `collab_pytest_` namespace) are **never** targeted by the reaper.
 
 ---
 
@@ -75,6 +79,14 @@ pytest --cov=collab --cov=scripts --cov-report=term-missing tests/backend
    - **CI:** repository secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY` (see CONTRIBUTING).
 5. Follow the `test_<module>_<function>.py` naming convention.
 6. Use Arrange-Act-Assert pattern.
+7. **Daemon / subprocess safety (#183):** Prefer mocks for `daemon_start` /
+   watcher process boundaries. If a test **must** spawn a real process:
+   - Always reap it in `finally` (`terminate` → `wait` → `kill` on timeout).
+   - Keep sleep/duration short.
+   - Put test PID/state under a temp path that includes `collab_test_`,
+     `pytest-of-`, or `collab_pytest_` so the suite reaper can recognize it.
+   - Never leave a `time.sleep(...)` child without teardown — leaked daemons
+     pin venvs on Windows and can write spurious lock rows (see #182).
 
 ---
 

@@ -171,6 +171,11 @@ collab init-hooks --force
 
 # Reconcile local and remote lock state
 collab reconcile
+collab reconcile --prune-orphans
+
+# Release orphan locks left by dead worktrees / killed daemons
+collab prune-orphans
+collab prune-orphans --dry-run
 
 # Lock history and retention
 collab history
@@ -189,7 +194,7 @@ collab watch --interval 5 --timeout 0
 # Web dashboard (opens in browser)
 collab dashboard
 
-# Cleanup orphaned watcher processes
+# Cleanup orphaned watcher processes (preserves lock rows)
 collab cleanup
 ```
 

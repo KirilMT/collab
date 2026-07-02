@@ -218,13 +218,19 @@ collab release-batch path/to/a.py path/to/b.py
 
 # Reconcile local and remote lock state
 collab reconcile
+collab reconcile --prune-orphans   # also release orphan lock rows (#182)
+
+# Release orphan locks left by dead worktrees / killed daemons
+collab prune-orphans
+collab prune-orphans --dry-run
+collab prune-orphans --aggressive
 
 # Lock history and retention
 collab history
 collab history path/to/file.py --limit 50
 collab history-prune --days 30
 
-# Cleanup orphaned watcher processes
+# Cleanup orphaned watcher processes (preserves lock rows)
 collab cleanup
 
 # Start background watcher

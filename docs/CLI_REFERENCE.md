@@ -186,15 +186,16 @@ Spawn contract (validated): `python -m collab.lock_client watch ...`
 
 ## Sync, dashboard, history, diagnostics
 
-| Command         | Arguments     | Options                           | Description                             |
-| --------------- | ------------- | --------------------------------- | --------------------------------------- |
-| `dashboard`     | —             | —                                 | Open collaborative dashboard in browser |
-| `reconcile`     | —             | —                                 | Sync git status with Supabase locks     |
-| `history`       | `[file_path]` | `--limit` (20), `--json`          | Lock audit trail                        |
-| `history-prune` | —             | `--days` (30)                     | Delete old history rows                 |
-| `ping`          | —             | —                                 | Check Supabase connectivity + latency   |
-| `info`          | —             | —                                 | Comprehensive status overview           |
-| `logs`          | —             | `--lines` (50), `--follow` (`-f`) | Show recent collab log entries          |
+| Command         | Arguments     | Options                                                                                   | Description                                                             |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `dashboard`     | —             | —                                                                                         | Open collaborative dashboard in browser                                 |
+| `reconcile`     | —             | `--prune-orphans`, `--max-age-hours`, `--foreign-auto-watch`, `--aggressive`, `--dry-run` | Sync git status with Supabase locks; optional orphan prune (#182)       |
+| `prune-orphans` | —             | `--max-age-hours`, `--foreign-auto-watch`, `--aggressive`, `--dry-run`                    | Release orphan lock rows left by dead worktrees / killed daemons (#182) |
+| `history`       | `[file_path]` | `--limit` (20), `--json`                                                                  | Lock audit trail                                                        |
+| `history-prune` | —             | `--days` (30)                                                                             | Delete old history rows                                                 |
+| `ping`          | —             | —                                                                                         | Check Supabase connectivity + latency                                   |
+| `info`          | —             | —                                                                                         | Comprehensive status overview                                           |
+| `logs`          | —             | `--lines` (50), `--follow` (`-f`)                                                         | Show recent collab log entries                                          |
 
 **Examples:**
 
@@ -203,7 +204,19 @@ collab ping
 collab info
 collab logs --lines 20
 collab logs --follow
+
+# Heal Auto-Watch lock rows left by a dead worktree / killed daemon (#182)
+collab prune-orphans
+collab prune-orphans --dry-run
+collab reconcile --prune-orphans --aggressive
+# admin + service role only:
+collab prune-orphans --foreign-auto-watch --max-age-hours 24
 ```
+
+`prune-orphans` releases **this developer's** non–PR-claim locks that are no longer
+in local in-progress work. It refuses when git status is unreliable. A fresh
+watcher also runs an own-lock orphan prune on startup. See
+[TROUBLESHOOTING.md](./TROUBLESHOOTING.md#phantom-locks-after-a-deleted-worktree-or-killed-daemon-182).
 
 ---
 
@@ -221,17 +234,19 @@ Use when the IDE runs the watcher directly instead of `collab daemon-start`.
 
 ## Environment variables (CLI-relevant)
 
-| Variable                            | Effect                                       |
-| ----------------------------------- | -------------------------------------------- |
-| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Required for remote locks                    |
-| `SUPABASE_SERVICE_ROLE_KEY`         | `force-release*` commands                    |
-| `DEVELOPER_ID`                      | Lock owner id (default: git user)            |
-| `COLLAB_STATE_DIR` / `COLLAB_HOME`  | State and PID files                          |
-| `COLLAB_PROJECT_ROOT`               | Override project root for watcher            |
-| `COLLAB_AUTO_START_WATCHER`         | `0` disables auto-start on `active`/`status` |
-| `COLLAB_TEST_MODE`                  | Test harness; skips destructive shutdown     |
-| `LOCK_STRICT`                       | `1` = strict git hook behavior               |
-| `PYTEST_CURRENT_TEST`               | Disables auto watcher start under pytest     |
+| Variable                                 | Effect                                                  |
+| ---------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`      | Required for remote locks                               |
+| `SUPABASE_SERVICE_ROLE_KEY`              | `force-release*`; foreign `--foreign-auto-watch` prune  |
+| `DEVELOPER_ID`                           | Lock owner id (default: git user)                       |
+| `COLLAB_STATE_DIR` / `COLLAB_HOME`       | State and PID files                                     |
+| `COLLAB_PROJECT_ROOT`                    | Override project root for watcher                       |
+| `COLLAB_AUTO_START_WATCHER`              | `0` disables auto-start on `active`/`status`            |
+| `COLLAB_TEST_MODE`                       | Test harness; skips destructive shutdown                |
+| `COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS`       | Foreign Auto-Watch age for `prune-orphans` (default 24) |
+| `COLLAB_ORPHAN_AUTO_WATCH_GRACE_SECONDS` | Aggressive own Auto-Watch grace (default 30)            |
+| `LOCK_STRICT`                            | `1` = strict git hook behavior                          |
+| `PYTEST_CURRENT_TEST`                    | Disables auto watcher start under pytest                |
 
 Full list: [API.md](./API.md#environment-variables).
 

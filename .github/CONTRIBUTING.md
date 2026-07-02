@@ -126,6 +126,17 @@ When done with a worktree, run `collab worktree-unregister <path>` (alias
 remove <path>` to let it auto-reap within one poll interval. Full policy:
 `AGENTS.md` → "Worktree Lifecycle & Chat-Switch Cleanup".
 
+If **lock rows** remain in Supabase after an ungraceful exit (deleted worktree,
+hard-killed daemon), heal **your own** Auto-Watch orphans with
+`collab prune-orphans` (or `collab reconcile --prune-orphans`). Do not force-release
+other developers' locks. See `AGENTS.md` → "Orphan Lock Rows After Ungraceful Exit"
+and skill `file-locking`.
+
+When writing tests that touch daemons/watchers, prefer mocks; if a real subprocess
+is required, always reap it in `finally` and keep state under a test namespace so
+the suite reaper in `tests/conftest.py` can clean up (#183). See skill
+`testing-workflow`.
+
 ## Branching and PR Flow
 
 Branching and push policy is defined in `.github/GIT_WORKFLOW.md`.

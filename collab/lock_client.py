@@ -1730,6 +1730,209 @@ class LockClient:
             logger.error("Failed to force_release_all: %s", e)
             return 0
 
+    @staticmethod
+    def _lock_age_seconds(lock: Dict) -> Optional[float]:
+        """Return age of *lock* in seconds from ``acquired_at``, or None if unknown."""
+        acquired_str = lock.get("acquired_at")
+        if not acquired_str:
+            return None
+        try:
+            acq_dt = (
+                datetime.fromisoformat(str(acquired_str))
+                .astimezone()
+                .replace(tzinfo=None)
+            )
+            return max(0.0, (_safe_now() - acq_dt).total_seconds())
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _is_auto_watch_lock(lock: Dict) -> bool:
+        """Return True when *lock* is a background auto-watch lock.
+
+        Auto-watch locks are ALWAYS created with the explicit reason ``"Auto-Watch
+        Sync"`` (see :meth:`watch` / :meth:`_reconcile`). An empty or NULL reason is
+        therefore NOT auto-watch — it comes from a manual ``collab acquire`` without
+        ``--reason`` — and must never be classified as auto-watch, otherwise the
+        foreign-prune path and the SQL safety net could release a legitimate manual lock
+        (#182 no-false-positive guarantee).
+        """
+        reason = str(lock.get("reason") or "").strip().lower()
+        if not reason:
+            return False
+        return "auto-watch" in reason or reason in {"auto watch sync", "autowatch"}
+
+    @staticmethod
+    def _is_pr_claim_lock(lock: Dict) -> bool:
+        """Return True when *lock* is a persistent PR claim (not an orphan
+        candidate)."""
+        flag = lock.get("is_pr_claim")
+        if flag is True or flag == 1 or str(flag).lower() in {"true", "t", "1"}:
+            return True
+        return False
+
+    def prune_orphan_locks(
+        self,
+        *,
+        max_age_hours: Optional[float] = None,
+        include_foreign_auto_watch: bool = False,
+        aggressive: bool = False,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Release lock rows no longer backed by live local in-progress work (#182).
+
+        When a worktree or daemon dies ungracefully, Supabase rows can remain even
+        though no watcher still owns them. This pass:
+
+        1. Computes the same in-progress set as reconcile (dirty/unpushed + sibling
+           worktrees). If git status cannot be trusted, returns without releasing.
+        2. Releases **this developer's** non-claim locks whose paths are not in that
+           set (after the normal minimum auto-lock hold, unless *aggressive* and the
+           lock is Auto-Watch).
+        3. Optionally (admin + *include_foreign_auto_watch*): force-releases other
+           developers' Auto-Watch locks older than *max_age_hours* (default from
+           ``COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS``, 24h). Never touches PR claims.
+
+        Returns a summary dict with keys ``released``, ``skipped``, ``count``,
+        ``dry_run``, and ``git_ok``.
+        """
+        summary: Dict[str, Any] = {
+            "released": [],
+            "skipped": [],
+            "count": 0,
+            "dry_run": bool(dry_run),
+            "git_ok": True,
+        }
+
+        if max_age_hours is None:
+            try:
+                max_age_hours = float(
+                    os.getenv("COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS", "24")
+                )
+            except (TypeError, ValueError):
+                max_age_hours = 24.0
+        max_age_hours = max(0.0, float(max_age_hours))
+        max_age_seconds = max_age_hours * 3600.0
+        min_hold = float(_min_auto_lock_hold_seconds())
+        # Aggressive Auto-Watch prune still waits a short grace so a brand-new
+        # lock from a live reconcile cycle is not immediately torn down.
+        aggressive_auto_grace = float(
+            os.getenv("COLLAB_ORPHAN_AUTO_WATCH_GRACE_SECONDS", "30")
+        )
+
+        try:
+            in_progress_list, git_ok = self._get_modified_and_unpushed_files()
+        except Exception as exc:
+            logger.error("prune_orphan_locks: git scan failed: %s", exc)
+            summary["git_ok"] = False
+            return summary
+
+        if not git_ok:
+            logger.warning(
+                "prune_orphan_locks: git status unreliable — refusing to release"
+            )
+            summary["git_ok"] = False
+            return summary
+
+        in_progress = set(in_progress_list or [])
+
+        try:
+            active = self.active()
+        except LockServiceUnavailableError as exc:
+            logger.error("prune_orphan_locks: lock service unavailable: %s", exc)
+            summary["git_ok"] = False
+            return summary
+        except Exception as exc:
+            logger.error("prune_orphan_locks: active() failed: %s", exc)
+            summary["git_ok"] = False
+            return summary
+
+        for lk in active or []:
+            fp = lk.get("file_path")
+            if not isinstance(fp, str) or not fp:
+                continue
+            if self._is_pr_claim_lock(lk):
+                summary["skipped"].append({"file_path": fp, "reason": "pr_claim"})
+                continue
+
+            owner = str(lk.get("developer_id") or "")
+            age = self._lock_age_seconds(lk)
+            is_auto = self._is_auto_watch_lock(lk)
+            is_mine = owner == self.developer_id
+
+            if is_mine:
+                if fp in in_progress:
+                    summary["skipped"].append(
+                        {"file_path": fp, "reason": "still_in_progress"}
+                    )
+                    continue
+                # Not in local in-progress work → orphan candidate for this developer.
+                if age is not None:
+                    if aggressive and is_auto:
+                        if age < aggressive_auto_grace:
+                            summary["skipped"].append(
+                                {"file_path": fp, "reason": "young_auto_watch"}
+                            )
+                            continue
+                    elif age < min_hold:
+                        summary["skipped"].append(
+                            {"file_path": fp, "reason": "min_hold"}
+                        )
+                        continue
+                if dry_run:
+                    summary["released"].append(fp)
+                    continue
+                if self._release_developer_scope(fp):
+                    summary["released"].append(fp)
+                    logger.info("🔓 [ORPHAN-PRUNE] %s — own lock not in local work", fp)
+                else:
+                    summary["skipped"].append(
+                        {"file_path": fp, "reason": "release_failed"}
+                    )
+                continue
+
+            # Foreign locks: only Auto-Watch rows, only with admin + opt-in.
+            if not include_foreign_auto_watch:
+                summary["skipped"].append(
+                    {"file_path": fp, "reason": "foreign_not_requested"}
+                )
+                continue
+            if not self._is_admin:
+                summary["skipped"].append(
+                    {"file_path": fp, "reason": "foreign_needs_admin"}
+                )
+                continue
+            if not is_auto:
+                summary["skipped"].append(
+                    {"file_path": fp, "reason": "foreign_not_auto_watch"}
+                )
+                continue
+            if age is None or age < max_age_seconds:
+                summary["skipped"].append(
+                    {"file_path": fp, "reason": "foreign_too_young"}
+                )
+                continue
+            if dry_run:
+                summary["released"].append(fp)
+                continue
+            ok, _msg = self.force_release(fp)
+            if ok:
+                summary["released"].append(fp)
+                logger.info(
+                    "🔓 [ORPHAN-PRUNE] %s — foreign Auto-Watch lock older than %.1fh "
+                    "(owner=@%s)",
+                    fp,
+                    max_age_hours,
+                    owner,
+                )
+            else:
+                summary["skipped"].append(
+                    {"file_path": fp, "reason": "force_release_failed"}
+                )
+
+        summary["count"] = len(summary["released"])
+        return summary
+
     def _warn_if_non_editable(self) -> None:
         """Emit a warning if the package is installed non-editably in a source tree."""
         # Only warn if we appear to be in a source checkout of collab itself
@@ -3154,7 +3357,12 @@ class LockClient:
         # Initial remote lock scan (logs [LOCKED] for existing locks)
         self._scan_remote_locks()
 
-        # Startup reconciliation: sync Supabase lock state with local git
+        # Startup reconciliation: sync Supabase lock state with local git.
+        # This already releases THIS developer's locks whose files are no longer
+        # in progress (own human + agent stale locks), so orphan rows from a dead
+        # daemon in this same worktree self-heal here. Cross-worktree / no-watcher
+        # and foreign orphans are handled by ``collab prune-orphans`` and the DB
+        # safety net (release_stale_auto_locks), not by a redundant startup pass.
         last_modified = self._reconcile()
 
         # Short grace window after startup where a missing heartbeat should

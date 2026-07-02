@@ -1,5 +1,6 @@
 import atexit
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -7,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -55,25 +57,91 @@ def _cleanup_session_temp():
         pass
 
 
+def _is_test_namespace_path(text: str) -> bool:
+    """Return True when *text* references an isolated test state namespace."""
+    lowered = (text or "").lower().replace('"', "")
+    return (
+        "pytest-of-" in lowered
+        or "collab_test_" in lowered
+        or "collab_pytest_" in lowered
+        or "\\pytest\\" in lowered
+        or "/pytest/" in lowered
+    )
+
+
 def _is_test_watcher_cmdline(cmdline: str) -> bool:
-    """Return True for watcher processes started by test runs only."""
-    text = (cmdline or "").lower().replace('"', "")
-    if "lock_client.py watch" not in text:
-        return False
-    if "--daemon" not in text:
-        return False
-    if "--pid-file" not in text:
-        return False
-    # Strictly match temp test namespaces; never touch production .collab/.daemon.pid.
-    return "pytest-of-" in text or "collab_test_" in text or "collab_pytest_" in text
+    """Return True for watcher/daemon processes started by test runs only (#183).
 
-
-def _terminate_orphan_test_watchers() -> None:
-    """Best-effort kill for orphaned test watcher daemons.
-
-    Keeps scope narrow to test-mode watcher cmdlines so production daemons are never
-    affected.
+    Matches lock_client watch, live_locks_watcher, ``python -m collab watch``, and
+    collab console-script wrappers **only** when the cmdline also references a test
+    isolation namespace (temp dirs / pytest paths). Production daemons that use
+    ``.collab/.daemon.pid`` are never targeted.
     """
+    text = (cmdline or "").lower().replace('"', "")
+    if not text.strip():
+        return False
+    if not _is_test_namespace_path(text):
+        return False
+
+    # Classic daemon form: lock_client.py watch --daemon --pid-file <test ns>
+    if "lock_client" in text and "watch" in text:
+        return True
+    # Module entry: python -m collab watch / python -m collab.live_locks_watcher
+    if " -m collab" in text or " -m collab." in text:
+        if "watch" in text or "live_locks_watcher" in text:
+            return True
+    # Direct live_locks_watcher module / script
+    if "live_locks_watcher" in text:
+        return True
+    # Heartbeat keeper spawned under the test state dir (namespace already gated).
+    if "daemon_heartbeat" in text:
+        return True
+    if "heartbeat" in text and ("keeper" in text or "collab" in text):
+        return True
+    # Console script wrappers launched with a test pid/state path
+    if ("collab.exe" in text or "collab-watcher" in text or "\\collab " in text) and (
+        "watch" in text or "--pid-file" in text or "daemon" in text
+    ):
+        return True
+    return False
+
+
+def _iter_pythonish_processes_psutil() -> "list[tuple[int, str]] | None":
+    """Fast in-process scan via psutil (a declared runtime dependency).
+
+    Returns ``(pid, cmdline)`` pairs, or None if psutil is unavailable so the caller can
+    fall back to the subprocess-based enumeration. This avoids spawning a PowerShell/ps
+    process after every test (~0.7s each on Windows), which would add many minutes of
+    overhead across the full suite (#183).
+    """
+    try:
+        import psutil
+    except Exception:
+        return None
+    rows: list[tuple[int, str]] = []
+    try:
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                info = proc.info
+                pid = int(info.get("pid") or 0)
+                if pid <= 0:
+                    continue
+                cmd = info.get("cmdline") or []
+                cmdline = " ".join(cmd) if cmd else (info.get("name") or "")
+                rows.append((pid, cmdline))
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return rows
+
+
+def _iter_pythonish_processes() -> list[tuple[int, str]]:
+    """Return ``(pid, cmdline)`` pairs for python/collab-like processes."""
+    fast = _iter_pythonish_processes_psutil()
+    if fast is not None:
+        return fast
+    rows: list[tuple[int, str]] = []
     try:
         if os.name == "nt":
             proc = subprocess.run(
@@ -83,8 +151,11 @@ def _terminate_orphan_test_watchers() -> None:
                     "-Command",
                     (
                         "Get-CimInstance Win32_Process | "
-                        "Where-Object { $_.Name -eq 'pythonw.exe' "
-                        "-or $_.Name -eq 'python.exe' } | "
+                        "Where-Object { "
+                        "$_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe' "
+                        "-or $_.Name -eq 'collab.exe' "
+                        "-or $_.Name -eq 'collab-watcher.exe' "
+                        "} | "
                         "Select-Object ProcessId,CommandLine | "
                         "ConvertTo-Json -Compress"
                     ),
@@ -92,43 +163,88 @@ def _terminate_orphan_test_watchers() -> None:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=30,
             )
             raw = (proc.stdout or "").strip()
             if not raw:
-                return
-            import json
-
-            rows = json.loads(raw)
-            if isinstance(rows, dict):
-                rows = [rows]
-            for row in rows:
+                return rows
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            for row in parsed or []:
                 pid = int(row.get("ProcessId", 0) or 0)
                 cmdline = row.get("CommandLine") or ""
-                if pid > 0 and _is_test_watcher_cmdline(cmdline):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except Exception:
-                        pass
+                if pid > 0:
+                    rows.append((pid, cmdline))
         else:
             proc = subprocess.run(
                 ["ps", "-eo", "pid,args"],
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=30,
             )
             for line in (proc.stdout or "").splitlines():
                 m = re.match(r"^\s*(\d+)\s+(.*)$", line)
                 if not m:
                     continue
-                pid = int(m.group(1))
-                cmdline = m.group(2)
-                if _is_test_watcher_cmdline(cmdline):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except Exception:
-                        pass
+                rows.append((int(m.group(1)), m.group(2)))
+    except Exception:
+        return rows
+    return rows
+
+
+def _force_kill_pid(pid: int) -> None:
+    """Best-effort terminate *pid* (and tree on Windows)."""
+    if pid <= 0 or pid == os.getpid():
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+            # SIGKILL is POSIX-only; getattr keeps this cross-platform and avoids a
+            # static "module has no attribute SIGKILL" error on win32 (this branch
+            # never runs on Windows, where taskkill is used above).
+            sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+            try:
+                os.kill(pid, sigkill)
+            except ProcessLookupError:
+                pass
     except Exception:
         pass
+
+
+def list_orphan_test_watcher_pids() -> list[tuple[int, str]]:
+    """Return ``(pid, cmdline)`` for live test-scoped watcher/daemon processes."""
+    found: list[tuple[int, str]] = []
+    for pid, cmdline in _iter_pythonish_processes():
+        if pid == os.getpid():
+            continue
+        if _is_test_watcher_cmdline(cmdline):
+            found.append((pid, cmdline))
+    return found
+
+
+def _terminate_orphan_test_watchers() -> list[tuple[int, str]]:
+    """Best-effort kill for orphaned test watcher daemons (#183).
+
+    Keeps scope narrow to test-mode watcher cmdlines so production daemons are never
+    affected. Returns the list of processes that were targeted.
+    """
+    targets = list_orphan_test_watcher_pids()
+    for pid, _cmdline in targets:
+        _force_kill_pid(pid)
+    return targets
 
 
 # Ensure test mode is explicitly kept, do not clear it, so late-firing
@@ -138,13 +254,60 @@ atexit.register(_terminate_orphan_test_watchers)
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Cleanup any orphaned test watcher daemons at end of a pytest session."""
+    """Cleanup any orphaned test watcher daemons at end of a pytest session (#183).
+
+    After a force-kill pass, re-scan once. If any test-scoped daemons remain, mark the
+    session failed so multi-daemon proliferation cannot land silently.
+    """
     _terminate_orphan_test_watchers()
+    # Brief settle so taskkill/SIGKILL can reap before the final scan.
+    time.sleep(0.15)
+    remaining = list_orphan_test_watcher_pids()
+    if not remaining:
+        return
+    # One more kill attempt for stubborn Windows process trees.
+    for pid, _cmd in remaining:
+        _force_kill_pid(pid)
+    time.sleep(0.2)
+    still = list_orphan_test_watcher_pids()
+    if not still:
+        return
+    detail = "; ".join(f"pid={pid} cmd={cmd[:120]}" for pid, cmd in still[:8])
+    reporter = getattr(session.config, "pluginmanager", None)
+    # Prefer a session-level failure without aborting mid-report hard.
+    try:
+        session.exitstatus = 1
+    except Exception:
+        pass
+    # Surface a clear terminal message (and optional strict abort).
+    sys.stderr.write(
+        "\n[collab test guard] leftover test daemon/watcher process(es) after suite "
+        f"({len(still)}): {detail}\n"
+    )
+    sys.stderr.flush()
+    if os.getenv("COLLAB_STRICT_TEST_DAEMON", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        # Fail the session exit code; do not raise (can corrupt pytest reporting).
+        if exitstatus == 0:
+            try:
+                session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            except Exception:
+                session.exitstatus = 1
+    _ = reporter  # reserved for future terminal-reporter integration
 
 
 def _load_logging_config_module():
-    collab_root = Path(__file__).resolve().parents[2]
-    logging_config_path = collab_root / "logging_config.py"
+    collab_root = Path(__file__).resolve().parents[1]
+    # Prefer package logging_config under collab/
+    candidates = [
+        collab_root / "collab" / "logging_config.py",
+        collab_root / "logging_config.py",
+    ]
+    logging_config_path = next((p for p in candidates if p.is_file()), candidates[0])
     spec = importlib.util.spec_from_file_location(
         "collab.logging_config_test_cleanup", str(logging_config_path)
     )
@@ -171,6 +334,13 @@ def _reset_subprocess_bridge_override():
     subprocess_bridge.set_test_override(None)
     yield
     subprocess_bridge.set_test_override(None)
+
+
+@pytest.fixture(autouse=True)
+def _reap_test_daemons_after_each_test():
+    """Per-test safety net so a single leak cannot accumulate across the suite."""
+    yield
+    _terminate_orphan_test_watchers()
 
 
 # ============================================================================
