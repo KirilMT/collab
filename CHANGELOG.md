@@ -11,19 +11,17 @@ and this project adheres to
 
 ## [0.10.0](https://github.com/KirilMT/collab/compare/v0.9.3...v0.10.0) (2026-07-02)
 
-
 ### Features
 
-* **daemon:** per-worktree teardown + fast worktree-gone reap ([#179](https://github.com/KirilMT/collab/issues/179)) ([9c68c5d](https://github.com/KirilMT/collab/commit/9c68c5da0317cdc54fa115a251327638e1ada187)), closes [#168](https://github.com/KirilMT/collab/issues/168)
-
+- **daemon:** per-worktree teardown + fast worktree-gone reap ([#179](https://github.com/KirilMT/collab/issues/179)) ([9c68c5d](https://github.com/KirilMT/collab/commit/9c68c5da0317cdc54fa115a251327638e1ada187)), closes [#168](https://github.com/KirilMT/collab/issues/168)
 
 ### Bug Fixes
 
-* **daemon:** honor PR claims end-to-end and auto-update git hooks ([#181](https://github.com/KirilMT/collab/issues/181)) ([#185](https://github.com/KirilMT/collab/issues/185)) ([34e1e39](https://github.com/KirilMT/collab/commit/34e1e39ed96287637cb0a3289f7b5b9e16282227))
-* **daemon:** stop phantom auto-watch locks when local branch is behind upstream ([#184](https://github.com/KirilMT/collab/issues/184)) ([5ffc481](https://github.com/KirilMT/collab/commit/5ffc48176ccd8012bb0b473d92ed7de2ca98f073)), closes [#178](https://github.com/KirilMT/collab/issues/178)
-* **locks:** heal orphan lock rows and stop test daemon leaks ([#182](https://github.com/KirilMT/collab/issues/182), [#183](https://github.com/KirilMT/collab/issues/183)) ([#186](https://github.com/KirilMT/collab/issues/186)) ([b6524d1](https://github.com/KirilMT/collab/commit/b6524d1c5eb47d1581a0776bb68fc15253695668))
-* **security:** resolve all 13 CodeQL code scanning alerts ([#188](https://github.com/KirilMT/collab/issues/188)) ([7310e34](https://github.com/KirilMT/collab/commit/7310e34e8bb735911738c3fd86b478ad5d43f65f)), closes [#187](https://github.com/KirilMT/collab/issues/187)
-* **security:** switch dependabot-autoformat from pull_request_target to pull_request ([#189](https://github.com/KirilMT/collab/issues/189)) ([4da4106](https://github.com/KirilMT/collab/commit/4da41062327aa33e57df1c9a8e22d4630e47186b)), closes [#175](https://github.com/KirilMT/collab/issues/175)
+- **daemon:** honor PR claims end-to-end and auto-update git hooks ([#181](https://github.com/KirilMT/collab/issues/181)) ([#185](https://github.com/KirilMT/collab/issues/185)) ([34e1e39](https://github.com/KirilMT/collab/commit/34e1e39ed96287637cb0a3289f7b5b9e16282227))
+- **daemon:** stop phantom auto-watch locks when local branch is behind upstream ([#184](https://github.com/KirilMT/collab/issues/184)) ([5ffc481](https://github.com/KirilMT/collab/commit/5ffc48176ccd8012bb0b473d92ed7de2ca98f073)), closes [#178](https://github.com/KirilMT/collab/issues/178)
+- **locks:** heal orphan lock rows and stop test daemon leaks ([#182](https://github.com/KirilMT/collab/issues/182), [#183](https://github.com/KirilMT/collab/issues/183)) ([#186](https://github.com/KirilMT/collab/issues/186)) ([b6524d1](https://github.com/KirilMT/collab/commit/b6524d1c5eb47d1581a0776bb68fc15253695668))
+- **security:** resolve all 13 CodeQL code scanning alerts ([#188](https://github.com/KirilMT/collab/issues/188)) ([7310e34](https://github.com/KirilMT/collab/commit/7310e34e8bb735911738c3fd86b478ad5d43f65f)), closes [#187](https://github.com/KirilMT/collab/issues/187)
+- **security:** switch dependabot-autoformat from pull_request_target to pull_request ([#189](https://github.com/KirilMT/collab/issues/189)) ([4da4106](https://github.com/KirilMT/collab/commit/4da41062327aa33e57df1c9a8e22d4630e47186b)), closes [#175](https://github.com/KirilMT/collab/issues/175)
 
 ## [0.9.3](https://github.com/KirilMT/collab/compare/v0.9.2...v0.9.3) (2026-07-01)
 
