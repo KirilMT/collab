@@ -10,6 +10,9 @@ name: Supabase Keep-Alive
     - cron: "0 12 * * 1,4"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   ping:
     runs-on: ubuntu-latest

@@ -6,6 +6,9 @@ name: Lock Service Smoke Test
     branches: [main]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 concurrency:
   group: smoke-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
