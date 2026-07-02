@@ -464,3 +464,62 @@ exception
     null;
 end;
 $claims$;
+
+-- ---------------------------------------------------------------------------
+-- Safety net for orphaned Auto-Watch locks (#182)
+-- ---------------------------------------------------------------------------
+-- When a worktree/daemon dies ungracefully, Auto-Watch rows can remain forever
+-- if the owner never runs reconcile/prune-orphans. This deletes only background
+-- Auto-Watch locks older than p_hours (default 72). PR claims and explicit
+-- human/agent claims (non Auto-Watch reasons) are left alone.
+--
+-- IMPORTANT: Auto-Watch locks ALWAYS carry the explicit reason "Auto-Watch Sync".
+-- A NULL/empty reason is a manual ``collab acquire`` without --reason and must NOT
+-- be swept here (no false positives). NULL reason makes the predicate NULL, so
+-- such rows are naturally excluded.
+create or replace function release_stale_auto_locks(p_hours integer default 72)
+returns bigint as $$
+declare
+  v_deleted bigint;
+begin
+  if p_hours < 1 then
+    raise exception 'p_hours must be >= 1';
+  end if;
+
+  with deleted as (
+    delete from file_locks
+    where coalesce(is_pr_claim, false) = false
+      and (
+        lower(reason) like '%auto-watch%'
+        or lower(reason) in ('auto watch sync', 'autowatch')
+      )
+      and acquired_at < now() - make_interval(hours => p_hours)
+    returning 1
+  )
+  select count(*) into v_deleted from deleted;
+
+  return coalesce(v_deleted, 0);
+end;
+$$ language plpgsql security definer;
+
+-- Optional daily scheduler for Auto-Watch orphan expiry. Safe to rerun.
+do $autolocks$
+begin
+  if to_regclass('cron.job') is not null then
+    perform cron.unschedule(jobid)
+    from cron.job
+    where jobname = 'release_stale_auto_watch_locks';
+
+    perform cron.schedule(
+      'release_stale_auto_watch_locks',
+      '25 3 * * *',
+      $job$select release_stale_auto_locks(72);$job$
+    );
+  end if;
+exception
+  when undefined_function then
+    null;
+  when undefined_table then
+    null;
+end;
+$autolocks$;

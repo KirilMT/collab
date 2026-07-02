@@ -479,6 +479,36 @@ AI agents: treat worktree cleanup as part of "task done" — if you created or
 worked inside a throwaway worktree, run `collab worktree-unregister <path>` (or
 remove the worktree) before reporting completion. Never leave orphaned watchers.
 
+### Orphan Lock Rows After Ungraceful Exit (#182)
+
+Stopping the **process** (worktree-unregister / daemon-stop / folder delete) does
+not always clear **Supabase lock rows** if the daemon was `kill -9`'d or the
+worktree vanished before graceful release. Residual Auto-Watch locks still show
+on the dashboard / `collab active` as owned by the human developer.
+
+**Heal DB state (same developer — preferred):**
+
+```bash
+collab prune-orphans
+# or:
+collab reconcile --prune-orphans
+```
+
+A fresh `collab daemon-start` / watcher also runs an own-lock orphan prune on
+startup. Prefer `worktree-unregister` so graceful release runs first; use
+`prune-orphans` when locks remain after a crash or deleted worktree.
+
+- Never force-releases **other** developers' locks unless admin
+  (`SUPABASE_SERVICE_ROLE_KEY`) + explicit `--foreign-auto-watch`.
+- Never touches PR claims (`is_pr_claim`).
+- Refuses to prune when local git status is unreliable (no false positives on
+  live in-progress work).
+- Optional DB safety net: `release_stale_auto_locks(72)` in `supabase/schema.sql`
+  (pg_cron) expires old Auto-Watch rows if no client runs.
+
+Full procedure: skill `file-locking` → "Orphan lock rows"; user docs:
+`docs/TROUBLESHOOTING.md` → "Phantom locks after a deleted worktree".
+
 ### File Safety
 
 - Never use destructive restore commands to undo unrelated work.
@@ -504,18 +534,18 @@ remove the worktree) before reporting completion. Never leave orphaned watchers.
 
 Workflow procedures are in `.agents/skills/`:
 
-| Skill                 | Trigger                                                           |
-| --------------------- | ----------------------------------------------------------------- |
-| `shell-compatibility` | Mandatory shell detection and shell-native terminal command usage |
-| `file-locking`        | Mandatory lock verification before edits                          |
-| `testing-workflow`    | Test planning, coverage, validation                               |
-| `commit-workflow`     | Staging, reviewing, committing, pushing                           |
-| `bug-tracking`        | Discovery, triage, fix, and closure via GitHub Issues             |
-| `new-feature`         | Feature planning and implementation                               |
+| Skill                 | Trigger                                                               |
+| --------------------- | --------------------------------------------------------------------- |
+| `shell-compatibility` | Mandatory shell detection and shell-native terminal command usage     |
+| `file-locking`        | Lock checks before edits; worktree teardown; orphan lock prune (#182) |
+| `testing-workflow`    | Test planning, coverage, validation; test daemon reaper rules (#183)  |
+| `commit-workflow`     | Staging, reviewing, committing, pushing                               |
+| `bug-tracking`        | Discovery, triage, fix, and closure via GitHub Issues                 |
+| `new-feature`         | Feature planning and implementation                                   |
 
 ---
 
 ## Version
 
 **Version:** 0.3.3
-**Last Updated:** June 2, 2026
+**Last Updated:** July 2, 2026

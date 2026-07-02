@@ -187,7 +187,25 @@ Force-synchronize local lock state with the remote Supabase state.
 
 ```bash
 collab reconcile
+collab reconcile --prune-orphans          # also release orphan rows (#182)
+collab reconcile --prune-orphans --dry-run
 ```
+
+#### `prune-orphans`
+
+Release lock rows left behind when a worktree or daemon exits ungracefully
+(no live local in-progress work for this developer). Optional admin mode prunes
+other developers' old Auto-Watch locks.
+
+```bash
+collab prune-orphans
+collab prune-orphans --aggressive
+collab prune-orphans --foreign-auto-watch --max-age-hours 24   # needs service role
+collab prune-orphans --dry-run
+```
+
+Env: `COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS` (default 24),
+`COLLAB_ORPHAN_AUTO_WATCH_GRACE_SECONDS` (default 30 with `--aggressive`).
 
 #### `cleanup`
 
@@ -201,16 +219,19 @@ collab cleanup
 
 ## Environment Variables
 
-| Variable                    | Description                                                         |
-| :-------------------------- | :------------------------------------------------------------------ |
-| `SUPABASE_URL`              | Your Supabase project URL.                                          |
-| `SUPABASE_ANON_KEY`         | Supabase anonymous/public key.                                      |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (for force-release).                      |
-| `DEVELOPER_ID`              | Custom developer identifier (defaults to git user.name).            |
-| `COLLAB_DEVELOPER_ID`       | Same as `DEVELOPER_ID` (preferred name).                            |
-| `COLLAB_AGENT_ID`           | Stable agent identity for multi-agent workflows.                    |
-| `COLLAB_AGENT_LABEL`        | Human-readable agent/task label.                                    |
-| `COLLAB_AGENT_MODE`         | If `1`, auto-generate/persist `agent_id` when unset.                |
-| `COLLAB_STATE_DIR`          | Directory for storing PID and state files (defaults to `.collab/`). |
-| `COLLAB_LOG_LEVEL`          | Logging level (DEBUG, INFO, WARNING, ERROR).                        |
-| `LOCK_STRICT`               | If `1`, block on lock errors during git hooks.                      |
+| Variable                                 | Description                                                                        |
+| :--------------------------------------- | :--------------------------------------------------------------------------------- |
+| `SUPABASE_URL`                           | Your Supabase project URL.                                                         |
+| `SUPABASE_ANON_KEY`                      | Supabase anonymous/public key.                                                     |
+| `SUPABASE_SERVICE_ROLE_KEY`              | Supabase service role key (for force-release / foreign orphan prune).              |
+| `DEVELOPER_ID`                           | Custom developer identifier (defaults to git user.name).                           |
+| `COLLAB_DEVELOPER_ID`                    | Same as `DEVELOPER_ID` (preferred name).                                           |
+| `COLLAB_AGENT_ID`                        | Stable agent identity for multi-agent workflows.                                   |
+| `COLLAB_AGENT_LABEL`                     | Human-readable agent/task label.                                                   |
+| `COLLAB_AGENT_MODE`                      | If `1`, auto-generate/persist `agent_id` when unset.                               |
+| `COLLAB_STATE_DIR`                       | Directory for storing PID and state files (defaults to `.collab/`).                |
+| `COLLAB_LOG_LEVEL`                       | Logging level (DEBUG, INFO, WARNING, ERROR).                                       |
+| `LOCK_STRICT`                            | If `1`, block on lock errors during git hooks.                                     |
+| `COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS`       | Max age (hours) for foreign Auto-Watch prune (`--foreign-auto-watch`; default 24). |
+| `COLLAB_ORPHAN_AUTO_WATCH_GRACE_SECONDS` | Grace for own Auto-Watch with `--aggressive` (default 30).                         |
+| `COLLAB_STRICT_TEST_DAEMON`              | Test suite only: fail session if leftover test daemons remain (default `1`).       |

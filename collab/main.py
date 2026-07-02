@@ -62,6 +62,26 @@ def _ensure_watcher_running(client: object, command: str) -> bool:
         return False
 
 
+def _print_prune_orphan_summary(summary: dict) -> None:
+    """Print a human-readable summary for :meth:`LockClient.prune_orphan_locks`."""
+    if not summary.get("git_ok", True):
+        print(
+            "✗ Refused to prune orphans: local git status is unreliable "
+            "(or the lock service is unreachable)."
+        )
+        return
+    released = list(summary.get("released") or [])
+    count = int(summary.get("count") or len(released))
+    dry = bool(summary.get("dry_run"))
+    verb = "Would release" if dry else "Released"
+    if count == 0:
+        print(f"✓ No orphan locks to prune{' (dry-run)' if dry else ''}.")
+        return
+    print(f"{'✓' if not dry else '•'} {verb} {count} orphan lock(s):")
+    for fp in released:
+        print(f"  - {fp}")
+
+
 def _run_cli() -> None:
     """CLI entry point for the lock client."""
     # Force UTF-8 on Windows so Unicode symbols (✓, ❌, 🔒) render correctly.
@@ -278,7 +298,80 @@ def _run_cli() -> None:
     )
 
     # reconcile
-    sub.add_parser("reconcile", help="Sync local git status with Supabase")
+    rec = sub.add_parser("reconcile", help="Sync local git status with Supabase")
+    rec.add_argument(
+        "--prune-orphans",
+        action="store_true",
+        help=(
+            "Also release orphan lock rows no longer backed by local in-progress "
+            "work (see prune-orphans; #182)"
+        ),
+    )
+    rec.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help=(
+            "With --prune-orphans/--foreign-auto-watch: max age for foreign "
+            "Auto-Watch"
+        ),
+    )
+    rec.add_argument(
+        "--foreign-auto-watch",
+        action="store_true",
+        help=(
+            "With --prune-orphans: also prune other developers' old Auto-Watch "
+            "locks (admin)"
+        ),
+    )
+    rec.add_argument(
+        "--aggressive",
+        action="store_true",
+        help="With --prune-orphans: shorter grace for own Auto-Watch orphans",
+    )
+    rec.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --prune-orphans: report candidates without releasing",
+    )
+
+    # prune-orphans (#182)
+    po = sub.add_parser(
+        "prune-orphans",
+        help=(
+            "Release orphaned lock rows left by dead worktrees / ungraceful "
+            "daemon exits"
+        ),
+    )
+    po.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help=(
+            "Max age (hours) for foreign Auto-Watch locks when using "
+            "--foreign-auto-watch (default: COLLAB_ORPHAN_LOCK_MAX_AGE_HOURS or 24)"
+        ),
+    )
+    po.add_argument(
+        "--foreign-auto-watch",
+        action="store_true",
+        help=(
+            "Also prune other developers' old Auto-Watch locks "
+            "(requires admin/service role)"
+        ),
+    )
+    po.add_argument(
+        "--aggressive",
+        action="store_true",
+        help=(
+            "Use a short grace for own Auto-Watch locks instead of the full " "min-hold"
+        ),
+    )
+    po.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List what would be released without deleting rows",
+    )
 
     # history
     hp = sub.add_parser("history", help="Show lock history")
@@ -458,6 +551,7 @@ def _run_cli() -> None:
         "daemon-stop",
         "worktree-unregister",
         "reconcile",
+        "prune-orphans",
         "history",
         "history-prune",
         "whoami",
@@ -669,6 +763,27 @@ def _run_cli() -> None:
 
         elif args.command == "reconcile":
             client._reconcile()
+            if getattr(args, "prune_orphans", False):
+                summary = client.prune_orphan_locks(
+                    max_age_hours=getattr(args, "max_age_hours", None),
+                    include_foreign_auto_watch=getattr(
+                        args, "foreign_auto_watch", False
+                    ),
+                    aggressive=getattr(args, "aggressive", False),
+                    dry_run=getattr(args, "dry_run", False),
+                )
+                _print_prune_orphan_summary(summary)
+
+        elif args.command == "prune-orphans":
+            summary = client.prune_orphan_locks(
+                max_age_hours=getattr(args, "max_age_hours", None),
+                include_foreign_auto_watch=getattr(args, "foreign_auto_watch", False),
+                aggressive=getattr(args, "aggressive", False),
+                dry_run=getattr(args, "dry_run", False),
+            )
+            _print_prune_orphan_summary(summary)
+            if not summary.get("git_ok", True):
+                sys.exit(1)
 
         elif args.command == "history":
             fp = getattr(args, "file_path", None)

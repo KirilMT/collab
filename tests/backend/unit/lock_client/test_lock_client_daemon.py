@@ -487,15 +487,15 @@ def test_daemon_stop_discovered_watcher_token_cleanup_and_print_failures(
 
 
 def test_daemon_status_prefers_entrypoint(tmp_path, monkeypatch):
-    # Start a dummy background python process to ensure the PID is alive.
+    # Short-lived dummy process only for liveness of the PID file — always reaped
+    # in finally so the suite cannot leave a sleeping python behind (#183).
     p = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
+        [sys.executable, "-c", "import time; time.sleep(8)"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    pid_file = tmp_path / ".daemon.pid"
     try:
-        pid_file = tmp_path / ".daemon.pid"
-
         # reuse a minimal writer to create the PID file used by the CLI
         def _write_meta(pid: int, entrypoint: str, cmdline: str) -> None:
             meta = {
@@ -531,6 +531,13 @@ def test_daemon_status_prefers_entrypoint(tmp_path, monkeypatch):
             p.terminate()
         except Exception:
             pass
+        try:
+            p.wait(timeout=3)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
         try:
             if pid_file.exists():
                 pid_file.unlink()

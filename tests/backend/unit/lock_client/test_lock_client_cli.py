@@ -709,6 +709,99 @@ def test_cli_reconcile(monkeypatch, tmp_path, capsys):
     mod._run_cli()
 
 
+def test_cli_prune_orphans_dry_run(monkeypatch, capsys):
+    """#182: prune-orphans CLI prints summary and supports --dry-run."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+
+    def _fake_prune(self, **kwargs):
+        assert kwargs.get("dry_run") is True
+        return {
+            "released": ["orphan.py"],
+            "skipped": [],
+            "count": 1,
+            "dry_run": True,
+            "git_ok": True,
+        }
+
+    monkeypatch.setattr(mod.LockClient, "prune_orphan_locks", _fake_prune)
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "prune-orphans", "--dry-run"])
+    mod._run_cli()
+    out = capsys.readouterr().out
+    assert "orphan.py" in out
+    assert "Would release" in out or "1 orphan" in out
+
+
+def test_cli_reconcile_with_prune_orphans(monkeypatch, capsys):
+    """#182: reconcile --prune-orphans invokes both paths."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    called = {"reconcile": 0, "prune": 0}
+
+    monkeypatch.setattr(
+        mod.LockClient,
+        "_reconcile",
+        lambda self: called.__setitem__("reconcile", called["reconcile"] + 1) or set(),
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "prune_orphan_locks",
+        lambda self, **kw: (
+            called.__setitem__("prune", called["prune"] + 1)
+            or {
+                "released": [],
+                "skipped": [],
+                "count": 0,
+                "dry_run": False,
+                "git_ok": True,
+            }
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "reconcile", "--prune-orphans"])
+    mod._run_cli()
+    assert called["reconcile"] == 1
+    assert called["prune"] == 1
+    assert "No orphan locks" in capsys.readouterr().out
+
+
+def test_cli_prune_orphans_git_unreliable_exits_1(monkeypatch, capsys):
+    """#182: prune-orphans exits 1 when git/service is unreliable."""
+    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")
+    monkeypatch.setattr(
+        mod, "_get_create_client", lambda: make_create_client(FakeResponse())
+    )
+    monkeypatch.setattr(
+        mod.LockClient,
+        "prune_orphan_locks",
+        lambda self, **kw: {
+            "released": [],
+            "skipped": [],
+            "count": 0,
+            "dry_run": False,
+            "git_ok": False,
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["lock_client.py", "prune-orphans"])
+    with pytest.raises(SystemExit) as exc:
+        mod._run_cli()
+    assert exc.value.code == 1
+    assert "Refused to prune" in capsys.readouterr().out
+
+
+def test_print_prune_orphan_summary_git_ok_false(capsys):
+    import collab.main as main_mod
+
+    main_mod._print_prune_orphan_summary({"git_ok": False, "released": [], "count": 0})
+    assert "Refused to prune" in capsys.readouterr().out
+
+
 def test_cli_history(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "test_key")

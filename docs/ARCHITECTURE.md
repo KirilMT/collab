@@ -85,6 +85,20 @@ watcher. The watcher's shutdown is defense-in-depth:
   is still valid on disk — Cursor exposes no per-chat lifecycle signal, so this is the explicit, safe
   primitive. Note: per-worktree isolation relies on `COLLAB_STATE_DIR` being **unset** (the default);
   setting it forces a single shared namespace and is reserved for test/custom deployments.
+- **Orphan lock-row reconciliation (#182):** Process teardown does not always clear Supabase rows
+  when a daemon is hard-killed or a worktree vanishes before graceful release. Three complementary
+  layers heal residual **Auto-Watch** (non–PR-claim) locks:
+  1. **Client prune** — `collab prune-orphans` / `collab reconcile --prune-orphans` release **this
+     developer's** locks whose paths are not in the local in-progress set (same dirty/unpushed +
+     sibling-worktree scan as reconcile). Refuses when git status is unreliable. Optional admin path:
+     `--foreign-auto-watch` + service role for other developers' old Auto-Watch rows only.
+  2. **Watcher startup reconcile** — every new `watch` / `daemon-start` loop calls `_reconcile()`,
+     which already releases this developer's stale (human + agent) locks for files no longer in
+     progress. A daemon in the same worktree therefore self-heals orphan rows left by a previously
+     killed daemon without any human CLI step; no separate startup prune pass is needed.
+  3. **DB safety net** — `release_stale_auto_locks(p_hours default 72)` + optional daily pg_cron in
+     `supabase/schema.sql` deletes only Auto-Watch rows (explicit `Auto-Watch Sync` reason) older
+     than the threshold, never PR claims or manual/agent locks (NULL/empty reason is excluded).
 
 ---
 

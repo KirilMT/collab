@@ -39,6 +39,7 @@ PyCharm / IDE watcher (`collab-watcher`) uses the same interval model.
 - Increase `--interval` on slow laptops or large repos (e.g. 15–30s).
 - Stop the watcher when not collaborating: `collab daemon-stop`.
 - Avoid multiple overlapping watcher processes; use `collab daemon-status` and `collab cleanup` if needed.
+- Stale Auto-Watch lock **rows** (not processes) after a crash: `collab prune-orphans` — does not spawn extra daemons; one-shot API cleanup.
 
 ---
 

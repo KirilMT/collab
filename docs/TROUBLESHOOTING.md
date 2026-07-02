@@ -48,6 +48,38 @@ See `AGENTS.md` for agent terminal guidance.
 
 ---
 
+## Phantom locks after a deleted worktree or killed daemon (#182)
+
+**Symptoms:** `collab active` / the dashboard still show Auto-Watch locks for files you are not
+editing. Often the locks came from a deleted Cursor Agents worktree or a `kill -9`'d watcher that
+never ran graceful release.
+
+**Fix (same developer — preferred):**
+
+```bash
+collab prune-orphans
+# or combined with a normal reconcile:
+collab reconcile --prune-orphans
+```
+
+This releases **your** non-claim locks whose paths are no longer in local in-progress work
+(dirty/unpushed + sibling worktrees). A fresh `collab daemon-start` / watcher also runs this pass
+on startup.
+
+**Admin / other developers' stale Auto-Watch rows:**
+
+```bash
+# requires SUPABASE_SERVICE_ROLE_KEY
+collab prune-orphans --foreign-auto-watch --max-age-hours 24
+```
+
+**DB safety net (optional):** re-run `supabase/schema.sql` so `release_stale_auto_locks(72)` and its
+daily pg_cron job exist — Auto-Watch locks older than 72 hours are deleted even if no client runs.
+
+**Not the same as:** behind-upstream phantom locks (fixed in #178) — pull is not required for #182.
+
+---
+
 ## Locks visible in Supabase but dashboard / `collab active` show zero
 
 **Symptoms:** Row exists in Supabase **Table Editor** for `file_locks`, VS Code status bar may show the lock, but the **Collaborative Explorer** dashboard lists **0 active locks**, or `collab active` printed **No active locks** earlier.
