@@ -1986,6 +1986,12 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 .replace(/'/g, "&#39;");
         }
 
+        function escapeAttr(value) {
+            return String(value == null ? "" : value)
+                .replace(/\\/g, "\\\\")
+                .replace(/'/g, "\\'");
+        }
+
         function isAgentLock(lock) {
             if (lock.origin === "agent") {
                 return true;
@@ -2445,7 +2451,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                     const canRelease = isMyDeveloper || IS_ADMIN;
                     const reason = lock.reason || "No reason";
                     const branch = lock.branch_name || "main";
-                    const safePath = String(lock.file_path || "").replace(/'/g, "\\'");
+                    const safePath = escapeAttr(String(lock.file_path || ""));
 
                     const action = canRelease
                         ? '<button class="btn btn-sm btn-outline-danger" onclick="initRelease(\'' + safePath + '\',' + (isMine ? "true" : "false") + ')">' +
@@ -2477,7 +2483,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 if (stillPresent) {
                     var detailId = "detail-" + expandedRowPath.replace(/[^a-zA-Z0-9]/g, "-");
                     var row = document.querySelector(
-                        "tr[data-file='" + expandedRowPath.replace(/'/g, "\\'") + "']"
+                        "tr[data-file='" + escapeAttr(expandedRowPath) + "']"
                     );
                     if (row && !document.getElementById(detailId)) {
                         var detailRow = document.createElement("tr");
@@ -2613,7 +2619,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                         ? formatDurationMinutes(Math.max(0, Math.round((rel - acq) / 60000)))
                         : "-";
                     const isMine = lockOwnedByMe(h);
-                    const safePath = String(h.file_path || "").replace(/'/g, "\\'");
+                    const safePath = escapeAttr(String(h.file_path || ""));
 
                     return (
                         '<tr data-file="' + safePath + '" class="row-expandable">' +
@@ -3362,7 +3368,7 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
             }
 
             // Build a detail panel
-            var row = document.querySelector("tr[data-file='" + filePath.replace(/'/g, "\\'") + "']");
+            var row = document.querySelector("tr[data-file='" + escapeAttr(filePath) + "']");
             if (!row) return;
 
             var detailRow = document.createElement("tr");
@@ -3375,11 +3381,14 @@ SUPABASE_ANON_KEY=your_anon_key</pre>
                 else if (typeof val === "object") val = JSON.stringify(val);
                 return '<div class="detail-label">' + k + '</div><div class="detail-value">' + String(val) + '</div>';
             }).join("");
-            var jsonHtml = '<div class="detail-json">' + JSON.stringify(lockJson, null, 2) + '</div>';
+            var jsonText = JSON.stringify(lockJson, null, 2);
             var copyBtn = '<button class="detail-copy-btn" title="Copy JSON" onclick="copyDetailJson(this)"><i class="fas fa-copy"></i></button>';
             detailRow.innerHTML = '<td colspan="6">' +
                 copyBtn +
-                '<div class="detail-grid">' + gridHtml + '</div>' + jsonHtml + '</td>';
+                '<div class="detail-grid">' + gridHtml + '</div>' +
+                '<div class="detail-json"></div></td>';
+            var jsonDiv = detailRow.querySelector('.detail-json');
+            if (jsonDiv) { jsonDiv.textContent = jsonText; }
             row.parentNode.insertBefore(detailRow, row.nextSibling);
             expandedRowPath = filePath;
         }

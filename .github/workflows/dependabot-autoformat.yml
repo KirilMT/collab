@@ -69,6 +69,7 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python 3.12
         if: steps.guardrail.outputs.safe == 'true'
@@ -104,6 +105,8 @@ jobs:
 
       - name: Commit and push formatting updates
         if: steps.guardrail.outputs.safe == 'true'
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           if [[ -z "$(git status --porcelain)" ]]; then
             echo "No formatting changes detected."
@@ -115,4 +118,6 @@ jobs:
             "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "style(ci): auto-format after dependency update"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git remote set-url origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin "HEAD:${HEAD_REF}"

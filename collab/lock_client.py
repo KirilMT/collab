@@ -5442,7 +5442,7 @@ class LockClient:
                 # Use getattr or numeric 9 for SIGKILL fallback on Windows
                 sig = getattr(signal, "SIGKILL", 9)
                 os.kill(pid, sig)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
 
     def _get_process_info_local(self, pid: int) -> Tuple[Optional[str], Optional[int]]:

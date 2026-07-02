@@ -12,6 +12,9 @@ name: CI Pipeline
     branches: [main, develop]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 concurrency:
   # One active run per PR (synchronize cancels stale) or per branch push.
   group: >-
