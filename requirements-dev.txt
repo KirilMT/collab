@@ -30,7 +30,7 @@ pluggy==1.6.0
 bandit==1.9.4
 radon==6.0.1
 yamllint==1.38.0        # YAML file validation
-djlint==1.40.0          # HTML/Jinja template formatting and linting
+djlint==1.40.4          # HTML/Jinja template formatting and linting
 
 # Pre-commit hooks (OPTIONAL - Configure later)
 pre-commit==4.6.0
