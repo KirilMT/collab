@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -84,15 +84,38 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
+      - name: Verify release token
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${RELEASE_PLEASE_TOKEN:-}" ]; then
+            echo "RELEASE_PLEASE_TOKEN not set — using GITHUB_TOKEN."
+            exit 0
+          fi
+          CODE=$(curl -sS -o /tmp/token_check.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${RELEASE_PLEASE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/user")
+          if [ "${CODE}" != "200" ]; then
+            echo "::error::RELEASE_PLEASE_TOKEN is invalid or expired"
+            echo "(HTTP ${CODE}). Rotate it under Settings → Secrets and"
+            echo "variables → Actions."
+            head -c 300 /tmp/token_check.json || true
+            echo ""
+            exit 1
+          fi
+          echo "Release token OK."
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: >-
             ${{ secrets.RELEASE_PLEASE_TOKEN
             || secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 
@@ -115,7 +138,7 @@ jobs:
 
       - name: Checkout Release PR branch
         if: steps.release.outputs.pr
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: >-
             ${{ steps.release.outputs.pr
